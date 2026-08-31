@@ -1,0 +1,38 @@
+{
+  "name": "@Tinnikx/dsh-operation-improve",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness 侧边栏操作增强：ctrl/cmd 多选、右键菜单、对话起点导航列。",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "stack:up": "node scripts/test-stack.mjs up",
+    "stack:down": "node scripts/test-stack.mjs down",
+    "stack:status": "node scripts/test-stack.mjs status",
+    "verify": "node scripts/verify-live.mjs",
+    "verify:nav": "node scripts/verify-nav-live.mjs",
+    "verify:timestamps": "node scripts/verify-timestamps-live.mjs",
+    "verify:dot": "node scripts/verify-active-dot-live.mjs",
+    "verify:selection": "node scripts/verify-selection-menu-live.mjs",
+    "verify:settings": "node scripts/verify-settings-live.mjs"
+  },
+  "license": "MIT",
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

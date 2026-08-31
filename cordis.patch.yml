@@ -1,0 +1,7 @@
+# @Tinnikx/dsh-operation-improve：bundle patch 层。
+# 该包被装进 profile 时，这一层插入插件行；行的 `name` 必须与 package.json 的
+# `name` 逐字相同——client 加载器按 loader entry 的 name 解析 client bundle 的注册 ID。
+
+- insert:
+    - id: '@Tinnikx/dsh-operation-improve'
+      name: '@Tinnikx/dsh-operation-improve'

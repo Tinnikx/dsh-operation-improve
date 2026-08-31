@@ -1,0 +1,23 @@
+# Your patch layer for this dsh profile.
+# []
+
+- id: file-reference-local
+  config:
+    excludedDirectories:
+      - .git
+      - node_modules
+      - .tmp
+      - Library
+      - Temp
+      - obj
+
+- id: agent-teams
+  config:
+    maxMembers: 15
+    executionPrompt: The document does not need to record the process; it should only record facts, unless I explicitly request the process to be recorded. The product interface should present the intended outcome, not reveal the reasoning process..
+
+- id: compaction-basic
+  config:
+    maxTokens: 64000      # 必须 ≤ 模型输出上限(sonnet-5 为 64000)
+    thresholdRatio: 0.6   # 264k*0.6≈158k 就开始压,待压区间更小
+    retainRatio: 0.15
