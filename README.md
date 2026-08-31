@@ -110,7 +110,18 @@ esbuild 从 `dsh-desktop` 的 pnpm store 解析（本包零运行时依赖），
 
 ## 加载方式
 
-包已带 `cordis.patch.yml`，标准装法是 `dsh plugin --profile web add <本目录>`。若手工往 `~/.dsh/profiles/web/cordis.patch.yml` 里加，需要的就是这一行：
+包已带 `cordis.patch.yml`，两种装法：
+
+```
+dsh plugin --profile web add github:Tinnikx/dsh-operation-improve   # 从 GitHub 装
+dsh plugin --profile web add <本目录>                                # 从本地目录装（开发用）
+```
+
+`dsh plugin` 把 `add` 之后的参数**原样转发给 profile 目录里的 pnpm**，再把装上的包补进 `package.json` 的 `dsh.profile.bundles`——所以 pnpm 认的 git 写法都能用：`github:owner/repo`、`git+ssh://…`、`https://…/x.git#<tag或commit>`（`#` 后面固定版本，不写就是默认分支 `master`）。
+
+构建产物 `lib/` 已经入库，本包也没有 `prepare` 脚本，因此不触发 pnpm 对 git 依赖的构建拦截（`dsh plugin` 装 git 包失败时提示的 `allowBuilds` 那条与本包无关）。
+
+若手工往 `~/.dsh/profiles/web/cordis.patch.yml` 里加，需要的就是这一行：
 
 ```yaml
 - insert:
