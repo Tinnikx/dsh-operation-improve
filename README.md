@@ -14,6 +14,10 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。
 
+## 当前已兼容版本
+- 0.1.2-rc.1
+- 0.1.1-rc.2
+
 ## 截图
 
 | | |
