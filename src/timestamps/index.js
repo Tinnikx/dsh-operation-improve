@@ -176,7 +176,7 @@ export function installTimestamps(options) {
   }
 
   // 观察 `document.body` 而不是消息容器：切会话会整片换掉滚动容器，盯着容器就
-  // 连同观察目标一起变成游离节点，从此收不到通知（start-nav 踩过，见 README）。
+  // 连同观察目标一起变成游离节点，从此收不到通知。
   //
   // 代价是插进去的标签也在观察范围内。第一道闸丢掉源自标签自身的记录，以及
   // 「增删的全是标签」的记录——**不能写成 `record.target.closest('.dsh-oi-ts')`**：

@@ -1,12 +1,11 @@
 # @Tinnikx/dsh-operation-improve
 
-DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加八项行为——前两项在侧边栏，中间两项在会话页，第五项是全局配色，第六项在页面任意位置，第七项在会话页的思考区，最后一项在设置页：
+DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加七项行为——功能 1、2 在侧边栏，功能 4、7 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页：
 
 | | 一句话 | 设计与实测 |
 | --- | --- | --- |
 | **功能 1** | `ctrl`/`cmd` + 点击多选工作区行或会话行，限制同级（会话与工作区不能混选）。 | [docs/feature-1-2-sidebar-menu.md](docs/feature-1-2-sidebar-menu.md) |
 | **功能 2** | 侧边栏行的右键菜单。单选逐项对齐该行原有「...」菜单（项、顺序、文案、图标、样式、动作都一样），多选只保留批量破坏性操作。 | 同上 |
-| **功能 3** | 会话页右侧的对话起点导航列。鼠标贴近右边缘淡入一列刻度，一条 user 消息一个刻度；hover 出摘要 tooltip，点击平滑滚到该起点，滚动时高亮当前所在起点。 | [docs/feature-3-start-nav.md](docs/feature-3-start-nav.md) |
 | **功能 4** | 会话页逐行开始时间戳。每条回复、工具调用、思考等节点行的右上角显示它的**开始**时刻（`HH:mm:ss`），user / steering / turn-tail 三类改成常驻显示上游自己的时间标签。 | [docs/feature-4-timestamps.md](docs/feature-4-timestamps.md) |
 | **功能 5** | 活跃标记（`StateDot state="ongoing"`）的配色覆盖。把上游那 8 格追逐动画的基线不透明度从 `.15` 抬到 `.6` 并换成青色，深浅主题各一个值。纯样式，不加监听。 | [docs/feature-5-active-dot.md](docs/feature-5-active-dot.md) |
 | **功能 6** | 选中文本的右键菜单。页面任意位置选中一段文本后在选区上右键，弹出与功能 2 同一套外观的菜单，给「复制」；落点可输入时再给「粘贴」（可输入的空控件上即使没有选中文本也弹，只给「粘贴」）。两项都没有时不吃掉事件，原生菜单照常。 | [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md) |
@@ -19,8 +18,8 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 
 | | |
 | --- | --- |
-| ![选区右键菜单与导航列](docs/screenshot1.png) | ![导航列刻度与逐行时间戳](docs/screenshot2.png) |
-| 选中一段思考正文后在选区上右键，弹出「复制」（功能 6）；右边缘是淡入的对话起点导航列（功能 3），每行节点右上角是它的开始时刻（功能 4）。 | 鼠标贴近右边缘后导航列的刻度与摘要 tooltip（功能 3）；Tool call / Think 行右上角的 `HH:mm:ss` 与 user 消息常驻的上游时间标签（功能 4）。 |
+| ![选区右键菜单与逐行时间戳](docs/screenshot1.png) |
+| 选中一段思考正文后在选区上右键，弹出「复制」（功能 6）；每行节点右上角是它的开始时刻（功能 4）。 |
 | ![侧边栏多选与右键菜单](docs/screenshot3.png) | ![设置页 Harness 高级配置](docs/screenshot4.png) |
 | `ctrl`/`cmd` + 点击多选同级会话行（功能 1），在选中行上右键得到只剩批量破坏性操作的菜单「归档 5 个会话」（功能 2）。 | 设置页「通用设置」里展开的「Harness 高级配置」面板（功能 8）：按插件分组的卡片、三类控件与来源徽标（系统默认 / 手写 / 本面板），失焦即写回 `cordis.patch.yml`。 |
 
@@ -29,7 +28,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 ```
 src/
   index.js                     host 半边：挂功能 8 那条回环路由
-  client/index.js              client 入口：插样式表、装六个功能、注册 ctx.effect 回收
+  client/index.js              client 入口：插样式表、装五个功能、注册 ctx.effect 回收
   shared/
     selection-store.js         选择状态 store（同级约束）
     context-menu.js            通用右键菜单（纯 DOM）+ 样式表
@@ -38,7 +37,6 @@ src/
     locale.js                  菜单与设置面板的文案：借上游 `workspace` / `common` 词典 + 本插件自己的词典
   multi-select/index.js        功能 1
   context-menu-feature/index.js 功能 2
-  start-nav/index.js           功能 3（导航列 + 它自己的样式表）
   timestamps/
     index.js                   功能 4（逐行时间戳 + 它自己的样式表）
     format-clock.js            时钟格式化纯函数（可脱离 DOM 单测）
@@ -68,12 +66,11 @@ scripts/
   build.mjs                    esbuild 出 lib/client.js（加载器壳）与 lib/index.js
   test-stack.mjs               起/停隔离的 harness + Chrome，验证脚本的默认目标
   verify-live.mjs              对运行中的页面跑功能 1/2 的端到端断言
-  verify-nav-live.mjs          同上，功能 3
   verify-timestamps-live.mjs   同上，功能 4；只做编排，断言本体在 lib/ 下两个模块里
   verify-active-dot-live.mjs   同上，功能 5；截图读真实像素算对比度
   verify-selection-menu-live.mjs 同上，功能 6；走真实鼠标手势与真实剪贴板
   verify-settings-live.mjs     同上，功能 8；驱动真面板、读真 patch 文件字节、真卸载一次
-  lib/cdp.mjs                  六个验证脚本共用的 CDP 连接与断言框架
+  lib/cdp.mjs                  五个验证脚本共用的 CDP 连接与断言框架
   lib/ts-page.mjs              功能 4 断言的页面侧公用片段（在被测页面里求值的源码字符串）
   lib/ts-checks.mjs            功能 4 的十条断言本体
 tests/
@@ -81,15 +78,14 @@ tests/
   format-clock.test.mjs        时钟格式化的单元测试（跨天 / 跨年分支）
   patch-file.test.mjs          托管区段写入器的字节级测试
   fixtures/web-cordis.patch.yml 真实 web profile 用户 patch 层的逐字副本，上一条的输入
-docs/                          八项功能各自的设计判据、实测读数与已知限制；验证见 verify.md
+docs/                          各功能的设计判据、实测读数与已知限制；验证见 verify.md
 lib/                           构建产物，client bundle 是 __ModuleLoader__ 注册体
 ```
 
-插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余七项一个 slot 都不占——第五、第七两项连监听都没有，另外五项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
+插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余六项一个 slot 都不占——第五、第七两项连监听都没有，另外四项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
 
 - 功能 1、2 在侧边栏挂**捕获阶段**监听（要抢在 React 合成事件之前拦下 `ctrl` 点击与右键），菜单直接挂 `document.body`（`z-index: 2147483000`），高亮走 `[data-dsh-oi-selected]` 属性——不复用行自己的 `_selected` 类，那是「当前会话」的语义。
-- 功能 3 不在侧边栏，也不用捕获阶段：它把导航列挂在 `document.body` 上，数据来自会话页 `[data-conversation-scroll]` 的子树，靠 `MutationObserver` 与滚动容器的 `passive` 滚动监听驱动。
-- 功能 4 只读会话页的 DOM 与 React fiber，标签作为节点行自己的子节点插入，同样由观察 `document.body` 的 `MutationObserver` 驱动。
+- 功能 4 只读会话页的 DOM 与 React fiber，标签作为节点行自己的子节点插入，由观察 `document.body` 的 `MutationObserver` 驱动。
 - 功能 5 一行 JS 都不跑，只往那张样式表里追加几条规则；摘掉样式表即还原。
 - 功能 6 同样是 `document` 上的捕获阶段 `contextmenu`，与功能 2 各自判各自的地盘（见 [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md)），复用功能 2 那份菜单组件与样式，自己不带任何 CSS。
 - 功能 7 和功能 5 一样一行 JS 都不跑，两条声明追加进同一张样式表；摘掉样式表即还原。
@@ -150,13 +146,12 @@ dsh plugin --profile web add <本目录>                                # 从本
 | `npm test` | 单元测试：选择状态、时钟格式化、托管区段写入器（字节级） |
 | `npm run stack:up` / `stack:status` / `stack:down` | 隔离测试栈：`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334 |
 | `npm run verify` | 功能 1、2 端到端 |
-| `npm run verify:nav` | 功能 3 |
 | `npm run verify:timestamps` | 功能 4 |
 | `npm run verify:dot` | 功能 5 |
 | `npm run verify:selection` | 功能 6 |
 | `npm run verify:settings` | 功能 8（会真的往 patch 文件写字节） |
 
-六个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
+五个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
 
 **验证脚本一律打测试栈，不打日常在用的那个 harness**：端到端断言里有「批量归档」「批量删除」，它们会真的发出 click。
 
@@ -168,7 +163,6 @@ dsh plugin --profile web add <本目录>                                # 从本
 
 - [基础层](docs/shared-api.md#已知限制)：`rowId` 的 fiber 反查依赖 React 内部字段（1 条）
 - [功能 1、2](docs/feature-1-2-sidebar-menu.md#已知限制)：借上游词典键、图标与尺寸是拷贝、高亮延迟（4 条）
-- [功能 3](docs/feature-3-start-nav.md#已知限制)：自激环两道闸、观察目标不能收窄、双实例、类名片段（5 条）
 - [功能 4](docs/feature-4-timestamps.md#已知限制)：日期不跟随语言、九类 kind 未验证、非全局单调、类名片段、56px 留白、fiber（6 条）
 - [功能 5](docs/feature-5-active-dot.md#已知限制)：结构假设、壁纸主题下管不到、色值写死（3 条）
 - [功能 6](docs/feature-6-selection-menu.md#已知限制)：剪贴板权限被拒即静默失效、contenteditable 分支未验证、paste 图标自绘、落点判定的引擎回落（4 条）

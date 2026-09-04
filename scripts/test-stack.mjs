@@ -345,7 +345,6 @@ async function up() {
   // 跑完这个提示的那个 shell 里 `node` 仍是系统/nvm 那份。
   const prefix = 'PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH'
   console.log(`  ${prefix} npm run verify`)
-  console.log(`  ${prefix} npm run verify:nav`)
   console.log(`  ${prefix} npm run verify:timestamps`)
   console.log(`[test-stack] 用完停掉：${prefix} npm run stack:down`)
 }

@@ -1,6 +1,6 @@
 # 基础层 API 与调试句柄
 
-`src/shared/` 下四个模块，功能 1、2、6 共用；调试句柄由 client 入口挂出，六个验证脚本都依赖它。
+`src/shared/` 下四个模块，功能 1、2、6 共用；调试句柄由 client 入口挂出，五个验证脚本都依赖它。
 
 ## `src/shared/selection-store.js`
 
@@ -64,7 +64,6 @@ OWN_NS        // '@Tinnikx/dsh-operation-improve'
 {
   instanceId,                       // 本份实例的 id，也写在它开出的每个菜单的 data-dsh-oi-owner 上
   selection,                        // 选择状态 store 本体
-  startNav,                         // { dispose, snapshot, refresh }
   timestamps,                       // { dispose, snapshot, refresh }
   multiSelect:   { dispose() },
   contextMenu:   { dispose() },     // 摘监听器，并关掉可能开着的菜单

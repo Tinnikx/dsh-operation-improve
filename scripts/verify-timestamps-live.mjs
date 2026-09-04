@@ -4,7 +4,7 @@
  * 的节点、标签落在本行自己的盒子里、不压正文、Think 行、上游三类改常驻，以及卸载
  * 回收。
  *
- * CDP 连接与判据框架来自 [lib/cdp.mjs](lib/cdp.mjs)，与另外两个 verify 脚本共用。
+ * CDP 连接与判据框架来自 [lib/cdp.mjs](lib/cdp.mjs)，与 `verify-live.mjs` 共用。
  * 这个文件只做编排：前置检查、选会话、清场、基线、注入、覆盖度、收尾。页面侧的
  * 公用片段在 [lib/ts-page.mjs](lib/ts-page.mjs)，十条断言的本体在
  * [lib/ts-checks.mjs](lib/ts-checks.mjs)。
@@ -142,7 +142,7 @@ const cleaned = await evaluate(`(async () => {
   let stopped = null;
   if (native !== undefined && native !== null) {
     stopped = [];
-    for (const key of ['timestamps', 'startNav']) {
+    for (const key of ['timestamps']) {
       const feature = native[key];
       if (feature !== undefined && feature !== null && typeof feature.dispose === 'function') {
         feature.dispose(); stopped.push(key);
@@ -156,7 +156,6 @@ const cleaned = await evaluate(`(async () => {
   }
   for (const el of document.querySelectorAll('.' + LABEL)) el.remove();
   for (const el of document.querySelectorAll('[data-dsh-oi-ts]')) el.removeAttribute('data-dsh-oi-ts');
-  for (const el of document.querySelectorAll('.dsh-oi-nav')) el.remove();
   for (const el of document.querySelectorAll('style[data-plugin="@Tinnikx/dsh-operation-improve"]')) el.remove();
   await new Promise((r) => setTimeout(r, 500));
   return { nativeStopped: stopped,
