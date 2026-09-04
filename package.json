@@ -27,9 +27,7 @@
   "dsh": {
     "client": {
       "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime"
-      ]
+      "immediately": true
     },
     "bundle": {
       "patch": "./cordis.patch.yml"

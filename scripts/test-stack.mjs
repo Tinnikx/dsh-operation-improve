@@ -43,8 +43,8 @@ const PLUGIN_NAME = '@Tinnikx/dsh-operation-improve'
 /** 真 home 的 profile 里装的还是改 scope 之前的名字，副本里要一并改过来。 */
 const LEGACY_PLUGIN_NAME = 'dsh-operation-improve'
 const REAL_HOME = join(homedir(), '.dsh')
-const TEST_HOME = '/tmp/dsh-oi-test-home'
-const STATE_DIR = '/tmp/dsh-oi-stack'
+const TEST_HOME = join(REPO, 'tmp/dsh-oi-test-home')
+const STATE_DIR = join(REPO, 'tmp/dsh-oi-stack')
 const CHROME_PROFILE = join(STATE_DIR, 'chrome')
 const HARNESS_LOG = join(STATE_DIR, 'harness.log')
 const HARNESS_PID = join(STATE_DIR, 'harness.pid')
