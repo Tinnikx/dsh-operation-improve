@@ -1,6 +1,6 @@
 # 验证
 
-八项功能的验证方式。六个 `npm run verify:*` 脚本连的都是同一套[测试栈](#测试栈)，判据与退出码共用 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)。
+七项功能的验证方式。五个 `npm run verify:*` 脚本连的都是同一套[测试栈](#测试栈)，判据与退出码共用 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)。
 
 ## node 在哪
 
@@ -27,7 +27,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:down    # 停
 
 **副本不能省，也不能让两个 harness 共用一个 `DSH_HOME`**：同一个 home 上的两个 harness 各持一份启动时读进内存的 workspace 状态，谁都不看对方的写入——一边归档掉的会话在另一边照样列着，且后写的静默盖掉前一个。拿真 home 起第二个 harness，等于用测试去改用户正在看的那份列表。
 
-**副本里那条插件软链必须重新指过**。`pnpm add link:` 在 profile 的 `node_modules` 里留的是相对软链，起点是 home 自己；`rsync` 原样搬运目标字符串，副本里那条就从 `/tmp/` 往上数四层指到不存在的 `/tmp/dev/...`——**插件静默消失**，页面照样 200、照样出界面，只是八项功能一个都没有。`syncHome()` 因此在 rsync 之后把它改写成指向本仓库的绝对软链（scoped 包名要先 `mkdir` 出 `node_modules/@Tinnikx/`，并清掉可能残留的旧的无 scope 软链），同时把副本 profile 的 `package.json` 里 `dependencies` 与 `dsh.profile.bundles` 两处改写成 `@Tinnikx/dsh-operation-improve`——**只改副本，真 `~/.dsh` 一个字节不动**。`startHarness()` 再断言首页名册里有 `@Tinnikx/dsh-operation-improve`。
+**副本里那条插件软链必须重新指过**。`pnpm add link:` 在 profile 的 `node_modules` 里留的是相对软链，起点是 home 自己；`rsync` 原样搬运目标字符串，副本里那条就从 `/tmp/` 往上数四层指到不存在的 `/tmp/dev/...`——**插件静默消失**，页面照样 200、照样出界面，只是七项功能一个都没有。`syncHome()` 因此在 rsync 之后把它改写成指向本仓库的绝对软链（scoped 包名要先 `mkdir` 出 `node_modules/@Tinnikx/`，并清掉可能残留的旧的无 scope 软链），同时把副本 profile 的 `package.json` 里 `dependencies` 与 `dsh.profile.bundles` 两处改写成 `@Tinnikx/dsh-operation-improve`——**只改副本，真 `~/.dsh` 一个字节不动**。`startHarness()` 再断言首页名册里有 `@Tinnikx/dsh-operation-improve`。
 
 `resolveTarget` 见到 `:3080` 直接 `abort` 并打出起测试栈的办法。确实要对着 3080 调试只读断言：`DSH_OI_ALLOW_3080=1`。
 
@@ -44,22 +44,6 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 **参数必须写成 glob，不能给目录**：`npm test` 里那条命令是 `node --test tests/*.test.mjs`，写成 `node --test tests/` 在这个版本上报 `pass 0 / fail 1`，那是参数处理，不是测试失败。
 
 其中 [patch-file.test.mjs](../tests/patch-file.test.mjs) 的六条断言全部对**字节**，输入是 [fixtures/web-cordis.patch.yml](../tests/fixtures/web-cordis.patch.yml)——真实 web profile 用户 patch 层的逐字副本（含中文行内注释、`file-reference-local`、`agent-teams`、手写的 `compaction-basic`）。覆盖：加区段后区段外逐字节不变、改一个字段只有区段内那一个数变、清掉最后一个字段后文件逐字节回到原文、区段清空后补裸 `[]`、落盘换掉整个 inode、有开标记没闭标记时拒绝改写。**判据不能是「解析出来一样」**：那样写的话，把别人行尾的注释吞掉的实现也照样通过。
-
-## 几何（不需要真实会话，也不碰任何 harness）
-
-导航列的布局数字——离锚点右缘多远、会话区被右侧面板推走时跟不跟、刻度多宽多厚、摘要框对没对准悬浮的那条刻度、排版与底色跟不跟会话页气泡一致、一行放得下几个汉字、热区跟不跟着列走、空隙放不放行点击——不需要真实会话页就能量。`.scratch/nav-geometry/check.mjs` 自起一个静态服务器（8931）和独占的 headless Chrome（CDP 9444），把 `src/start-nav/index.js` 装到一份自带三列 grid、`[data-conversation-scroll]` 与 `_viewArea` 的 fixture 上，判据与退出码同样来自 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)：
-
-```
-PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH node .scratch/nav-geometry/check.mjs
-```
-
-hover 必须用 CDP 的 `Input.dispatchMouseEvent` 而不是合成的 `PointerEvent`：`:hover` 是渲染引擎按真实指针位置算的，合成事件改不了它，刻度宽度那条断言会永远量到基础宽度。另外**刻度宽度是 120ms 的过渡**，挂上 `data-active` 的那一帧量到的还是基础宽度，断言前要静置。
-
-**fixture 的 grid 轨道必须由 inline 样式驱动**，展开详情列也只改这一行：真实页面上就是这样，DOM 结构不变，那条断言顺带要求整个过程 `MutationObserver` 收到 0 条——收到了就说明跟随可能是被 rebuild 带出来的假通过。复原写回原字符串而不是清空 inline，清掉等于把布局本身也清掉。热区左界不对外暴露，用「从左往右扫第一个能点亮列的 x」量出来，与「新列左缘往左 72px」比对。
-
-fixture 里的主题令牌、`body` 规则和 `_userRow` / `_bubble` 两条规则是从 `ui-theme` / `web-frontend` / `ui-conversation` 逐字搬来的，「底色跟全局背景一致」那条断言比的就是它们；**上游改样式时要跟着更新这份 fixture**，否则它会替一个不存在的会话页背书。断言同时要求底色**不等于**气泡底色：`#151517` 与 `#2c2c2e` 都是深灰，只比「等于全局背景」时，写错成气泡 token 也可能靠 fallback 蒙混过去。
-
-> `.scratch/` 在 `.gitignore` 里，本节与[功能 7 的验证](#功能-7-的验证)所依赖的两个脚本**不在版本库中**。新克隆的仓库跑不了这两项，得照上面的判据重写一份。
 
 ## 端到端
 
@@ -101,7 +85,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify
 
 所以确认「真的测了」只需两步：`echo $?` 为 0，且 summary 是 `passed=25 failed=0 skipped=0 total=25`。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
 
-判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，六个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
+判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，五个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
 
 `evaluate()` 每次求值新开一条临时 CDP 连接、用完即关，长驻连接只留给要收事件的 `Page.reload`。**不能全程共用一条**：断言里会点击会话行，切会话销毁执行上下文后，那条连接上的每次 `Runtime.evaluate` 都被协议层永久拒为 `-32000 Inspected target navigated or closed`，整轮验证崩在半路，证据链就此断掉。
 
@@ -117,18 +101,6 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify     # 改回 zh 再�
 ```
 
 判据是每条断言观测值里的 `lang` 字段（`zh-CN` / `en`）与 `items`。**改的必须是副本那份**：真 home 那份是用户自己的界面语言。而 `npm run stack:up` 会 `rsync --delete` 把副本盖回真 home 的内容，改完不要再 `up`。
-
-## 功能 3 的验证
-
-```
-PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:nav
-```
-
-**必须先真的打开一个会话**——首页停在 hero 态，一条 user 行都没有，所有断言会退化成 skip。`verify-nav-live.mjs` 因此逐个点会话行直到查到 ≥2 条起点。
-
-其中「列贴的是会话视图右缘」这条在真实页面上也验一次，而不是只留给 fixture：真实页面上没有第二个插件可以把会话区推走，所以脚本自己改外壳 grid 那一行 inline 把详情列撑到 360px，断言列左移同样多、空隙不变、全程 0 条 mutation，然后写回原字符串复原。实测 `viewArea.right=1592` 时列右缘 1560（空隙 32），撑开后列右缘 1200、空隙仍是 32。
-
-**点击定位的断言不能固定等待**：smooth 滚动的时长随距离变化（实测跨 12864px 要 1.4s），固定 1.2s 会采到中途值。脚本改为轮询到 `scrollTop` 连续三次不变。
 
 ## 功能 4 的验证
 
@@ -155,7 +127,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:timestamps
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:dot
 ```
 
-`verify-active-dot-live.mjs` 和 `verify:selection`、`verify:settings` 一样**不注入 bundle、也不 apply 自造的 ctx**（六个脚本里只有这三个），验的是页面自带那份实例的实际效果。这一条被验的是一张纯样式表，而页面自带的那份实例已经把它插进 `<head>` 了。断言读的就是那张表的效果，走的是「`npm run build` 的产物 → profile 装载 → 页面自己的实例插入」这条真实路径。基线靠**摘掉那张表**取得（`disabled = true`，测完还原），同一个 DOM 上一摘一装，前后两组读数才可比。探针是脚本现搭的一个 `StateDot`，class 从页面真实样式表里反查，所以它与上游那条规则形成的是真实的特异性竞争。不去等一个真的活跃会话：那要在测试栈里真跑一轮模型调用，代价与风险都远大于它能多验到的东西（同一个组件、同一条 CSS 规则）。
+`verify-active-dot-live.mjs` 和 `verify:selection`、`verify:settings` 一样**不注入 bundle、也不 apply 自造的 ctx**（五个脚本里只有这三个），验的是页面自带那份实例的实际效果。这一条被验的是一张纯样式表，而页面自带的那份实例已经把它插进 `<head>` 了。断言读的就是那张表的效果，走的是「`npm run build` 的产物 → profile 装载 → 页面自己的实例插入」这条真实路径。基线靠**摘掉那张表**取得（`disabled = true`，测完还原），同一个 DOM 上一摘一装，前后两组读数才可比。探针是脚本现搭的一个 `StateDot`，class 从页面真实样式表里反查，所以它与上游那条规则形成的是真实的特异性竞争。不去等一个真的活跃会话：那要在测试栈里真跑一轮模型调用，代价与风险都远大于它能多验到的东西（同一个组件、同一条 CSS 规则）。
 
 **对比度读的是截图像素，但底色是脚本垫出来的名义值。** 前景那半必须由浏览器渲染——`fill × opacity` 的合成交给它，脚本自己算一遍就等于验证脚本重写了一次被测逻辑。底色那半则不能取自页面：装了壁纸主题的页面整个 UI 是半透明的，标记压着的是一张逐像素变化的照片（实测同一列上下极差 187），`--dsw-alias-bg-base` 本身就解析成 `rgba(108, 96, 97, .28)` 且不随主题变，从格子到 `html` 一层不透明背景都没有。那种页面上不存在「一个底色」，任何单点采样都是偶然值。所以探针自带一块名义底色（深色取页面的 `--dsw-static-neutral-bluish-950` = `rgb(21, 21, 23)`，浅色取白——`--dsw-static-white` 在壁纸主题下被改成了透明，不能用），`Page.captureScreenshot` 把格子连同这块底色一起截下来，两个颜色取自同一张图。量的是「这个配色在标准主题底色上有多少对比度」，与用户装了什么主题无关。
 
@@ -184,7 +156,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:selection
 
 ## 功能 7 的验证
 
-没有 `npm run verify:*` 脚本，判据在 `.scratch/think-scroll-check.mjs`（七条断言，同样连测试栈的 CDP；这个文件[不在版本库里](#几何不需要真实会话也不碰任何-harness)）：
+没有 `npm run verify:*` 脚本，判据在 `.scratch/think-scroll-check.mjs`（七条断言，同样连测试栈的 CDP；`.scratch/` 在 `.gitignore` 里，这个文件不在版本库，新克隆的仓库跑不了，得照判据重写一份）：
 
 ```
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH node .scratch/think-scroll-check.mjs

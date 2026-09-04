@@ -8,7 +8,7 @@
  * `workspaces`/`sessions` 换成 spy），这样断言的是**真实 DOM 上的行为**，
  * 同时不去动用户真实的会话数据。
  *
- * CDP 连接与断言框架来自 [lib/cdp.mjs](lib/cdp.mjs)，与 `verify-nav-live.mjs` 共用：
+ * CDP 连接与断言框架来自 [lib/cdp.mjs](lib/cdp.mjs)，与 `verify-timestamps-live.mjs` 共用：
  * 判据语义（skip 也算失败、非零退出）只有一份实现，改一处不会漏掉另一处。
  *
  * 失败语义（这一条是重点）：**没测到 = 失败**。窗口太窄时侧边栏是折叠的，

@@ -1,5 +1,5 @@
 /**
- * 三个实测驱动（`verify-live.mjs` / `verify-nav-live.mjs` / `verify-timestamps-live.mjs`）
+ * 两个实测驱动（`verify-live.mjs` / `verify-timestamps-live.mjs`）
  * 共用的 CDP 连接与断言框架。抽出来不是为了行数，而是这几份东西原先各存了一份拷贝——
  * 判据的语义（「skip 也算失败」「非零退出」）和 CDP 的踩坑（导航期重试、协议错误与页面
  * 异常分开报）改一处忘另一处只是时间问题。
