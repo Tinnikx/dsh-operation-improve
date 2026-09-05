@@ -1,6 +1,6 @@
 # @Tinnikx/dsh-operation-improve
 
-DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加七项行为——功能 1、2 在侧边栏，功能 4、7 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页：
+DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加八项行为——功能 1、2 在侧边栏，功能 4、7、9 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页：
 
 | | 一句话 | 设计与实测 |
 | --- | --- | --- |
@@ -11,8 +11,9 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | **功能 6** | 选中文本的右键菜单。页面任意位置选中一段文本后在选区上右键，弹出与功能 2 同一套外观的菜单，给「复制」；落点可输入时再给「粘贴」（可输入的空控件上即使没有选中文本也弹，只给「粘贴」）。两项都没有时不吃掉事件，原生菜单照常。 | [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md) |
 | **功能 7** | 思考区域的高度上限与滑块。展开后的思考正文超过 60vh 时截到 60vh 并出竖直滚动条，放得下的一点不变。纯样式，不加监听，配色字号行距内边距全部留给上游。 | [docs/feature-7-think-scroll.md](docs/feature-7-think-scroll.md) |
 | **功能 8** | 设置页「通用设置」里的「Harness 高级配置」一行。展开后是一个精选清单面板，把只有 cordis entry config、没有 settings 命名空间的那类配置（压缩阈值、工具结果裁剪长度、ralph 轮数……）搬进界面，写回当前 profile 的 `cordis.patch.yml` 里一个托管区段。改完离开输入框即自动保存，没有保存按钮。 | [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md) |
+| **功能 9** | 对话历史导航。输入框为空时按上下键翻阅本会话的历史提问——读右侧轮次导航列，装上插件之前的提问也在，不做本地记录。 | [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md) |
 
-功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。
+功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)。
 
 ## 当前已兼容版本
 - 0.1.2-rc.1
@@ -32,7 +33,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 ```
 src/
   index.js                     host 半边：挂功能 8 那条回环路由
-  client/index.js              client 入口：插样式表、装五个功能、注册 ctx.effect 回收
+  client/index.js              client 入口：插样式表、装六个功能、注册 ctx.effect 回收
   shared/
     selection-store.js         选择状态 store（同级约束）
     context-menu.js            通用右键菜单（纯 DOM）+ 样式表
@@ -49,6 +50,11 @@ src/
     index.js                   功能 6（命中判定与菜单装配，不带样式）
     clipboard.js               功能 6 的两个动作：写剪贴板、派发 paste 事件
   think-scroll/index.js        功能 7（思考区限高 + 滑块，只导出一段 CSS）
+  chat-history/
+    history-store.js            功能 9 的纯函数层（干净判定、轮次条目解析）
+    nav-rail.js                 功能 9 的导航列读取层（fiber 条目 + 气泡全文）
+    composer.js                 功能 9 的输入框原语（Lexical contenteditable 的读写与光标门控）
+    index.js                    功能 9（会话跟踪、键盘导航、写入队列）
   harness-config/              功能 8 的 host 半边
     catalog-entries.js         精选清单的收录口径与拼装点（两组条目按序拼成 `CATALOG`）
     catalog-tools.js           条目本体上半：工具与执行预算
@@ -94,6 +100,7 @@ lib/                           构建产物，client bundle 是 __ModuleLoader__
 - 功能 6 同样是 `document` 上的捕获阶段 `contextmenu`，与功能 2 各自判各自的地盘（见 [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md)），复用功能 2 那份菜单组件与样式，自己不带任何 CSS。
 - 功能 7 和功能 5 一样一行 JS 都不跑，两条声明追加进同一张样式表；摘掉样式表即还原。
 - 功能 8 是唯一有 host 半边的功能：client 侧只往 `settings.general.item` 注册一个组件，读写都打 host 挂在 harness 自己那个回环 HTTP 上的一条路由（见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md)）。
+- 功能 9 的当前会话来自 `ctx.sessions` 的订阅（应用没有 URL 路由，地址栏恒为 `/`）；历史只读右侧轮次导航列的 fiber 条目，且只在开始导航时读一次（纯内存、不阻塞）；输入框是 Lexical contenteditable，写入走 `execCommand` + 合成按键的队列。不占 slot、不调 harness 服务、不写 localStorage。
 
 ## 构建
 
@@ -154,8 +161,9 @@ dsh plugin --profile web add <本目录>                                # 从本
 | `npm run verify:dot` | 功能 5 |
 | `npm run verify:selection` | 功能 6 |
 | `npm run verify:settings` | 功能 8（会真的往 patch 文件写字节） |
+| `npm run verify:chat-history` | 功能 9（键盘导航、历史存储、dispose 回收） |
 
-五个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
+六个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
 
 **验证脚本一律打测试栈，不打日常在用的那个 harness**：端到端断言里有「批量归档」「批量删除」，它们会真的发出 click。
 
@@ -172,3 +180,4 @@ dsh plugin --profile web add <本目录>                                # 从本
 - [功能 6](docs/feature-6-selection-menu.md#已知限制)：剪贴板权限被拒即静默失效、contenteditable 分支未验证、paste 图标自绘、落点判定的引擎回落（4 条）
 - [功能 7](docs/feature-7-think-scroll.md#已知限制)：类名片段、流式思考不自动跟到底（未实测）、上限只看视口（3 条）
 - [功能 8](docs/feature-8-harness-config.md#已知限制)：清单手抄、`default` 只作提示、区段必须在文件末尾、字段文案只有中文、要 `webServer`、不订阅文件变化、面板样式自写（7 条）
+- [功能 9](docs/feature-9-chat-history.md#已知限制)：长提问未挂载时退化为 50 字预览、合成按键依赖 Lexical 不看 isTrusted、选区同步 50ms 延迟、导航列或输入框缺失的会话页静默（4 条）

@@ -1,9 +1,10 @@
 /**
  * `@Tinnikx/dsh-operation-improve` — client 入口。
  *
- * 四项 DOM 增强：侧边栏的 ctrl/cmd 多选（限同级）与右键菜单，页面任意选中文本上的
- * 右键菜单，以及会话页逐行的开始时间戳。前三项共享 `src/shared/` 下的选择状态
- * store、行 id 反查、通用菜单组件与词典；最后一项成块，只读对话页的 DOM 与 fiber。
+ * 六项 DOM 增强：侧边栏的 ctrl/cmd 多选（限同级）与右键菜单，页面任意选中文本上的
+ * 右键菜单，会话页逐行的开始时间戳，以及对话历史导航（上下键翻阅历史问题）。前
+ * 三项共享 `src/shared/` 下的选择状态 store、行 id 反查、通用菜单组件与词典；
+ * 后三项成块，各自只读对话页的 DOM 与 fiber。
  *
  * 不占任何 slot：功能只在既有 DOM 上加监听，视觉走自插的一张样式表；
  * 所有副作用都注册到 `ctx.effect`，插件卸载即回收。
@@ -25,6 +26,7 @@ import { installTimestamps, TIMESTAMP_CSS } from '../timestamps/index.js'
 import { ACTIVE_DOT_CSS } from '../active-dot/index.js'
 import { THINK_SCROLL_CSS } from '../think-scroll/index.js'
 import { installHarnessConfigRow, SETTINGS_CSS } from './settings/index.jsx'
+import { installChatHistory } from '../chat-history/index.js'
 
 export const name = '@Tinnikx/dsh-operation-improve'
 export const inject = ['workspaces', 'sessions', 'locale', 'slots']
@@ -36,8 +38,8 @@ export const selection = createSelectionStore()
  * 装上五项功能。
  *
  * 副作用全部注册到 `ctx.effect`，同时挂一份到 `window.__dshOperationImprove__`：
- * `{ instanceId, selection, timestamps, multiSelect, contextMenu, selectionMenu,
- * harnessConfig, locale, stylesheet, dispose }`。
+ * `{ instanceId, selection, timestamps, chatHistory, multiSelect, contextMenu,
+ * selectionMenu, harnessConfig, locale, stylesheet, dispose }`。
  * 每个功能项都带幂等 `dispose()`，句柄自己的 `dispose()` 停掉整份实例并摘掉句柄。
  *
  * @param {any} ctx
@@ -91,10 +93,13 @@ export function apply(ctx) {
   const harnessConfig = installHarnessConfigRow(ctx)
   ctx.effect(() => harnessConfig.dispose, '@Tinnikx/dsh-operation-improve: harness config row')
 
+  const chatHistory = installChatHistory(ctx.sessions)
+  ctx.effect(() => chatHistory.dispose, '@Tinnikx/dsh-operation-improve: chat history')
+
   // 调试与验证入口：让外部（CDP / 控制台）观察选择集、也**停得掉这一份实例**，
   // 无需读私有闭包。
   //
-  // 五项功能全部列在这里、并给整份实例一条 `dispose()`，是验证脚本的硬需求：插件
+  // 六项功能全部列在这里、并给整份实例一条 `dispose()`，是验证脚本的硬需求：插件
   // 装进 profile 之后页面每次加载都自带一份实例，脚本再注入一份就是两份互不知情
   // 地抢同一批 DOM——**右键会弹出两个菜单，而 `querySelector` 拿到的是先注册的那
   // 个（native）**，脚本以为点的是自己的 spy，实际点在真服务上。只暴露一部分功能
@@ -106,6 +111,7 @@ export function apply(ctx) {
     instanceId,
     selection,
     timestamps,
+    chatHistory,
     harnessConfig,
     multiSelect: { dispose: disposeMultiSelect },
     contextMenu: { dispose: disposeContextMenu },
@@ -117,6 +123,7 @@ export function apply(ctx) {
     locale: { t: locale.t, tCommon: locale.tCommon, tOwn: locale.tOwn, dispose: locale.dispose },
     stylesheet: { dispose: () => style.remove() },
     dispose: () => {
+      chatHistory.dispose()
       harnessConfig.dispose()
       timestamps.dispose()
       disposeSelectionMenu()

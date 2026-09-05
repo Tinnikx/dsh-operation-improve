@@ -20,7 +20,8 @@
     "verify:timestamps": "node scripts/verify-timestamps-live.mjs",
     "verify:dot": "node scripts/verify-active-dot-live.mjs",
     "verify:selection": "node scripts/verify-selection-menu-live.mjs",
-    "verify:settings": "node scripts/verify-settings-live.mjs"
+    "verify:settings": "node scripts/verify-settings-live.mjs",
+    "verify:chat-history": "node scripts/verify-chat-history-live.mjs"
   },
   "license": "MIT",
   "dsh": {

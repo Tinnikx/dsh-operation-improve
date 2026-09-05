@@ -1,6 +1,6 @@
 # 验证
 
-七项功能的验证方式。五个 `npm run verify:*` 脚本连的都是同一套[测试栈](#测试栈)，判据与退出码共用 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)。
+八项功能的验证方式。六个 `npm run verify:*` 脚本连的都是同一套[测试栈](#测试栈)，判据与退出码共用 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)。
 
 ## node 在哪
 
@@ -186,3 +186,23 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:settings
 - **「插件确实没了」要按 entry 的 `name`（包名）判，不是 `id`**。entry 的 id 由 bundle 自己定，按包名找 id 永远找不到，那条断言就会在插件明明还在的时候报绿。
 
 一轮完整跑的读数见[功能 8 · 实测读数](./feature-8-harness-config.md#实测读数)。
+
+## 功能 9 的验证
+
+```
+PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:chat-history
+```
+
+十四条断言，全部打[测试栈](#测试栈)（`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，验的是页面自带实例：功能 9 不调用任何 harness 服务，没有需要打桩的破坏性动作。
+
+历史断言的 oracle 是脚本自己对导航列与消息流的独立读取（fiber 里的轮次条目 + loaded 锚点行的气泡全文）——被测会话的提问全部先于插件存在，不从插件侧取任何期望值。导航的期望值取自被测会话的真实提问，不写死。
+
+覆盖：句柄与 snapshot、历史条数与导航列条目一致、历史文本与独立读取一致、↑ 从最新回翻、连续 ↑、按满停在最早一条、↓ 返程、↓ 越界清空并退出、有未提交内容且光标在文中不接管、多行且光标在非文档开头不接管、切会话后历史换成那个会话的、不写 localStorage、dispose 后不再接管、刷新后长出新实例。
+
+- **选会话不能按名字**：测试栈副本随真实 home 漂移，且部分会话的视图没有输入框（只读/归档）或挂载很慢。脚本逐行点开侧边栏会话，等「历史 ≥2 且 composer 在、且两次读数一致（视图落定）」；**运行中的会话直接跳过**（node 的 `running` 字段，行 fiber 反查）——运行中的会话页输入框不可用。
+- **导航列 tick 数不作数**：轮次多时 tick 会被压缩采样，条数比对一律走 fiber 里的 `items`。
+- **设值断言读 `innerText`**；脚本侧清空用 `selectAll` + 真实 Delete 键（`execCommand('delete')` 在 Lexical 上不生效），`selectAll` 与 Delete 之间要让一拍——选区同步进 Lexical 是异步的。插件侧的写入坑更多，见[功能 9 文档](./feature-9-chat-history.md)。
+- **多行内容用 CDP `Input.insertText` 一次插入 `'line1\nline2'`**（真实输入管线保留换行；`execCommand('insertText')` 会抹平）。
+- **会话切换靠点侧边栏行**：应用没有 URL 路由，URL 恒为 `/`。
+- 不覆盖：多设备/多浏览器——历史只读当前页面状态，没有可跨的东西。
+

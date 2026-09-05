@@ -65,6 +65,7 @@ OWN_NS        // '@Tinnikx/dsh-operation-improve'
   instanceId,                       // 本份实例的 id，也写在它开出的每个菜单的 data-dsh-oi-owner 上
   selection,                        // 选择状态 store 本体
   timestamps,                       // { dispose, snapshot, refresh }
+  chatHistory,                      // { dispose, snapshot }
   multiSelect:   { dispose() },
   contextMenu:   { dispose() },     // 摘监听器，并关掉可能开着的菜单
   selectionMenu: { dispose() },     // 同上，功能 6
