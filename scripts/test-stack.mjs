@@ -68,7 +68,9 @@ const CHROME_ARGS = [
   `--remote-debugging-port=${CDP_PORT}`,
   '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4',
   `--user-data-dir=${CHROME_PROFILE}`,
-  PAGE_URL,
+  // 首页 URL 在 startChrome 里拼：v0.1.2-rc.1 起 harness 要 token 认证，裸 URL
+  // 打开的是 401 认证页而不是应用——就绪探针能过（它带 token），但所有 verify
+  // 脚本都打在一个没有侧边栏、没有输入框的页面上。
 ]
 
 const CHROME_BIN = '/opt/google/chrome/chrome'
@@ -210,11 +212,11 @@ function relinkPlugin() {
   const modules = join(TEST_HOME, 'profiles/web/node_modules')
   // 旧名那条软链也要摘掉：留着副本里就有两份同源的包，而 manifest 改写漏一处
   // 就会静默走回旧的那份，症状与「改名没生效」一模一样。
-  rmSync(join(modules, LEGACY_PLUGIN_NAME), { force: true })
+  rmSync(join(modules, LEGACY_PLUGIN_NAME), { force: true, recursive: true })
   const link = join(modules, PLUGIN_NAME)
   // scoped 包多一层目录，副本里未必已经有 `@Tinnikx/`。
   mkdirSync(dirname(link), { recursive: true })
-  rmSync(link, { force: true })
+  rmSync(link, { force: true, recursive: true })
   symlinkSync(REPO, link)
   rescopeManifest()
 }
@@ -285,14 +287,49 @@ async function startHarness() {
   child.unref()
   writeFileSync(HARNESS_PID, String(child.pid))
 
+  // v0.1.2-rc.1 起 harness 带 token 认证。就绪检测要：
+  //   1. 从日志提取 ?token=XXX
+  //   2. fetch(url?token=…) + redirect:'manual' 拿 303 + Set-Cookie
+  //   3. 带 cookie 访问页面，检查 __DSH_BOOT__
+  let token = null
   for (let i = 0; i < 120; i += 1) {
     await sleep(500)
     if (readPid(HARNESS_PID) === null) die(`harness 退出了，日志：${HARNESS_LOG}`)
+
+    // 从日志提取 token（懒提取，只读一次文件尾部）。
+    if (token === null) {
+      try {
+        const logContent = readFileSync(HARNESS_LOG, 'utf8')
+        const match = logContent.match(/\?token=([^\s&"']+)/)
+        if (match !== null) token = match[1]
+      } catch { /* 日志还没写完 */ }
+    }
+
     let html = ''
     try {
-      const res = await fetch(PAGE_URL, { signal: AbortSignal.timeout(1500) })
-      if (!res.ok) continue
-      html = await res.text()
+      if (token !== null) {
+        // 带 token 拿 cookie，再带 cookie 访问。
+        const authRes = await fetch(`${PAGE_URL}?token=${token}`, {
+          redirect: 'manual',
+          signal: AbortSignal.timeout(1500),
+        })
+        const setCookie = authRes.headers.getSetCookie?.() ?? []
+        const cookie = setCookie.map((c) => c.split(';')[0]).join('; ')
+        if (cookie !== '') {
+          const pageRes = await fetch(PAGE_URL, {
+            headers: { cookie },
+            signal: AbortSignal.timeout(1500),
+          })
+          if (!pageRes.ok) continue
+          html = await pageRes.text()
+        }
+      }
+      if (html === '') {
+        // 无 token 或无 cookie：尝试直接访问（某些版本不需要认证）。
+        const res = await fetch(PAGE_URL, { signal: AbortSignal.timeout(1500) })
+        if (!res.ok) continue
+        html = await res.text()
+      }
     } catch {
       continue
     }
@@ -304,16 +341,18 @@ async function startHarness() {
     if (!hasPlugin) {
       die(`副本的 profile 里没有 @Tinnikx/dsh-operation-improve——它没装进 ${REAL_HOME}/profiles/web，或同步漏了。`)
     }
-    return
+    return token
   }
   die(`harness 60 秒内没就绪，日志：${HARNESS_LOG}`)
 }
 
 /** 起 Chrome，等到 CDP 上出现被测页面的 target。 */
-async function startChrome() {
+async function startChrome(token) {
   if (!existsSync(CHROME_BIN)) die(`找不到 ${CHROME_BIN}`)
+  // 带 token 的首跳被 303 回首页并落认证 cookie，之后页面自己跑在无 token 的 `/` 上。
+  const startUrl = token === null ? PAGE_URL : `${PAGE_URL}?token=${encodeURIComponent(token)}`
   const log = openSync(join(STATE_DIR, 'chrome.log'), 'w')
-  const child = spawn(CHROME_BIN, CHROME_ARGS, { stdio: ['ignore', log, log], detached: true })
+  const child = spawn(CHROME_BIN, [...CHROME_ARGS, startUrl], { stdio: ['ignore', log, log], detached: true })
   child.unref()
   writeFileSync(CHROME_PID, String(child.pid))
 
@@ -338,8 +377,8 @@ async function up() {
   if (HARNESS_PORT === RESERVED_PORT) die('测试栈的端口不能是日常那个 harness 的端口')
   mkdirSync(STATE_DIR, { recursive: true })
   syncHome()
-  await startHarness()
-  await startChrome()
+  const token = await startHarness()
+  await startChrome(token)
   console.log('\n[test-stack] 起好了。现在可以不带参数跑验证脚本：')
   // 带上 PATH 前缀照抄即可用：`PATH=… npm run stack:up` 只对那一条命令生效，
   // 跑完这个提示的那个 shell 里 `node` 仍是系统/nvm 那份。

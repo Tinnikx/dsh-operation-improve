@@ -25,6 +25,8 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:down    # 停
 
 `up` 做三件事：`rsync -a --delete` 把 `~/.dsh` 同步成 `/tmp/dsh-oi-test-home`（排除 `.credentials.yaml`，首次全量、之后增量）；用产品自带的 node 起一个 `DSH_HOME` 指向副本的 harness，端口 3181；起一个独占 `--user-data-dir` 的 headless Chrome，CDP 9334，带上窗口宽度与 hover 那两个 `--blink-settings`。三个脚本不带参数就打这套地址（默认值在 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 的 `resolveTarget`）。
 
+harness 带 token 认证：`up` 从 harness 日志提取 `?token=`，先给就绪探针换 cookie，再把 token 拼进 Chrome 的启动 URL（303 落 cookie，之后页面照常跑在 `/` 上）。不带 token 打开的首页是 401 认证屏——就绪探针能过（它带 token），但页面上没有侧边栏也没有输入框，所有 verify 脚本都会在错误页面上空跑。
+
 **副本不能省，也不能让两个 harness 共用一个 `DSH_HOME`**：同一个 home 上的两个 harness 各持一份启动时读进内存的 workspace 状态，谁都不看对方的写入——一边归档掉的会话在另一边照样列着，且后写的静默盖掉前一个。拿真 home 起第二个 harness，等于用测试去改用户正在看的那份列表。
 
 **副本里那条插件软链必须重新指过**。`pnpm add link:` 在 profile 的 `node_modules` 里留的是相对软链，起点是 home 自己；`rsync` 原样搬运目标字符串，副本里那条就从 `/tmp/` 往上数四层指到不存在的 `/tmp/dev/...`——**插件静默消失**，页面照样 200、照样出界面，只是七项功能一个都没有。`syncHome()` 因此在 rsync 之后把它改写成指向本仓库的绝对软链（scoped 包名要先 `mkdir` 出 `node_modules/@Tinnikx/`，并清掉可能残留的旧的无 scope 软链），同时把副本 profile 的 `package.json` 里 `dependencies` 与 `dsh.profile.bundles` 两处改写成 `@Tinnikx/dsh-operation-improve`——**只改副本，真 `~/.dsh` 一个字节不动**。`startHarness()` 再断言首页名册里有 `@Tinnikx/dsh-operation-improve`。
