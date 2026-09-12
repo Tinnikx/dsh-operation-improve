@@ -1,7 +1,7 @@
 /**
  * 通用设置栏里的「Harness 高级配置」一行。
  *
- * 这一类配置（`compaction-basic` 的压缩阈值、`tool-result-pruner` 的裁剪长度……）只有
+ * 这一类配置（`session-query-sqlite` 的分页条数、`bash-sandbox` 的超时预算……）只有
  * cordis entry config，没有 settings 命名空间，`ctx.settings` 那条路够不到，所以界面上
  * 原本没有任何入口。这一行把它们搬进设置面板，写回当前 profile 的 `cordis.patch.yml`。
  *

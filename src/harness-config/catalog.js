@@ -3,9 +3,9 @@
  * 收录口径也写在那里。
  *
  * `crossRules` 是**上游会硬抛的跨字段约束**的镜像，前后端共用同一份声明（GET 把
- * 目录原样发给客户端）。镜像不是装饰：违反 `retainRatio < thresholdRatio` 或
- * `headChars + 39 + tailChars ≤ thresholdChars` 会让对应插件**加载失败**，
- * 而 patch 是热的——写下去那一刻整棵树就起不来了。
+ * 目录原样发给客户端）。镜像不是装饰：违反「回退标题不大于标题上限」或
+ * `defaultLimit ≤ maxLimit` 会让对应插件**加载失败**，而 patch 是热的——写下去那
+ * 一刻整棵树就起不来了。
  */
 
 import { CATALOG } from './catalog-entries.js'

@@ -10,7 +10,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | **功能 5** | 活跃标记（`StateDot state="ongoing"`）的配色覆盖。把上游那 8 格追逐动画的基线不透明度从 `.15` 抬到 `.6` 并换成青色，深浅主题各一个值。纯样式，不加监听。 | [docs/feature-5-active-dot.md](docs/feature-5-active-dot.md) |
 | **功能 6** | 选中文本的右键菜单。页面任意位置选中一段文本后在选区上右键，弹出与功能 2 同一套外观的菜单，给「复制」；落点可输入时再给「粘贴」（可输入的空控件上即使没有选中文本也弹，只给「粘贴」）。两项都没有时不吃掉事件，原生菜单照常。 | [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md) |
 | **功能 7** | 思考区域的高度上限与滑块。展开后的思考正文超过 60vh 时截到 60vh 并出竖直滚动条，放得下的一点不变。纯样式，不加监听，配色字号行距内边距全部留给上游。 | [docs/feature-7-think-scroll.md](docs/feature-7-think-scroll.md) |
-| **功能 8** | 设置页「通用设置」里的「Harness 高级配置」一行。展开后是一个精选清单面板，把只有 cordis entry config、没有 settings 命名空间的那类配置（压缩阈值、工具结果裁剪长度、ralph 轮数……）搬进界面，写回当前 profile 的 `cordis.patch.yml` 里一个托管区段。改完离开输入框即自动保存，没有保存按钮。 | [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md) |
+| **功能 8** | 设置页「通用设置」里的「Harness 高级配置」一行。展开后是一个精选清单面板，把只有 cordis entry config、没有 settings 命名空间、且在当前部署上真有活消费者的那类配置（会话检索分页、Bash 工具预算、请求配额……）搬进界面，写回当前 profile 的 `cordis.patch.yml` 里一个托管区段；每张卡标注改完之后值什么时候被用上。改完离开输入框即自动保存，没有保存按钮。 | [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md) |
 | **功能 9** | 对话历史导航。输入框为空时按上下键翻阅本会话的历史提问——读右侧轮次导航列，装上插件之前的提问也在，不做本地记录。 | [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md) |
 
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)。

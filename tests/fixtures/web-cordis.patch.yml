@@ -16,8 +16,10 @@
     maxMembers: 15
     executionPrompt: The document does not need to record the process; it should only record facts, unless I explicitly request the process to be recorded. The product interface should present the intended outcome, not reveal the reasoning process..
 
-- id: compaction-basic
+- id: session-query-sqlite
   config:
-    maxTokens: 64000      # 必须 ≤ 模型输出上限(sonnet-5 为 64000)
-    thresholdRatio: 0.6   # 264k*0.6≈158k 就开始压,待压区间更小
-    retainRatio: 0.15
+    path: ":memory:"      # bundle 层给的就是内存库;手写层接管这个 id 后要原样带走
+    openAt: never         # 全文检索保持关闭,SQLite 不落盘
+    maxLimit: 100         # 手写的每页上限,面板托管时这行会被原样重述
+    defaultLimit: 30      # 检索默认每页 30 条,侧栏翻页少一页
+    readWindowMax: 40     # 单次读取窗口跟着默认条数走,略留余量

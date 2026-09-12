@@ -18,7 +18,7 @@ installHarnessConfigRow(ctx) -> { dispose }     // 幂等 disposer
 export const SETTINGS_CSS                       // 由 client 入口拼进那张样式表
 ```
 
-harness 里有一整类插件只有 cordis entry config、没有 settings 命名空间：`compaction-basic` 的 `thresholdRatio` / `retainRatio`、`tool-result-pruner` 的三个长度、`tool-ralph` 的 `maxRounds` 都是这样。`ctx.settings`（写 `$DSH_HOME/settings.yaml`，模型页与外观页走的那条路）**够不到它们**，唯一的改法是手编辑 profile 的 `cordis.patch.yml`——要知道键名，还要知道 `retainRatio` 必须小于 `thresholdRatio`（违反会让插件**加载失败**，而 patch 是热的，写下去那一刻整棵树就起不来了）。这一项把[精选清单](../src/harness-config/catalog-entries.js)里那些字段搬进设置页，收录口径写在清单自己的头注释里。
+harness 里有一整类插件只有 cordis entry config、没有 settings 命名空间：`session-query-sqlite` 的分页条数、`bash-sandbox` 的超时与输出预算、`llm-deepseek` 的请求配额都是这样。`ctx.settings`（写 `$DSH_HOME/settings.yaml`，模型页与外观页走的那条路）**够不到它们**，唯一的改法是手编辑 profile 的 `cordis.patch.yml`——要知道键名，还要知道 `defaultLimit` 不能大于 `maxLimit`（违反会让插件**加载失败**，而 patch 是热的，写下去那一刻整棵树就起不来了）。这一项把[精选清单](../src/harness-config/catalog-entries.js)里那些字段搬进设置页，收录口径写在清单自己的头注释里。
 
 ## 托管区段
 
@@ -28,14 +28,15 @@ harness 里有一整类插件只有 cordis entry config、没有 settings 命名
 # >>> dsh-operation-improve: 「Harness 高级配置」面板托管区段
 # 这一段由设置面板整体重写，手改会在下次保存时丢失；要手写请放到标记之外。
 # 移除本插件不会清空这一段，写下的配置照样生效。
-# managed: {"compaction-basic":["thresholdRatio"],"tool-ralph":["maxRounds"]}
-- id: compaction-basic
+# managed: {"session-query-sqlite":["maxLimit"],"bash-sandbox":["timeoutMs"]}
+- id: session-query-sqlite
   config:
     # ↓ 由「Harness 高级配置」面板设置
-    thresholdRatio: 0.55
+    maxLimit: 50
     # ↓ 面板之外已有的值，原样重述：patch 按 id 命中会整体替换 config，不重述就被抹掉了
-    maxTokens: 64000
-    retainRatio: 0.15
+    path: ":memory:"
+    openAt: never
+    defaultLimit: 30
 # <<< dsh-operation-improve
 ```
 
@@ -57,7 +58,7 @@ harness 里有一整类插件只有 cordis entry config、没有 settings 命名
 
 ## restate：whole-config 替换的解法
 
-**patch 按 id 命中时替换整个 `config`，没有深合并。** 所以写托管行时 `config` 必须 = 该 entry 在区段外已经生效的全部键 ∪ 本次托管的键，否则 `tool-ralph` 的 `subagentProvider`、用户自己手写的 `maxTokens` 都会被整体替换抹掉。区段外的基线由 `loadProfile` + `composeEntries` 现算（bundle 层 + 用户层去掉尾部 K 条），每次保存前重读一次文件——别人在编辑器里改过之后不重读，就会拿旧基线去重述、把人家刚写的键抹掉。
+**patch 按 id 命中时替换整个 `config`，没有深合并。** 所以写托管行时 `config` 必须 = 该 entry 在区段外已经生效的全部键 ∪ 本次托管的键，否则 `session-query-sqlite` 的 `path`（bundle 层给的内存库）、用户自己手写的行都会被整体替换抹掉。区段外的基线由 `loadProfile` + `composeEntries` 现算（bundle 层 + 用户层去掉尾部 K 条），每次保存前重读一次文件——别人在编辑器里改过之后不重读，就会拿旧基线去重述、把人家刚写的键抹掉。
 
 面板因此对每个字段算三个值：`bundle`（只由 bundle 层合成，即「系统默认」的权威定义）、`outside`（bundle + 区段外的用户 patch，重述的来源）、`effective`（整份文件合成的结果，也就是显示的当前值）。字段右侧的来源徽标就是这三层的判读：`本面板` / `手写` / **设这个值的 bundle 包名** / `系统默认`。
 
@@ -67,13 +68,13 @@ harness 里有一整类插件只有 cordis entry config、没有 settings 命名
 
 面板没有保存按钮。四个提交点：输入框失焦、输入框里按 `Enter`（转成失焦）、复选框 change、点「清除」。
 
-- **每次提交发的是整张草稿表**，不是刚离开的那一个字段。跨字段规则跑在合成值上，只交当前字段会让「先调小 `thresholdRatio`、再调小 `retainRatio`」死在第一步，而没有保存按钮也就没有「两个一起交」的第二次机会。被拒的草稿因此原样留在输入框里，等下一个字段一起过；想撤掉它就点那一行的「清除」。
+- **每次提交发的是整张草稿表**，不是刚离开的那一个字段。跨字段规则跑在合成值上，只交当前字段会让「先调大 `defaultLimit`、再调小 `maxLimit`」死在第一步，而没有保存按钮也就没有「两个一起交」的第二次机会。被拒的草稿因此原样留在输入框里，等下一个字段一起过；想撤掉它就点那一行的「清除」。
 - **提交串行**。连着两次失焦，第二次必须拿第一次写完后的 payload 去算重述，否则重述用的是旧基线，会把刚写进去的键抹掉。所以走一条 promise 链，并从 ref 读最新的 payload 与草稿——`setState` 是异步的，读 state 会读到上一轮。
 - **写请求不挂卸载 abort**。点收起头部会先让输入框失焦、提交，紧接着面板卸载；跟着那次 `GET` 一起 abort 就等于静默吞掉用户最后一次改动。只有初次 `GET` 归卸载时 abort 的那个 controller，`setState` 由 `mountedRef` 守。
 
 ## 不设置 = 不写这个键
 
-清单里的 `default` **只用于界面提示**（「默认 0.8」），从不写进文件。清空一个输入框、或者点那一行的「清除」，都等于 `unset`：键从区段里消失，值回落到下一层（区段外的手写行 → bundle 层 → harness 自己的默认）。上游改了默认值，最坏是提示过时，行为不受影响。
+清单里的 `default` **只用于界面提示**（「默认 20」），从不写进文件。清空一个输入框、或者点那一行的「清除」，都等于 `unset`：键从区段里消失，值回落到下一层（区段外的手写行 → bundle 层 → harness 自己的默认）。上游改了默认值，最坏是提示过时，行为不受影响。
 
 三层都没设过的字段**只淡化控件本身**（`opacity: 0.55`），标签与说明留在满对比度上——读不读得懂这一项，与它有没有被设过无关。输入框空着、默认值只走灰色 `placeholder`。**默认值不能填进 `value`**：那样一次失焦就把 harness 的默认值当成用户输入写死进文件，上游改默认时旧值被钉住。淡化用 `opacity` 而不是改 `color`——主题插件可以把 `--dsw-alias-label-*` 全部 `!important` 成同一个颜色（本仓库测试栈里那份主题就把四档标签色统统压成纯白），按颜色淡化的控件和正常控件会长得一模一样。控件仍然可编辑，聚焦时恢复满对比度。bundle 层设过的字段**不淡化**：它的徽标已经指名是哪个包设的，那不是「没人设过」。
 
@@ -96,16 +97,17 @@ host 半边 `inject = ['webServer', 'loader']`：非 web surface 下插件挂起
 - **纯注释 / 空的 patch 文件会让整个 profile 加载失败**，所以区段清空后要补 `[]`。
 - **`ctx.loader.resolve(id)` 够不到嵌套在分组里的 id**，读跑着的值只能遍历 `ctx.loader.entries()` 比 `options.id`。
 
-## 刻意不做的字段
+## 不在清单里的 entry
 
-- `compaction-basic` 的 `retainTokens`（与 `retainRatio` 互斥，两个都摆出来只会让人写出互相打架的一对）、`summarizationProvider` / `summarizationModel`（必须成对，且选模型归模型页）、`modelPolicies`（数组表格，值不抵成本）。
-- `tool-web.fetch`：`dsh-base` 的 patch 注释写明它被刻意关掉——"that provider defers SSRF protection and the model would choose the request target"。**一键翻转一个上游的安全决定不该藏在设置面板里**，这一项只暴露 `searchTimeoutMs`。
+- **web 产品上由 agent preset 接管的五张**：`dsh-web-app` 把 host 平面的 `compaction-basic`、`tool-result-pruner`、`tool-ralph`、`tool-todo`、`tool-web` 全部 `disabled: true`，改由 agent preset（`agent.cordis.yml`）按会话另挂一棵独立 Include 树（`PresetTree` 只拿预设文件自己当 config，用户 patch 层不流进去）。面板写下的值到不了任何会话，写了就是空操作——收录口径 #2 拦掉它们。
+- **整个 config 进了 settings 命名空间的两张**：`agent-loop`、`web-search-deepseek`。`ctx.settings` 那条路够得到了（口径 #1），再从面板写 entry config 就是双入口，且 settings 优先。
+- **字段里有 `__jsExpr` 表达式的**（`tools`、`sandbox-policy`、`approval`、`webserver` 等）：重述时会被序列化成普通映射，静默改行为（口径 #4）。
+- **值不是数字或布尔的**：字符串、枚举、数组表格面板表达不了，写进托管区段还要原样重述，猜出来的 YAML 比不写更糟（口径 #3）。
+- **在 web profile 的组合里根本不存在的**：`tool-str-replace-editor`。`applyOps` 的 present 检查会拒，留着只是死重。
 
 ## 实测读数
 
-一轮完整跑（`passed=16 failed=0 skipped=0 total=16`）：面板渲染出 59 个文本字段（清单 21 个 entry、63 个字段，减去 4 个布尔字段——复选框不带 `data-field`）、`[data-save]` 计数为 `0`；`compaction-basic.compactionRetries` 那一行 `data-default` 在、`value` 为空、`placeholder` 是 `1`、输入框计算 `opacity` `0.55` 而整行与标签都是 `1`，手写的 `thresholdRatio` 那一行输入框 `opacity` `1`；`tool-ralph.maxRounds` 的徽标 `data-source="bundle"`、文字 `dsh-base`、`title` `@deepseek-ai/dsh-base`，与 host 归因出的包名一致，而手写行仍是 `手写`、系统默认行仍是 `系统默认`（两者都没有 `data-owner`）。只让输入框失焦、不点任何按钮，区段头写成 `# managed: {"compaction-basic":["thresholdRatio","compactionRetries"]}`，区段外逐字节不变；热重载把从基线算出的 `thresholdRatio: 0.58` / `compactionRetries: 3` 送进 loader 用了 **11ms**，`compactionRetries` 那一行随即变成 `opacity` `1` 且徽标转 `本面板`；写 `tool-ralph.maxRounds` 时区段里出现 `    subagentProvider: "spawn"`，live config 里两个键都在（**11ms**）；手写那两行（`maxTokens: 64000      # 必须 ≤ 模型输出上限(sonnet-5 为 64000)` 与 `thresholdRatio: 0.8   # …`）连行尾中文注释原样保留，`maxTokens: 64000` 与 `retainRatio: 0.16` 照样生效；`retainRatio = 0.68 > thresholdRatio = 0.58` 被前端拦下（`上下文压缩：保留比例必须小于触发阈值比例，否则 compaction-basic 加载失败。`），文件 sha 前后同为 `1a32ae6d105b265a`，点「清除」撤掉这条草稿后错误清空、待提交归零、输入框退回 `0.16`、文件 sha 不变；卸载副本里区段仍在、`compaction-basic.thresholdRatio` 仍是 `0.58`、`tool-ralph.maxRounds` 仍是 `32`，3182 上的 harness 起得来且名册里没有本插件；点「清除」之后不做任何别的操作，`compactionRetries` **13ms** 内从 live config 里消失、文件里也不含这个键（**不是把默认值写进去**）；全部清空后文件逐字节回到基线（sha `bf6bb159d31f82ea`），值回落到手写层的 `0.8` 与 bundle 层的 `64`，那一行的输入框重新淡化成 `opacity` `0.55`。徽标不挤版：`dsh-base` 实测 57px、`系统默认` 56px，10 个 bundle 徽标一个都没被 `text-overflow` 截断，最宽的那条 meta 行 147px、卡片 556px。
-
-清单本身的两侧另有一轮探测：往 6 个此前没测过的 entry 各写一个键，重述照样只出标量——`agent-loop` 的空数组写成 `agents: []`、`session-query-sqlite` 的 `path: ":memory:"` 与 `openAt: "never"` 带引号、`system-prompt` 那条含 `{{model}}` 的 persona 逐字保留，6 个值全部进了 loader 的 live config，首页仍 200。值域镜像两侧都真：面板拒掉 `maxRequestFilesBytes = 1000`、`fileExpiresAfterSeconds = 3600`、`imageCompressionConcurrency = 9` 与两条跨字段（`fallbackMaxBytes > maxTitleBytes`、`defaultLimit > maxLimit`），文件 sha 一次没动；把 `fallbackMaxBytes: 100` 手写进 patch 之后，文件里是 `100` 而 loader 跑着的仍是 `40`——**插件拒绝以这个值重载**，镜像挡下的确实是会让 entry 起不来的值。
+一轮完整跑（`passed=17 failed=0 skipped=0 total=17`）：面板渲染出 50 个 `data-field`、13 张卡，`[data-save]` 计数为 `0`，每张卡都带着 `data-effect` 生效标记（唯一的字段级「重启生效」是 `preparedSessionCacheSize`）；没人设过的 `persistedReadConcurrency` 那一行 `data-default` 在、`value` 为空、`placeholder` 是 `4`、输入框计算 `opacity` `0.55` 而整行与标签都是 `1`，手写的 `defaultLimit: 30` 那一行输入框 `opacity` `1`；`bash-sandbox.timeoutMs` 的徽标 `data-source="bundle"`、文字 `dsh-base`、`title` `@deepseek-ai/dsh-base`，与 host 归因出的包名一致，而手写行仍是 `手写`、系统默认行仍是 `系统默认`（两者都没有 `data-owner`）。只让输入框失焦、不点任何按钮，区段头写成 `# managed: {"session-query-sqlite":["maxLimit","readWindowMax"]}`，区段外逐字节不变；热重载把从基线算出的 `maxLimit: 50` / `readWindowMax: 50` 送进 loader 用了 **9ms**，那一行随即变成 `opacity` `1` 且徽标转 `本面板`；写 `snippetChars` 时 bundle 层的 `path: ":memory:"` 与 `openAt: never` 原样重述进区段，三个键都进了 live config（**10ms**）；手写那两行（`defaultLimit: 30      # 检索默认每页 30 条,…` 与 `readWindowMax: 40     # …`）连行尾中文注释原样保留；`defaultLimit = 60 > 托管中的 maxLimit = 50` 被前端拦下（`会话检索：默认每页条数不能超过每页条数上限，否则 session-query-sqlite 加载失败。`），文件 sha 前后同为 `eb325b7622198300`，点「清除」撤掉这条草稿后错误清空、待提交归零、输入框退回 `30`、文件 sha 不变；卸载副本里区段仍在、`maxLimit` 仍是 `50`，3182 上的 harness 起得来且名册里没有本插件；点「清除」之后不做任何别的操作，`snippetChars` **10ms** 内从 live config 里消失、区段里也不含这个键（**不是把默认值写进去**）；全部清空后文件逐字节回到基线（sha `f2b49ffec12da4d6`），`maxLimit` 回落到手写层的 `100`、`path` 仍是 `:memory:`，`snippetChars` 那一行的输入框重新淡化成 `opacity` `0.55`。
 
 ## 已知限制
 
@@ -119,4 +121,4 @@ host 半边 `inject = ['webServer', 'loader']`：非 web surface 下插件挂起
 
 ## 验证
 
-跑法、16 条断言与八处坑见[验证 · 功能 8](./verify.md#功能-8-的验证)（`npm run verify:settings`）。**这个脚本会真的往 patch 文件里写字节**，只能打测试栈。
+跑法、17 条断言与八处坑见[验证 · 功能 8](./verify.md#功能-8-的验证)（`npm run verify:settings`）。**这个脚本会真的往 patch 文件里写字节**，只能打测试栈。

@@ -23,7 +23,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:down    # 停
 
 `PATH` 前缀在走 `npm run` 时同样不能省：这台机器上的 `npm` 是 nvm v16 那份，它 spawn 的 `node` 直接取自 PATH。
 
-`up` 做三件事：`rsync -a --delete` 把 `~/.dsh` 同步成 `/tmp/dsh-oi-test-home`（排除 `.credentials.yaml`，首次全量、之后增量）；用产品自带的 node 起一个 `DSH_HOME` 指向副本的 harness，端口 3181；起一个独占 `--user-data-dir` 的 headless Chrome，CDP 9334，带上窗口宽度与 hover 那两个 `--blink-settings`。三个脚本不带参数就打这套地址（默认值在 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 的 `resolveTarget`）。
+`up` 做三件事：`rsync -a --delete` 把 `~/.dsh` 同步成仓库内的 `tmp/dsh-oi-test-home`（排除 `.credentials.yaml`，首次全量、之后增量）；用产品自带的 node 起一个 `DSH_HOME` 指向副本的 harness，端口 3181；起一个独占 `--user-data-dir` 的 headless Chrome，CDP 9334，带上窗口宽度与 hover 那两个 `--blink-settings`。三个脚本不带参数就打这套地址（默认值在 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 的 `resolveTarget`）。
 
 harness 带 token 认证：`up` 从 harness 日志提取 `?token=`，先给就绪探针换 cookie，再把 token 拼进 Chrome 的启动 URL（303 落 cookie，之后页面照常跑在 `/` 上）。不带 token 打开的首页是 401 认证屏——就绪探针能过（它带 token），但页面上没有侧边栏也没有输入框，所有 verify 脚本都会在错误页面上空跑。
 
@@ -45,7 +45,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 
 **参数必须写成 glob，不能给目录**：`npm test` 里那条命令是 `node --test tests/*.test.mjs`，写成 `node --test tests/` 在这个版本上报 `pass 0 / fail 1`，那是参数处理，不是测试失败。
 
-其中 [patch-file.test.mjs](../tests/patch-file.test.mjs) 的六条断言全部对**字节**，输入是 [fixtures/web-cordis.patch.yml](../tests/fixtures/web-cordis.patch.yml)——真实 web profile 用户 patch 层的逐字副本（含中文行内注释、`file-reference-local`、`agent-teams`、手写的 `compaction-basic`）。覆盖：加区段后区段外逐字节不变、改一个字段只有区段内那一个数变、清掉最后一个字段后文件逐字节回到原文、区段清空后补裸 `[]`、落盘换掉整个 inode、有开标记没闭标记时拒绝改写。**判据不能是「解析出来一样」**：那样写的话，把别人行尾的注释吞掉的实现也照样通过。
+其中 [patch-file.test.mjs](../tests/patch-file.test.mjs) 的六条断言全部对**字节**，输入是 [fixtures/web-cordis.patch.yml](../tests/fixtures/web-cordis.patch.yml)——真实 web profile 用户 patch 层的逐字副本（含中文行内注释、`file-reference-local`、`agent-teams`、手写的 `session-query-sqlite`）。覆盖：加区段后区段外逐字节不变、改一个字段只有区段内那一个数变、清掉最后一个字段后文件逐字节回到原文、区段清空后补裸 `[]`、落盘换掉整个 inode、有开标记没闭标记时拒绝改写。**判据不能是「解析出来一样」**：那样写的话，把别人行尾的注释吞掉的实现也照样通过。
 
 ## 端到端
 
@@ -98,7 +98,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify
 菜单文案的断言比对的是**上游词典当场给出的那串文本**，不是写死的「分叉会话」——所以它在任何语言下都成立，但也因此单跑一次证明不了「切了语言文案会跟着变」。换语言的办法是改测试栈那份 home 的 `locale.preference`（`zh` / `en`），**harness 不用重启，刷新页面即生效**（`verify` 自己会 `Page.reload`）：
 
 ```
-sed -i 's/^  preference: zh$/  preference: en/' /tmp/dsh-oi-test-home/settings.yaml
+sed -i 's/^  preference: zh$/  preference: en/' tmp/dsh-oi-test-home/settings.yaml
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify     # 改回 zh 再跑一遍
 ```
 
@@ -174,10 +174,11 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH node .scratch/think-scroll-check.mjs
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:settings
 ```
 
-十六条断言，全部打[测试栈](#测试栈)（`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，驱动的是页面自带那份实例渲染出来的真面板：打开设置 → 展开这一行 → 用真实输入事件改值 → 让输入框失焦，然后同时读三处——patch 文件的字节、host 路由回的 `live`、面板自己的 DOM。覆盖：手写值即当前值且标 `manual`、DOM 里根本没有保存按钮、只失焦就写出区段且区段外逐字节不变、不重启 harness 就热重载生效、写 `tool-ralph` 时 restate 住 `subagentProvider`、手写行连行尾注释原样保留、跨字段规则被前端拦下且文件一个字节没动、点「清除」撤掉被拒的草稿、卸载本插件后区段与效力都还在、点「清除」不做别的操作就把键摘回 harness 默认、托管键清空后区段整体消失且文件逐字节回到基线、没人设过的字段只淡化控件且默认值只在 `placeholder` 里（设过之后恢复、清空之后重新淡化）、bundle 字段的徽标显示来源包名而手写与系统默认的文案不变。
+十七条断言，全部打[测试栈](#测试栈)（`DSH_HOME=<repo>/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，驱动的是页面自带那份实例渲染出来的真面板：打开设置 → 展开这一行 → 用真实输入事件改值 → 让输入框失焦，然后同时读三处——patch 文件的字节、host 路由回的 `live`、面板自己的 DOM。覆盖：手写值即当前值且标 `manual`、DOM 里根本没有保存按钮、只失焦就写出区段且区段外逐字节不变、不重启 harness 就热重载生效、写 `snippetChars` 时 restate 住 bundle 层的 `path`/`openAt`、手写行连行尾注释原样保留、跨字段规则被前端拦下且文件一个字节没动、点「清除」撤掉被拒的草稿、卸载本插件后区段与效力都还在、点「清除」不做别的操作就把键摘掉、托管键清空后区段整体消失且文件逐字节回到基线、没人设过的字段只淡化控件且默认值只在 `placeholder` 里（设过之后恢复、清空之后重新淡化）、bundle 字段的徽标显示来源包名而手写与系统默认的文案不变、每张卡都渲染生效方式标记。
 
-- **本脚本会真的往 patch 文件里写字节**，所以它比别的 verify 脚本更依赖测试栈那道隔离。开头先做两道前置检查：基线里已经有托管区段就 `abort`（上一轮中途失败留下的脏基线，或[从真 home 同步进来的那一段](#测试栈)），基线里没有手写的 `compaction-basic` 行也 `abort`（「手写行共存」那条断言要靠它，副本里被删掉时应该说出来而不是静默少测一项）。
-- **测试值从基线算出来，一个都不写死**。副本来自真 `~/.dsh`，那边的手写值随时会被改，写死就是让脚本慢慢烂掉——而且烂法是「面板明明对着、断言却报红」。手写块的值由 host 路由自己的 `outside` 给出，要写进去的新阈值取 `(retainRatio + 1) / 2`（必大于手写的保留比例，且与手写阈值不相等），越界值取它 `+0.1`；「原样保留」比的是从基线里抓出来的那两行原文，不是抄一遍注释。
+- **本脚本会真的往 patch 文件里写字节**，所以它比别的 verify 脚本更依赖测试栈那道隔离。开头先做两道前置检查：基线里已经有托管区段就 `abort`（上一轮中途失败留下的脏基线，或[从真 home 同步进来的那一段](#测试栈)），基线里没有手写的 `session-query-sqlite` 块也 `abort`——「手写行共存」那组断言要靠它，副本里被删掉时应该说出来而不是静默少测一项；缺了就由脚本从仓库夹具补种一份。
+- **夹具里的手写块必须带全 `path`/`openAt`**。手写行与托管行一样按 id 整体替换 config：缺了 `path: ":memory:"`，检索就从内存库翻到真实文件——面板没坏，是块本身写得不完整，这正是「重述」要解决的事的另一面。
+- **测试值从基线算出来，一个都不写死**。副本来自真 `~/.dsh`，那边的手写值随时会被改，写死就是让脚本慢慢烂掉——而且烂法是「面板明明对着、断言却报红」。手写块的值由 host 路由自己的 `outside` 给出，托管的 `maxLimit` 在 `50` 与手写值之间二选一（不同于手写、且不小于目录默认 20，否则提交 cap 那一刻跨字段规则自己先炸）；「原样保留」比的是从基线里抓出来的那两行原文，不是抄一遍注释。
 - **输入必须走 focus + native setter + `input` 事件**。React 的受控 input 认的是 value tracker，直接 `el.value = x` 不触发 `onChange`——状态没变而画面变了，断言会对着一个不存在的草稿报绿；focus 也不能省，面板的写入点在 `onBlur` 上，没聚焦过的元素调 `blur()` 不派发事件，整批断言会一起卡在等一次永远不会发生的写入上。
 - **「生效了」的判据是 host 路由回的 `live`，不是界面上的数**。`live` 来自 `ctx.loader.entries()`，即 loader 真正跑着的那份 config；界面上的值是本次 `GET` 的快照，写完立刻回显不能证明热重载成功。`watchUserPatches` 有防抖，所以是轮询而不是睡一个定长。
 - **「这一次自动保存落定」的判据是待提交计数归零或报错，不是 `data-state`**。后者在 payload 一到手就是 `ready`，写请求还在飞的时候读字段会读到旧快照。

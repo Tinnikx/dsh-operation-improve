@@ -74,6 +74,13 @@ export function FieldRow({ t, entry, field, entryState, draft, putDraft, commit,
         {control}
         <div className={`${ROOT_CLASS}__meta`}>
           <span
+            className={`${ROOT_CLASS}__effect`}
+            data-effect={field.effect ?? entry.effect}
+            title={t(`settings.effect.${field.effect ?? entry.effect}`)}
+          >
+            {t(`settings.effect.${field.effect ?? entry.effect}`)}
+          </span>
+          <span
             className={`${ROOT_CLASS}__badge`}
             data-source={source}
             data-owner={owner ?? undefined}

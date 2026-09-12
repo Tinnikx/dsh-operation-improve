@@ -4,6 +4,8 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 005 | 功能 8 清单对齐 harness 0.1.5-rc.2 + 每张卡片标注生效方式 | 完成 | [005-harness-config-catalog-rc2.md](docs/handoff/005-harness-config-catalog-rc2.md) |
+| 004 | worker 线程持久化后端（已作废） | 完成 | [004-persistence-worker.md](docs/handoff/004-persistence-worker.md) |
 | 003 | 功能 9 历史来源改读会话右侧导航列 | 完成 | [003-chat-history-from-nav.md](docs/handoff/003-chat-history-from-nav.md) |
 | 002 | 功能 9 返工：适配真实应用（sessions 服务 + Lexical 输入框） | 完成 | [002-chat-history-rework.md](docs/handoff/002-chat-history-rework.md) |
 | 001 | 功能 9：对话历史导航（上下键翻阅） | 完成 | [001-chat-history-nav.md](docs/handoff/001-chat-history-nav.md) |

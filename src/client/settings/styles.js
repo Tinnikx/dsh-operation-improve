@@ -103,6 +103,22 @@ export const SETTINGS_CSS = `
   font-size: 12px;
   line-height: 18px;
 }
+
+/* 生效方式徽标：卡片上一枚（整体口径），个别字段行为不同时那行 meta 里再挂一枚。 */
+.${ROOT_CLASS}__effect {
+  align-self: flex-start;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+.${ROOT_CLASS}__effect[data-effect="restart"] {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}
+.${ROOT_CLASS}__meta .${ROOT_CLASS}__effect { align-self: auto; }
 .${ROOT_CLASS}__absent {
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;

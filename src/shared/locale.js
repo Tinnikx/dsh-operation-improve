@@ -35,7 +35,7 @@ const zh = {
   'confirm.archiveSessions': '归档 {n} 个会话？',
   'selection.paste': '粘贴',
   'settings.title': 'Harness 高级配置',
-  'settings.subtitle': '压缩、裁剪、工具上限等只能手改配置文件的项目',
+  'settings.subtitle': '检索分页、工具预算等只能手改配置文件的项目',
   'settings.loading': '正在读取当前配置…',
   'settings.file': '写入 {path}',
   'settings.keep': '改完离开输入框即自动保存，无需重启；未设置的项目走 harness 默认（整行灰显），移除本插件不会清空已写下的配置。',
@@ -49,6 +49,13 @@ const zh = {
   'settings.source.manual': '手写',
   'settings.source.bundle': '组合默认',
   'settings.source.system': '系统默认',
+  'settings.effect.immediate': '保存即生效',
+  'settings.effect.session': '保存即生效；已开的会话不变',
+  'settings.effect.nextRequest': '保存即生效（下一轮请求）',
+  'settings.effect.nextQuery': '保存即生效（下一次检索）',
+  'settings.effect.nextAttachment': '保存即生效（下一次入库）',
+  'settings.effect.nextSession': '保存即生效（新会话起）',
+  'settings.effect.restart': '重启 harness 后生效',
 }
 
 /** 英文词典，键集与 zh 对齐。 */
@@ -59,7 +66,7 @@ const en = {
   'confirm.archiveSessions': 'Archive {n} sessions?',
   'selection.paste': 'Paste',
   'settings.title': 'Harness advanced configuration',
-  'settings.subtitle': 'Compaction, pruning and tool limits — settings that otherwise need a hand-edited config file',
+  'settings.subtitle': 'Search paging, tool budgets — settings that otherwise need a hand-edited config file',
   'settings.loading': 'Reading the current configuration…',
   'settings.file': 'Written to {path}',
   'settings.keep': 'Edits save themselves when the field loses focus, no restart needed. Unset fields are dimmed and fall back to the harness defaults; removing this plugin does not clear what you wrote.',
@@ -73,6 +80,13 @@ const en = {
   'settings.source.manual': 'hand-written',
   'settings.source.bundle': 'composition',
   'settings.source.system': 'harness default',
+  'settings.effect.immediate': 'applies on save',
+  'settings.effect.session': 'applies on save; open sessions unchanged',
+  'settings.effect.nextRequest': 'applies on save (next model request)',
+  'settings.effect.nextQuery': 'applies on save (next search)',
+  'settings.effect.nextAttachment': 'applies on save (next image upload)',
+  'settings.effect.nextSession': 'applies on save (new sessions)',
+  'settings.effect.restart': 'takes effect after a harness restart',
 }
 
 /**

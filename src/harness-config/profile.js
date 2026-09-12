@@ -6,7 +6,7 @@
  *
  * - `bundle`：只由 bundle 层合成，即「系统默认」的权威定义。
  * - `outside`：bundle 层 + 用户层里**托管区段之外**的 patch。写托管行时必须把它的
- *   每个键原样重述进去，否则那些键（`tool-ralph` 的 `subagentProvider`、用户自己
+ *   每个键原样重述进去，否则那些键（`session-query-sqlite` 的 `path`、用户自己
  *   手写的行）会被整体替换抹掉。
  * - `effective`：整份文件合成出来的结果，也就是面板显示的当前值。
  * - `bundleOwners`：`bundle` 里每个键是哪个 bundle 包设的，面板拿它当来源徽标的文案。

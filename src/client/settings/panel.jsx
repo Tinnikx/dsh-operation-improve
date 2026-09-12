@@ -8,7 +8,7 @@
  * 三条与「点保存」那种面板不同的做法：
  *
  * - **每次提交发的是整张草稿表**，不是刚离开的那一个字段。跨字段规则跑在合成值上，
- *   只交当前字段就会让「先调小 `thresholdRatio`、再调小 `retainRatio`」死在第一步——
+ *   只交当前字段就会让「先调大 `defaultLimit`、再调小 `maxLimit`」死在第一步——
  *   而没有保存按钮，也就没有「两个一起交」的第二次机会。被拒的草稿因此原样留着，
  *   等下一个字段一起过。
  * - **提交串行**：连着两次 blur，第二次必须拿第一次写完后的 payload 去算重述，否则
@@ -154,6 +154,13 @@ function EntryCard({ t, entry, entryState, draft, putDraft, commit, disabled }) 
     <div className={`${ROOT_CLASS}__card`} data-entry={entry.id}>
       <div className={`${ROOT_CLASS}__cardTitle`}>{entry.title}</div>
       <div className={`${ROOT_CLASS}__cardDesc`}>{entry.description}</div>
+      <div
+        className={`${ROOT_CLASS}__effect`}
+        data-effect={entry.effect}
+        title={t(`settings.effect.${entry.effect}`)}
+      >
+        {t(`settings.effect.${entry.effect}`)}
+      </div>
       {entryState?.present === true
         ? entry.fields.map((field) => (
           <FieldRow

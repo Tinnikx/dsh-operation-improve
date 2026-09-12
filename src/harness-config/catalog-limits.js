@@ -7,9 +7,6 @@
  * 都不对了，只能靠重读上游 schema 跟上。
  */
 
-/** `dsh-compaction-tool-result-pruner` 的省略标记长度（码点），计入 emitted 预算。 */
-export const PRUNE_MARKER_CHARS = 39
-
 /** `setTimeout` 的延迟上限；上游按它拒绝过大的超时配置。 */
 export const MAX_TIMER_DELAY_MS = 2147483647
 
