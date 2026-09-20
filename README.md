@@ -1,6 +1,6 @@
 # @Tinnikx/dsh-operation-improve
 
-DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加八项行为——功能 1、2 在侧边栏，功能 4、7、9 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页：
+DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加九项行为——功能 1、2、10 在侧边栏，功能 4、7、9 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页：
 
 | | 一句话 | 设计与实测 |
 | --- | --- | --- |
@@ -12,6 +12,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | **功能 7** | 思考区域的高度上限与滑块。展开后的思考正文超过 60vh 时截到 60vh 并出竖直滚动条，放得下的一点不变。纯样式，不加监听，配色字号行距内边距全部留给上游。 | [docs/feature-7-think-scroll.md](docs/feature-7-think-scroll.md) |
 | **功能 8** | 设置页「通用设置」里的「Harness 高级配置」一行。展开后是一个精选清单面板，把只有 cordis entry config、没有 settings 命名空间、且在当前部署上真有活消费者的那类配置（会话检索分页、Bash 工具预算、请求配额……）搬进界面，写回当前 profile 的 `cordis.patch.yml` 里一个托管区段；每张卡标注改完之后值什么时候被用上。改完离开输入框即自动保存，没有保存按钮。 | [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md) |
 | **功能 9** | 对话历史导航。输入框为空时按上下键翻阅本会话的历史提问——读右侧轮次导航列，装上插件之前的提问也在，不做本地记录。 | [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md) |
+| **功能 10** | 侧边栏会话行的状态可视化。当前打开的会话加青色竖条与填充底（上游的选中与 hover 同色）；有任务在跑的行加一圈沿轮廓扫动的彗尾边框与静默底边。纯样式，不加监听。 | [docs/feature-10-row-states.md](docs/feature-10-row-states.md) |
 
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)。
 
@@ -50,6 +51,7 @@ src/
     index.js                   功能 6（命中判定与菜单装配，不带样式）
     clipboard.js               功能 6 的两个动作：写剪贴板、派发 paste 事件
   think-scroll/index.js        功能 7（思考区限高 + 滑块，只导出一段 CSS）
+  row-states/index.js          功能 10（会话行选中态 + 运行中扫光边框，只导出一段 CSS）
   chat-history/
     history-store.js            功能 9 的纯函数层（干净判定、轮次条目解析）
     nav-rail.js                 功能 9 的导航列读取层（fiber 条目 + 气泡全文）
@@ -80,7 +82,8 @@ scripts/
   verify-active-dot-live.mjs   同上，功能 5；截图读真实像素算对比度
   verify-selection-menu-live.mjs 同上，功能 6；走真实鼠标手势与真实剪贴板
   verify-settings-live.mjs     同上，功能 8；驱动真面板、读真 patch 文件字节、真卸载一次
-  lib/cdp.mjs                  五个验证脚本共用的 CDP 连接与断言框架
+  verify-row-states-live.mjs   同上，功能 10；现搭探针行与上游规则做真实的特异性竞争
+  lib/cdp.mjs                  七个验证脚本共用的 CDP 连接与断言框架
   lib/ts-page.mjs              功能 4 断言的页面侧公用片段（在被测页面里求值的源码字符串）
   lib/ts-checks.mjs            功能 4 的十条断言本体
 tests/
@@ -92,13 +95,14 @@ docs/                          各功能的设计判据、实测读数与已知�
 lib/                           构建产物，client bundle 是 __ModuleLoader__ 注册体
 ```
 
-插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余六项一个 slot 都不占——第五、第七两项连监听都没有，另外四项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
+插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余八项一个 slot 都不占——第五、第七、第十三项连监听都没有，另外五项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
 
 - 功能 1、2 在侧边栏挂**捕获阶段**监听（要抢在 React 合成事件之前拦下 `ctrl` 点击与右键），菜单直接挂 `document.body`（`z-index: 2147483000`），高亮走 `[data-dsh-oi-selected]` 属性——不复用行自己的 `_selected` 类，那是「当前会话」的语义。
 - 功能 4 只读会话页的 DOM 与 React fiber，标签作为节点行自己的子节点插入，由观察 `document.body` 的 `MutationObserver` 驱动。
 - 功能 5 一行 JS 都不跑，只往那张样式表里追加几条规则；摘掉样式表即还原。
 - 功能 6 同样是 `document` 上的捕获阶段 `contextmenu`，与功能 2 各自判各自的地盘（见 [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md)），复用功能 2 那份菜单组件与样式，自己不带任何 CSS。
 - 功能 7 和功能 5 一样一行 JS 都不跑，两条声明追加进同一张样式表；摘掉样式表即还原。
+- 功能 10 同样一行 JS 都不跑：选中态读 `aria-selected`，运行中读行内 `svg[data-state='ongoing']`，竖条与彗尾走伪元素并给上游拖拽指示器让位（见 [docs/feature-10-row-states.md](docs/feature-10-row-states.md)）。
 - 功能 8 是唯一有 host 半边的功能：client 侧只往 `settings.general.item` 注册一个组件，读写都打 host 挂在 harness 自己那个回环 HTTP 上的一条路由（见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md)）。
 - 功能 9 的当前会话来自 `ctx.sessions` 的订阅（应用没有 URL 路由，地址栏恒为 `/`）；历史只读右侧轮次导航列的 fiber 条目，且只在开始导航时读一次（纯内存、不阻塞）；输入框是 Lexical contenteditable，写入走 `execCommand` + 合成按键的队列。不占 slot、不调 harness 服务、不写 localStorage。
 

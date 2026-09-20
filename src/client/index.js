@@ -9,9 +9,11 @@
  * 不占任何 slot：功能只在既有 DOM 上加监听，视觉走自插的一张样式表；
  * 所有副作用都注册到 `ctx.effect`，插件卸载即回收。
  *
- * 同一张样式表里还带两项纯样式覆盖：`src/active-dot/` 改上游活跃标记的配色，
- * `src/think-scroll/` 给展开后的思考正文一条高度上限与滚动条。两者都无监听也无
- * `dispose`——摘掉样式表就还原。
+ * 同一张样式表里还带三项纯样式覆盖：`src/active-dot/` 改上游活跃标记的配色，
+ * `src/think-scroll/` 给展开后的思考正文一条高度上限与滚动条，`src/row-states/`
+ * 强化侧边栏会话行的选中态并给运行中的行加扫光边框。三者都无监听也无
+ * `dispose`——摘掉样式表就还原。ROW_STATES_CSS 必须排在 MENU_CSS 之前：多选蓝与
+ * 选中青同特异度同 `!important`，叠加态归谁只由表内先后决定。
  *
  * 唯一占 slot 的是设置页「通用设置」里的「Harness 高级配置」一行（`src/client/settings/`，
  * 功能 8），它读写 host 半边挂的那条回环路由。
@@ -25,6 +27,7 @@ import { installSelectionMenu } from '../selection-menu/index.js'
 import { installTimestamps, TIMESTAMP_CSS } from '../timestamps/index.js'
 import { ACTIVE_DOT_CSS } from '../active-dot/index.js'
 import { THINK_SCROLL_CSS } from '../think-scroll/index.js'
+import { ROW_STATES_CSS } from '../row-states/index.js'
 import { installHarnessConfigRow, SETTINGS_CSS } from './settings/index.jsx'
 import { installChatHistory } from '../chat-history/index.js'
 
@@ -52,7 +55,7 @@ export function apply(ctx) {
 
   const style = document.createElement('style')
   style.dataset.plugin = name
-  style.textContent = [MENU_CSS, TIMESTAMP_CSS, ACTIVE_DOT_CSS, THINK_SCROLL_CSS, SETTINGS_CSS].join('\n')
+  style.textContent = [ROW_STATES_CSS, MENU_CSS, TIMESTAMP_CSS, ACTIVE_DOT_CSS, THINK_SCROLL_CSS, SETTINGS_CSS].join('\n')
   document.head.append(style)
   ctx.effect(() => () => style.remove(), '@Tinnikx/dsh-operation-improve: stylesheet')
 

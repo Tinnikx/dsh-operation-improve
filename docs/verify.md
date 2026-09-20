@@ -1,6 +1,6 @@
 # 验证
 
-八项功能的验证方式。六个 `npm run verify:*` 脚本连的都是同一套[测试栈](#测试栈)，判据与退出码共用 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)。
+九项功能的验证方式。七个 `npm run verify:*` 脚本连的都是同一套[测试栈](#测试栈)，判据与退出码共用 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)。
 
 ## node 在哪
 
@@ -87,7 +87,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify
 
 所以确认「真的测了」只需两步：`echo $?` 为 0，且 summary 是 `passed=25 failed=0 skipped=0 total=25`。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
 
-判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，五个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
+判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，七个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
 
 `evaluate()` 每次求值新开一条临时 CDP 连接、用完即关，长驻连接只留给要收事件的 `Page.reload`。**不能全程共用一条**：断言里会点击会话行，切会话销毁执行上下文后，那条连接上的每次 `Runtime.evaluate` 都被协议层永久拒为 `-32000 Inspected target navigated or closed`，整轮验证崩在半路，证据链就此断掉。
 
@@ -129,13 +129,15 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:timestamps
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:dot
 ```
 
-`verify-active-dot-live.mjs` 和 `verify:selection`、`verify:settings` 一样**不注入 bundle、也不 apply 自造的 ctx**（五个脚本里只有这三个），验的是页面自带那份实例的实际效果。这一条被验的是一张纯样式表，而页面自带的那份实例已经把它插进 `<head>` 了。断言读的就是那张表的效果，走的是「`npm run build` 的产物 → profile 装载 → 页面自己的实例插入」这条真实路径。基线靠**摘掉那张表**取得（`disabled = true`，测完还原），同一个 DOM 上一摘一装，前后两组读数才可比。探针是脚本现搭的一个 `StateDot`，class 从页面真实样式表里反查，所以它与上游那条规则形成的是真实的特异性竞争。不去等一个真的活跃会话：那要在测试栈里真跑一轮模型调用，代价与风险都远大于它能多验到的东西（同一个组件、同一条 CSS 规则）。
+`verify-active-dot-live.mjs` 和 `verify:selection`、`verify:settings` 一样**不注入 bundle、也不 apply 自造的 ctx**（七个脚本里只有这五个这样——再加 `verify:chat-history` 与本节的功能 10），验的是页面自带那份实例的实际效果。这一条被验的是一张纯样式表，而页面自带的那份实例已经把它插进 `<head>` 了。断言读的就是那张表的效果，走的是「`npm run build` 的产物 → profile 装载 → 页面自己的实例插入」这条真实路径。基线靠**摘掉那张表**取得（`disabled = true`，测完还原），同一个 DOM 上一摘一装，前后两组读数才可比。探针是脚本现搭的一个 `StateDot`，class 从页面真实样式表里反查，所以它与上游那条规则形成的是真实的特异性竞争。不去等一个真的活跃会话：那要在测试栈里真跑一轮模型调用，代价与风险都远大于它能多验到的东西（同一个组件、同一条 CSS 规则）。
 
 **对比度读的是截图像素，但底色是脚本垫出来的名义值。** 前景那半必须由浏览器渲染——`fill × opacity` 的合成交给它，脚本自己算一遍就等于验证脚本重写了一次被测逻辑。底色那半则不能取自页面：装了壁纸主题的页面整个 UI 是半透明的，标记压着的是一张逐像素变化的照片（实测同一列上下极差 187），`--dsw-alias-bg-base` 本身就解析成 `rgba(108, 96, 97, .28)` 且不随主题变，从格子到 `html` 一层不透明背景都没有。那种页面上不存在「一个底色」，任何单点采样都是偶然值。所以探针自带一块名义底色（深色取页面的 `--dsw-static-neutral-bluish-950` = `rgb(21, 21, 23)`，浅色取白——`--dsw-static-white` 在壁纸主题下被改成了透明，不能用），`Page.captureScreenshot` 把格子连同这块底色一起截下来，两个颜色取自同一张图。量的是「这个配色在标准主题底色上有多少对比度」，与用户装了什么主题无关。
 
 `conn.send()` 回的是整条 CDP 消息，截图数据在 `res.result.data` 上；读成 `res.data` 得到 `undefined`，表现是页面侧 `img.decode()` 抛 `EncodingError`，看不出是取错了字段。
 
 20 条断言全过时的读数见[功能 5 · 实测读数](./feature-5-active-dot.md#实测读数)。
+
+**0.1.6-alpha.2 起 C 组（切主题后截图）两条对比度断言失败**：主题控制器在两帧内把 `data-ds-dark-theme` 写回 body，脚本跨 evaluate 翻的属性被冲掉，量到的是「深青压白底」。A/B 组 18 条仍全过，覆盖本身没有失效。修法同[功能 10](#功能-10-的验证)的第一条坑（同一次 evaluate 里摘、读、还原），待另开任务处理。
 
 ## 功能 6 的验证
 
@@ -207,3 +209,21 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:chat-history
 - **会话切换靠点侧边栏行**：应用没有 URL 路由，URL 恒为 `/`。
 - 不覆盖：多设备/多浏览器——历史只读当前页面状态，没有可跨的东西。
 
+
+## 功能 10 的验证
+
+```
+PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:row-states
+```
+
+24 条断言，全部打[测试栈](#测试栈)。与功能 5 同构：**不注入 bundle**，验的是页面自带样式表（构建 → profile → 页面 端到端）；探针是脚本现搭的会话行，class 从页面真实样式表反查 hash 前缀，并带上游的 `selected` / `dropAfter` 类——与上游规则形成**真实的特异性竞争**，这正是本次改动的全部内容。不等真的运行中会话：同一个 `data-state` 字面量、同一条 `:has()` 规则，跑一轮真模型调用的代价远大于多验到的东西。
+
+**颜色断言读 computed style 而不是截图像素**：这里验的是「哪条规则赢、值是不是设计 token」，特异性胜负在 computed value 上已经见分晓。期望值里的多选蓝与时间色取自页面自己的别名 token 解析结果，不硬编码。
+
+覆盖：端到端装载、表内顺序契约（ROW_STATES 段先于多选段）、上游竞争规则在场、选中底色/竖条/字重/时间提亮、对照行无装饰、运行中底色/静默底边/彗尾动画与 mask/辉光、选中+运行中 .14 叠加、选中+多选归蓝且竖条保留、拖拽目标行彗尾让位、三行错峰相位、主题来回切换、`prefers-reduced-motion` 彗尾熄灭与复燃、清场复位。
+
+- **翻主题必须在同一次 evaluate 里摘属性、读数、还原**：0.1.6-alpha.2 起应用的主题控制器在两帧内就把 `data-ds-dark-theme` 写回 body，跨两次 evaluate 的窗口里属性已经回来了——第一轮实跑的两条「浅色底色」假失败就是这么来的（功能 5 的 C 组至今还是跨 evaluate 翻的，见下条）。
+- **`mask-composite` 的 computed 值是逐图层的列表**（`"exclude, exclude"`），断言取第一段而不是全等。
+- **时间提亮在第三方主题下可能验不到「变亮」**：测试栈副本把 `label-secondary` 与 `label-tertiary` 都解析成白色，断言因此降级为「挂上了正确的 token」；标准主题下两色不同，这条仍然区分得开。
+- 0.1.6 的 `prefers-reduced-motion` 经 `Emulation.setEmulatedMedia` 可用（功能 4 那条「Chrome 只认它支持的那几个 `prefers-*`」的坑在这里是反例：这个特性受支持，`(hover: none)` 才是不受支持的那个）。
+- 不覆盖：真实运行中会话的整列观感（错峰相位在真实列表里的兄弟序号与探针容器不同，只验「互不相同」的语义）；壁纸主题下的实际对比度（同功能 5 的限制）。

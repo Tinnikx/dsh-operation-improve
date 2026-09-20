@@ -4,6 +4,8 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 007 | 功能 10 实现：sessionRow 选中态强化 + 运行中光线边框 | 完成 | [007-row-states-implementation.md](docs/handoff/007-row-states-implementation.md) |
+| 006 | sessionRow 选中态强化 + 运行中光线边框设计稿 | 完成 | [006-session-row-states-design.md](docs/handoff/006-session-row-states-design.md) |
 | 005 | 功能 8 清单对齐 harness 0.1.5-rc.2 + 每张卡片标注生效方式 | 完成 | [005-harness-config-catalog-rc2.md](docs/handoff/005-harness-config-catalog-rc2.md) |
 | 004 | worker 线程持久化后端（已作废） | 完成 | [004-persistence-worker.md](docs/handoff/004-persistence-worker.md) |
 | 003 | 功能 9 历史来源改读会话右侧导航列 | 完成 | [003-chat-history-from-nav.md](docs/handoff/003-chat-history-from-nav.md) |

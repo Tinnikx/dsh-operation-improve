@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sessionRow 状态设计 · 选中态 & 运行中光线边框</title>
+<style>
+/* ============================================================
+   设计样机：只存在于本文件。产品实现时按「规范」一节迁移 token。
+   锚点：Industrial —— 沿用 harness 暗色表面 + 单一语义色（青 #22D3EE，
+   功能 5 已锁定为 ongoing 的信号色）。1px 发丝边框，扁平，无装饰阴影。
+   ============================================================ */
+
+/* ---------- 样机页面骨架 ---------- */
+:root {
+  --page-bg: #101012;
+  --panel-bg: #17171a;      /* 侧边栏表面 */
+  --row-bg: transparent;
+  --hairline: rgba(128,128,128,.22);
+  --text-1: #ececee;
+  --text-2: #8b8b92;
+  --text-3: #5c5c63;
+  --cyan: rgb(34,211,238);          /* ongoing 语义色（深色主题） */
+  --cyan-dim: rgba(34,211,238,.15);
+  --cyan-fill: rgba(34,211,238,.10);
+  --blue-multi: rgba(77,107,254,.22); /* 现有多选蓝，保持不动 */
+  --radius-row: 8px;
+  --row-h: 34px;
+  --sweep-duration: 2.4s;
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page-bg); color: var(--text-1); }
+main { max-width: 1060px; margin: 0 auto; padding: 48px 32px 96px; }
+h1 { font-size: 22px; font-weight: 600; letter-spacing: .01em; margin: 0 0 6px; }
+h1 small { color: var(--text-3); font-weight: 400; }
+.lede { color: var(--text-2); font-size: 13px; line-height: 1.7; margin: 0 0 40px; }
+h2 { font-size: 14px; font-weight: 600; margin: 44px 0 4px; color: var(--text-1); }
+h2 .num { color: var(--cyan); font-variant-numeric: tabular-nums; margin-right: 8px; }
+.hint { color: var(--text-3); font-size: 12px; margin: 0 0 16px; line-height: 1.7; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.card { border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden; }
+.card > header { font-size: 11px; color: var(--text-3); padding: 10px 14px; border-bottom: 1px solid var(--hairline); display: flex; justify-content: space-between; }
+.card > header b { color: var(--text-2); font-weight: 500; }
+.sidebar { background: var(--panel-bg); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.group-label { font-size: 11px; color: var(--text-3); padding: 6px 8px 4px; }
+
+/* ---------- 行基础形态（对齐 harness _sessionRow） ---------- */
+.row {
+  position: relative;
+  display: flex; align-items: center; gap: 8px;
+  height: var(--row-h); padding: 0 10px;
+  border-radius: var(--radius-row);
+  background: var(--row-bg);
+  font-size: 13px; color: var(--text-1);
+  cursor: default; user-select: none;
+}
+.row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .time { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
+
+/* 状态点：上游 StateDot 的 8 格追逐，样机里画简版 */
+.dot { width: 14px; height: 14px; flex: none; display: grid; grid-template: repeat(2, 1fr) / repeat(4, 1fr); gap: 1px; padding: 1px; }
+.dot i { background: var(--cyan); border-radius: .5px; }
+.dot i:nth-child(1) { animation: chase var(--sweep-duration) linear infinite; }
+.dot i:nth-child(2) { animation: chase var(--sweep-duration) linear .25s infinite; }
+.dot i:nth-child(3) { animation: chase var(--sweep-duration) linear .5s infinite; }
+.dot i:nth-child(4) { animation: chase var(--sweep-duration) linear .75s infinite; }
+.dot i:nth-child(5) { animation: chase var(--sweep-duration) linear 1s infinite; }
+.dot i:nth-child(6) { animation: chase var(--sweep-duration) linear 1.25s infinite; }
+.dot i:nth-child(7) { animation: chase var(--sweep-duration) linear 1.5s infinite; }
+.dot i:nth-child(8) { animation: chase var(--sweep-duration) linear 1.75s infinite; }
+@keyframes chase { 0%, 12.4% { opacity: 1; } 12.5%, 24.9% { opacity: .85; } 25%, 37.4% { opacity: .7; } 37.5%, 100% { opacity: .6; } }
+
+/* ---------- 现状（问题参照）：harness 原生的轻背景选中 ---------- */
+.row.is-oldselected { background: rgba(128,128,128,.12); }
+.row.is-oldhover, .row:hover { }
+.sidebar.old .row:hover { background: rgba(128,128,128,.08); }
+
+/* ---------- 设计 1：选中态（当前打开的会话） ---------- */
+.row.is-selected {
+  background: var(--cyan-fill);
+}
+.row.is-selected::before {           /* 左侧 3px 竖条：主识别信号 */
+  content: "";
+  position: absolute; left: 0; top: 20%; bottom: 20%;
+  width: 3px; border-radius: 0 2px 2px 0;
+  background: var(--cyan);
+}
+.row.is-selected .title { font-weight: 600; }
+.row.is-selected .time { color: var(--text-2); }
+
+/* hover：始终弱于选中，避免两态混淆 */
+.sidebar.new .row:hover { background: rgba(128,128,128,.08); }
+.sidebar.new .row.is-selected:hover { background: var(--cyan-fill); }
+
+/* 多选态（插件已有的蓝）：与选中态可叠加，蓝底 + 青条共存 */
+.row.is-multi { background: var(--blue-multi); border-radius: 6px; }
+
+/* ---------- 设计 2：运行中光线边框 ---------- */
+@property --sweep { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+
+.row.is-running { background: var(--cyan-fill); }
+/* 静默底边：常亮 1px，15% 青——彗尾经过前也能识别「这一行在运行」 */
+.row.is-running { box-shadow: inset 0 0 0 1px var(--cyan-dim); }
+/* 彗尾：conic-gradient 只留亮弧段，mask 挖空内部，只描轮廓 */
+.row.is-running::after {
+  content: "";
+  position: absolute; inset: -1px;
+  border-radius: calc(var(--radius-row) + 1px);
+  padding: 1px;
+  background: conic-gradient(from var(--sweep),
+    transparent 0deg 268deg,
+    rgba(34,211,238,.12) 286deg,
+    rgba(34,211,238,.85) 330deg,
+    rgba(34,211,238,1) 358deg,
+    transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: sweep var(--sweep-duration) linear infinite;
+  pointer-events: none;
+}
+/* 辉光：彗尾同源的模糊副本，给「光」而非「框」的质感 */
+.row.is-running > .glow {
+  position: absolute; inset: -3px;
+  border-radius: calc(var(--radius-row) + 3px);
+  background: conic-gradient(from var(--sweep),
+    transparent 0deg 300deg,
+    rgba(34,211,238,.5) 350deg,
+    transparent 360deg);
+  filter: blur(6px);
+  opacity: .45;
+  animation: sweep var(--sweep-duration) linear infinite;
+  pointer-events: none;
+}
+@keyframes sweep { to { --sweep: 360deg; } }
+
+/* 选中 + 运行中叠加：青条保留，竖条盖在边框之上 */
+.row.is-selected.is-running::before { z-index: 2; }
+.row.is-selected.is-running { background: rgba(34,211,238,.14); }
+
+/* 多行错峰：按序延迟，避免整列同步扫动像跑马灯 */
+.sidebar.new .row.is-running:nth-of-type(4n+3) { animation-delay: 0s; }
+.row.is-running.stagger-1 { animation-delay: calc(var(--sweep-duration) * -0.33); }
+.row.is-running.stagger-1::after, .row.is-running.stagger-1 > .glow { animation-delay: calc(var(--sweep-duration) * -0.33); }
+.row.is-running.stagger-2::after, .row.is-running.stagger-2 > .glow { animation-delay: calc(var(--sweep-duration) * -0.66); }
+
+/* 降级：系统要求减少动态时，只留静默底边 + 呼吸 */
+@media (prefers-reduced-motion: reduce) {
+  .row.is-running::after, .row.is-running > .glow { animation: none; opacity: .2; background: var(--cyan); }
+  .row.is-running > .glow { display: none; }
+  .dot i { animation: none; opacity: .7; }
+}
+
+/* ---------- 规范面板 ---------- */
+.spec { border: 1px solid var(--hairline); border-radius: 10px; margin-top: 44px; }
+.spec > header { padding: 12px 16px; border-bottom: 1px solid var(--hairline); font-size: 13px; font-weight: 600; }
+.spec table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.spec th, .spec td { text-align: left; padding: 9px 16px; border-bottom: 1px solid rgba(128,128,128,.12); vertical-align: top; }
+.spec th { color: var(--text-3); font-weight: 500; font-size: 11px; }
+.spec td:first-child { color: var(--text-2); width: 220px; }
+.spec td:nth-child(2) { width: 240px; font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--cyan); font-size: 11.5px; }
+.spec td:last-child { color: var(--text-3); }
+.spec tr:last-child td { border-bottom: none; }
+footer { margin-top: 32px; color: var(--text-3); font-size: 11px; line-height: 1.8; }
+</style>
+</head>
+<body>
+<main>
+  <h1>sessionRow 状态设计 <small>· 选中态强化 &amp; 运行中光线边框</small></h1>
+  <p class="lede">
+    对齐 harness 深色侧边栏。信号色只有一种：青 <b>rgb(34,211,238)</b>，即功能 5 已锁定的 ongoing 语义色——
+    选中态和运行中边框共用同一族色相，靠「竖条 + 填充」与「轮廓扫光」两种正交形态区分，互不抢占。
+    多选蓝（rgba(77,107,254,.22)）是插件批量操作的既有状态，本设计不动它，且允许与选中态叠加。
+  </p>
+
+  <!-- ================= 1. 选中态 ================= -->
+  <h2><span class="num">01</span>选中态：现状 vs 设计</h2>
+  <p class="hint">
+    现状问题：当前打开的会话只有一层 12% 灰底，和 hover 背景（8% 灰）亮度差过小，扫一眼分不出来。<br>
+    设计：左侧 3px 青色竖条（主识别信号，与灰底解耦）+ 10% 青填充 + 标题 600 字重 + 时间文字提亮。竖条是形状信号，填充是氛围信号，两层各自都够辨认。
+  </p>
+  <div class="cols">
+    <div class="card">
+      <header><b>现状</b><span>灰底选中 ≈ hover，难分辨</span></header>
+      <div class="sidebar old">
+        <div class="group-label">默认工作区</div>
+        <div class="row"><span class="title">修复测试栈的 token 认证</span><span class="time">3 分钟前</span></div>
+        <div class="row is-oldselected"><span class="title">重构登录流程的状态机</span><span class="time">1 小时前</span></div>
+        <div class="row"><span class="title">对话历史导航方案讨论</span><span class="time">昨天</span></div>
+        <div class="row"><span class="title">harness 0.1.5-rc.2 清单核对</span><span class="time">周一</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <header><b>设计</b><span>竖条 + 青填充 + 字重</span></header>
+      <div class="sidebar new">
+        <div class="group-label">默认工作区</div>
+        <div class="row"><span class="title">修复测试栈的 token 认证</span><span class="time">3 分钟前</span></div>
+        <div class="row is-selected"><span class="title">重构登录流程的状态机</span><span class="time">1 小时前</span></div>
+        <div class="row"><span class="title">对话历史导航方案讨论</span><span class="time">昨天</span></div>
+        <div class="row"><span class="title">harness 0.1.5-rc.2 清单核对</span><span class="time">周一</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 2. 运行中边框 ================= -->
+  <h2><span class="num">02</span>运行中边框：光线律动</h2>
+  <p class="hint">
+    判定信号：行内存在 <code style="color:var(--cyan)">svg[data-state='ongoing']</code>（即该会话有任务在跑）。<br>
+    结构三层：15% 常亮静默底边（静态可识别）→ 高亮彗尾沿轮廓扫一周 2.4s linear（律动来源）→ 6px 模糊辉光副本随动（质感）。
+    多行同时运行时按行序错峰 1/3 周期，整列不同步。prefers-reduced-motion 下彗尾熄灭，只留底边呼吸。
+  </p>
+  <div class="cols">
+    <div class="card">
+      <header><b>设计</b><span>彗尾扫光 + 静默底边</span></header>
+      <div class="sidebar new">
+        <div class="group-label">默认工作区</div>
+        <div class="row is-running"><span class="glow"></span><span class="dot"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="title">批量归档交互联调</span><span class="time">进行中</span></div>
+        <div class="row is-running stagger-1"><span class="glow"></span><span class="dot"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="title">SQLite 投影缓存预热</span><span class="time">进行中</span></div>
+        <div class="row is-running stagger-2"><span class="glow"></span><span class="dot"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="title">思考区滚动位置保持</span><span class="time">进行中</span></div>
+        <div class="row"><span class="title">对话历史导航方案讨论</span><span class="time">昨天</span></div>
+        <div class="row"><span class="title">harness 0.1.5-rc.2 清单核对</span><span class="time">周一</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <header><b>设计</b><span>与选中 / 多选叠加</span></header>
+      <div class="sidebar new">
+        <div class="group-label">默认工作区</div>
+        <div class="row is-selected is-running"><span class="glow"></span><span class="dot"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="title">重构登录流程的状态机</span><span class="time">进行中</span></div>
+        <div class="row is-multi"><span class="title">批量归档交互联调</span><span class="time">进行中</span></div>
+        <div class="row"><span class="title">对话历史导航方案讨论</span><span class="time">昨天</span></div>
+        <div class="row is-running stagger-2"><span class="glow"></span><span class="dot"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="title">SQLite 投影缓存预热</span><span class="time">进行中</span></div>
+        <div class="row"><span class="title">思考区滚动位置保持</span><span class="time">周一</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 规范 ================= -->
+  <div class="spec">
+    <header>交接规范（实现时用产品侧真实类名，样机类名不外流）</header>
+    <table>
+      <tr><th>token</th><th>值</th><th>说明</th></tr>
+      <tr><td>信号色（深色主题）</td><td>rgb(34, 211, 238)</td><td>与功能 5 的 --dsh-state-ongoing 同值，一个色相管两个状态</td></tr>
+      <tr><td>信号色（浅色主题）</td><td>rgb(21, 94, 117)</td><td>浅色主题下彗尾与竖条整体换这个暗青，其余 token 不变</td></tr>
+      <tr><td>选中填充</td><td>rgba(34,211,238,.10)</td><td>选中+运行中叠加时提到 .14</td></tr>
+      <tr><td>选中竖条</td><td>3px · top/bottom 20%</td><td>绝对定位于行左缘，圆角 0 2px 2px 0</td></tr>
+      <tr><td>静默底边</td><td>1px · rgba(34,211,238,.15)</td><td>inset box-shadow，不占布局</td></tr>
+      <tr><td>彗尾</td><td>conic-gradient · 2.4s linear ∞</td><td>@property --sweep 驱动；mask-composite: exclude 只描轮廓；弧段 268°→358° 渐亮</td></tr>
+      <tr><td>辉光</td><td>blur(6px) · opacity .45</td><td>子元素承载（不用伪元素，留给 ::before/::after），与彗尾同 angle 变量随动</td></tr>
+      <tr><td>错峰</td><td>-1/3、-2/3 周期</td><td>实现时对运行中行按 DOM 序号取模设 animation-delay 负值</td></tr>
+      <tr><td>降级</td><td>prefers-reduced-motion</td><td>彗尾/辉光/追逐点动画全停，静默底边常亮即完成识别</td></tr>
+      <tr><td>性能</td><td>仅运行中行参与动画</td><td>conic-gradient 扫描是重绘非合成层；运行中会话通常 ≤ 个位数，可控。若实测掉帧，降级方案为底边 opacity 呼吸（纯合成属性）</td></tr>
+    </table>
+  </div>
+
+  <footer>
+    叠加规则：hover（8% 灰）&lt; 选中（青条+10% 青底）；多选蓝底与选中青条可同现（批量操作中回到当前会话的场景）；
+    运行中与以上任意组合叠加时边框层在最上（z 序：glow → 行背景 → ::after 彗尾 → ::before 竖条）。
+  </footer>
+</main>
+</body>
+</html>

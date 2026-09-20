@@ -248,7 +248,9 @@ export const MENU_CSS = `
   margin: 4px 2px;
   background: var(--dsw-alias-border-l1, rgba(128,128,128,0.25));
 }
-[data-dsh-oi-selected] {
+/* 特异度 (0,2,0) 是层叠契约：与功能 10 的选中底色同级，靠 ROW_STATES_CSS 插在本表
+   之前让「当前会话被批量圈选」时显示多选蓝（叠加态另见 src/row-states/index.js）。 */
+[role="treeitem"][data-dsh-oi-selected] {
   background: var(--dsw-alias-bg-multi-select, rgba(77, 107, 254, 0.22)) !important;
   border-radius: 6px;
 }
