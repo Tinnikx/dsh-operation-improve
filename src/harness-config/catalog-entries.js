@@ -29,7 +29,10 @@
  *   生效，按动作取名：该插件的下一轮请求 / 查询 / 入库 / 新会话就按新值执行。
  * - `'restart'`——保存了也用不上，要重启 harness：只有 start 时读一次的键才配得上它。
  *   机制上（`Fiber.update` 对 config 变化做 dispose + 重新 apply）不存在「保存了但跑着
- *   的进程读不到」的键，所以 `'restart'` 之外一律不需要任何操作。
+ *   的进程读不到」的键，所以 `'restart'` 之外一律不需要任何操作。例外是
+ *   `session-query-sqlite`：harness 0.1.6-alpha.2 的热重挂对它有缺陷（重挂摘除
+ *   `sessionController` 且静默挂起，会话列表全空直到重启），整张卡因此按 `'restart'`
+ *   口径标注，复现与取证见 [docs/harness-hmr-session-defect.md](../../docs/harness-hmr-session-defect.md)。
  *
  * `default` 只用于界面提示，**从不写进文件**：未设置就是键不存在，走 harness 自己的默认。
  * 上游改了默认，最坏是提示过时，行为不受影响。少数键（`session-title` 那几个）上游 schema

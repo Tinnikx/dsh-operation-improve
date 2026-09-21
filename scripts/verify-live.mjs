@@ -153,6 +153,12 @@ if (cleaned.handle !== 'undefined' || cleaned.styles !== 0 || cleaned.menus !== 
 // **真函数**（真词典、真 active locale），本插件自己那个 namespace 走桩——它的词典
 // 随 native 实例一起被摘掉了，桩按插件自己交上来的那份 dict 查，locale 取
 // `<html lang>`（locale 服务把 active locale 同步在这个属性上）。
+// 平台模块桩表。产物的 factory 顶层会 require 三个平台模块（loader 在 boot 期
+// 通过 `create` 一次性发 require，boot 后拿不到真实现），但本脚本的被测路径
+// （多选、右键菜单、批量动作）一个都不会真正调用它们：react hooks 与 jsx 只在
+// 功能 8 的 slot 组件渲染时用到，而这里的 ctx.slots 是 spy；`writeClipboard`
+// 只在功能 6 的复制动作里用到，而剪贴板断言归 verify:selection（不注入）。
+// 所以桩按「被调到就是异常」设计：hooks/jsx 直接抛，clipboard 记录调用。
 const boot = `
 (() => {
   const BUNDLE = ${JSON.stringify(bundle)};
@@ -161,7 +167,19 @@ const boot = `
   window.__ModuleLoader__ = { load: (r) => { captured = r } }
   try { (0, eval)(BUNDLE) } finally { window.__ModuleLoader__ = real }
   if (captured === null) return { ok: false, reason: 'bundle did not register' }
-  const exports = captured.factory((name) => { throw new Error('unexpected external require: ' + name) })
+  const clipboardWrites = []
+  const noRender = (what) => () => { throw new Error('verify(1/2) 不该走到 ' + what + '（React 渲染路径被触达）') }
+  const PLATFORM = {
+    'react': { useState: noRender('react.useState'), useRef: noRender('react.useRef'),
+      useEffect: noRender('react.useEffect'), useCallback: noRender('react.useCallback') },
+    'react/jsx-runtime': { jsx: noRender('jsx'), jsxs: noRender('jsxs'), Fragment: 'x-fragment' },
+    '@deepseek-ai/dsh-client-ui-primitives': { writeClipboard: (text) => { clipboardWrites.push(text) } },
+  }
+  window.__dshOiClipboardWrites__ = clipboardWrites
+  const exports = captured.factory((name) => {
+    if (PLATFORM[name] !== undefined) return PLATFORM[name]
+    throw new Error('unexpected external require: ' + name)
+  })
   const disposers = []
   const calls = []
   const spy = (label) => new Proxy({}, { get: (_t, method) => (...args) => {
@@ -207,6 +225,11 @@ const boot = `
   }
   window.addEventListener('unhandledrejection', onRejection)
   disposers.push(() => { window.removeEventListener('unhandledrejection', onRejection) })
+  // fork 超时放弃那声 console.warn 也要收下来才断言得了（包装而不是替换判据）。
+  const warns = []
+  const realWarn = console.warn
+  console.warn = (...args) => { warns.push(args.map(String).join(' ')); realWarn.apply(console, args) }
+  disposers.push(() => { console.warn = realWarn })
   const dicts = {}
   const activeLocale = () => (document.documentElement.lang || 'en').toLowerCase().split('-')[0]
   const render = (template, params) => params === undefined
@@ -216,6 +239,10 @@ const boot = `
     effect: (cb) => { const d = cb(); if (typeof d === 'function') disposers.push(d) },
     workspaces: spy('workspaces'),
     sessions,
+    // 功能 8 起 apply() 会调 ctx.slots.inject(...)——本脚本的被测路径不渲染 slot
+    // 组件（react 桩被调到即抛），收下注册即可；**不走 spy**，boot 期的这一次
+    // inject 不能混进「选择期间 0 次服务调用」那类计数。真 slots 的断言在 verify:settings。
+    slots: { inject: () => undefined },
     locale: {
       register: (ns, d) => { dicts[ns] = d; return () => { delete dicts[ns] } },
       bind: (ns) => (key, params) => {
@@ -231,7 +258,7 @@ const boot = `
   if (handle === undefined || typeof handle.instanceId !== 'string') {
     return { ok: false, reason: 'applied instance exposes no instanceId' }
   }
-  window.__dshOiTest__ = { exports, disposers, calls, rejections, dicts, registeredId: captured.id, instanceId: handle.instanceId }
+  window.__dshOiTest__ = { exports, disposers, calls, rejections, warns, dicts, registeredId: captured.id, instanceId: handle.instanceId }
   return { ok: true, id: captured.id, name: exports.name, inject: exports.inject, instanceId: handle.instanceId,
     ownDictLocales: Object.keys(dicts).length === 0 ? [] : Object.keys(dicts[Object.keys(dicts)[0]]) }
 })()
@@ -804,43 +831,105 @@ check('rename without a binding fails loudly', await evaluate(`(async () => {
 })
 
 // fork 的两个动作都要跟上游：标题带序号（`increaseTitle`），完了把子会话打开。
-check('fork increases the title and opens the child', await evaluate(`(async () => {
+// 0.1.6 起「打开」不再经过服务——`sessions.open` 已从 `ISessions` 契约移除，插件改为
+// 在侧栏轮询子会话的行并点它，走应用自己的导航。桩的 `forkChildId` 因此必须是
+// **侧栏里真实存在的行 id**，否则测到的只是超时放弃分支。两个分支都覆盖：先用一条
+// 未被选中的会话行的真实 id（点开成功——「选中态变了」就是点击真的发生了的证据），
+// 再用一个不存在的 id（3 秒超时、出声且不导航）。
+check('fork increases the title and opens the child via the sidebar row', await evaluate(`(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  window.__dshOperationImprove__.selection.clear()
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_sessionRow'))
-  if (!row) return { bail: 'no session row' }
-  row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200, view: window }))
-  const menus = document.querySelectorAll('.dsh-oi-menu')
-  if (menus.length !== 1 || menus[0].getAttribute('data-dsh-oi-owner') !== window.__dshOiTest__.instanceId) {
-    return { bail: 'menu ownership check failed' }
+  const rowIdOf = (el) => {
+    const fiberKey = Object.keys(el).find((k) => k.startsWith('__reactFiber$'))
+    if (fiberKey === undefined) return null
+    let fiber = el[fiberKey]; let depth = 0
+    while (fiber && depth < 24) {
+      const p = fiber.memoizedProps
+      if (p && typeof p === 'object') {
+        const cands = [p.sessionId, p.node && p.node.id, p.row && p.row.id, p.item && p.item.id, p.session && p.session.id]
+        for (const c of cands) if (typeof c === 'string' && c.length > 0) return c
+      }
+      fiber = fiber.return; depth += 1
+    }
+    return null
   }
+  const sessionRows = () => [...document.querySelectorAll('[class*="_sessionRow"]')]
+  const openMenu = (row, y) => {
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: y, view: window }))
+    const menus = document.querySelectorAll('.dsh-oi-menu')
+    if (menus.length !== 1 || menus[0].getAttribute('data-dsh-oi-owner') !== window.__dshOiTest__.instanceId) return null
+    return menus[0]
+  }
+  window.__dshOperationImprove__.selection.clear()
+  const rowA = sessionRows()[0]
+  if (!rowA) return { bail: 'no session row' }
+  const target = sessionRows().find((el) => el.getAttribute('aria-selected') !== 'true' && rowIdOf(el) !== null)
+  if (!target) return { bail: 'no unselected session row with resolvable id' }
+  const targetId = rowIdOf(target)
   const realConfirm = window.confirm
   let confirmCalled = false
   window.confirm = () => { confirmCalled = true; return false }
-  const before = window.__dshOiTest__.calls.length
-  // rejections 是整轮累积的（上一条断言就故意制造了一次），只能取增量。
-  const beforeRejections = window.__dshOiTest__.rejections.length
-  menus[0].querySelectorAll('.dsh-oi-menu__item')[1].click()
-  await sleep(200)
+
+  // 分支一：桩返回真实存在的行 id → 插件点该行 → 应用的导航把它选中。
+  window.__dshOiSessionStub__.forkChildId = targetId
+  const menu1 = openMenu(rowA, 200)
+  if (menu1 === null) { window.confirm = realConfirm; return { bail: 'menu ownership check failed' } }
+  const before1 = window.__dshOiTest__.calls.length
+  const beforeRej1 = window.__dshOiTest__.rejections.length
+  menu1.querySelectorAll('.dsh-oi-menu__item')[1].click()
+  let opened = false
+  for (let i = 0; i < 20; i += 1) {
+    await sleep(150)
+    const now = sessionRows().find((el) => rowIdOf(el) === targetId)
+    if (now !== undefined && now.getAttribute('aria-selected') === 'true') { opened = true; break }
+  }
+  const calls1 = window.__dshOiTest__.calls.slice(before1)
+  const menuClosed1 = document.querySelector('.dsh-oi-menu') === null
+
+  // 分支二：不存在的 id → 3 秒超时、出声、什么都不导航。
+  const ghostId = 'dsh-oi-no-such-session'
+  window.__dshOperationImprove__.selection.clear()
+  window.__dshOiSessionStub__.forkChildId = ghostId
+  const rowB = sessionRows().find((el) => rowIdOf(el) === targetId) ?? rowA
+  const beforeSelected = document.querySelectorAll('[class*="_sessionRow"][aria-selected="true"]').length
+  const menu2 = openMenu(rowB, 220)
+  if (menu2 === null) { window.confirm = realConfirm; return { bail: 'second menu ownership check failed' } }
+  const before2 = window.__dshOiTest__.calls.length
+  const beforeRej2 = window.__dshOiTest__.rejections.length
+  const beforeWarns = window.__dshOiTest__.warns.length
+  menu2.querySelectorAll('.dsh-oi-menu__item')[1].click()
+  await sleep(3400)
+  const calls2 = window.__dshOiTest__.calls.slice(before2).map((c) => c.label + '.' + c.method)
+  const warns2 = window.__dshOiTest__.warns.slice(beforeWarns).filter((w) => w.includes('@Tinnikx/dsh-operation-improve'))
+  const afterSelected = document.querySelectorAll('[class*="_sessionRow"][aria-selected="true"]').length
   window.confirm = realConfirm
-  const calls = window.__dshOiTest__.calls.slice(before)
-  return { confirmCalled, calls: calls.map((c) => c.label + '.' + c.method),
-    forkArg: (calls.find((c) => c.method === 'fork') || { args: [null] }).args[0],
-    openArg: (calls.find((c) => c.method === 'open') || { args: [null] }).args[0],
-    menuClosed: document.querySelector('.dsh-oi-menu') === null,
-    rejections: window.__dshOiTest__.rejections.length - beforeRejections }
+  window.__dshOiSessionStub__.forkChildId = 'child-session-id'
+  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
+  return { confirmCalled, opened, targetId,
+    calls1: calls1.map((c) => c.label + '.' + c.method),
+    forkArg: (calls1.find((c) => c.method === 'fork') || { args: [null] }).args[0],
+    menuClosed1,
+    rejections1: window.__dshOiTest__.rejections.length - beforeRej1,
+    calls2, warns2, navigated2: afterSelected !== beforeSelected,
+    rejections2: window.__dshOiTest__.rejections.length - beforeRej2 }
 })()`), (v) => {
   if (v.bail !== undefined) return `没测到：${v.bail}`
   if (v.confirmCalled !== false) return 'fork 弹了二次确认，上游没有'
-  if (v.calls.join(',') !== 'sessions.fork,sessions.open') return `应先 fork 再 open，实际 ${JSON.stringify(v.calls)}`
+  if (v.calls1.join(',') !== 'sessions.fork') {
+    return `第一步应只有 fork（0.1.6 起 open 已不在 ISessions 契约），实际 ${JSON.stringify(v.calls1)}`
+  }
   if (v.forkArg === null || typeof v.forkArg.sessionId !== 'string' || v.forkArg.sessionId.length === 0) {
     return `fork 的 sessionId 不是真实 id：${JSON.stringify(v.forkArg)}`
   }
   if (v.forkArg.increaseTitle !== true) return `fork 没带 increaseTitle: true：${JSON.stringify(v.forkArg)}`
-  if (v.openArg !== 'child-session-id') return `open 收到的不是 fork 返回的子会话 id：${JSON.stringify(v.openArg)}`
-  if (v.menuClosed !== true) return '执行后菜单没关'
-  if (v.rejections !== 0) return `fork 过程中出现了 ${v.rejections} 次未处理的 rejection`
+  if (v.opened !== true) return `fork 返回真实行 id ${JSON.stringify(v.targetId)} 后，侧栏那一行没被选中——DOM 点击没发生或没生效`
+  if (v.menuClosed1 !== true) return '执行后菜单没关'
+  if (v.rejections1 !== 0) return `fork（成功分支）出现了 ${v.rejections1} 次未处理的 rejection`
+  if (v.calls2.join(',') !== 'sessions.fork') return `放弃分支也应只 fork 一次，实际 ${JSON.stringify(v.calls2)}`
+  if (v.warns2.length !== 1 || !v.warns2[0].includes('未自动打开')) {
+    return `超时放弃应出声一次（含「未自动打开」），实测 ${JSON.stringify(v.warns2)}`
+  }
+  if (v.navigated2 !== false) return 'fork 了一个不存在的 id 竟然改变了侧栏选中——放弃路径不该有任何导航'
+  if (v.rejections2 !== 0) return `fork（放弃分支）出现了 ${v.rejections2} 次未处理的 rejection`
   return true
 })
 

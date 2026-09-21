@@ -8,15 +8,16 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | **功能 2** | 侧边栏行的右键菜单。单选逐项对齐该行原有「...」菜单（项、顺序、文案、图标、样式、动作都一样），多选只保留批量破坏性操作。 | 同上 |
 | **功能 4** | 会话页逐行开始时间戳。每条回复、工具调用、思考等节点行的右上角显示它的**开始**时刻（`HH:mm:ss`），user / steering / turn-tail 三类改成常驻显示上游自己的时间标签。 | [docs/feature-4-timestamps.md](docs/feature-4-timestamps.md) |
 | **功能 5** | 活跃标记（`StateDot state="ongoing"`）的配色覆盖。把上游那 8 格追逐动画的基线不透明度从 `.15` 抬到 `.6` 并换成青色，深浅主题各一个值。纯样式，不加监听。 | [docs/feature-5-active-dot.md](docs/feature-5-active-dot.md) |
-| **功能 6** | 选中文本的右键菜单。页面任意位置选中一段文本后在选区上右键，弹出与功能 2 同一套外观的菜单，给「复制」；落点可输入时再给「粘贴」（可输入的空控件上即使没有选中文本也弹，只给「粘贴」）。两项都没有时不吃掉事件，原生菜单照常。 | [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md) |
+| **功能 6** | 选中文本的右键菜单。页面任意位置选中一段文本后在选区上右键，弹出与功能 2 同一套外观的菜单，给「复制」；落点可输入时再给「粘贴」（可输入的空控件——含 0.1.6 起的 Lexical composer——即使没有选中文本也弹，只给「粘贴」）。两项都没有时不吃掉事件，原生菜单照常。 | [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md) |
 | **功能 7** | 思考区域的高度上限与滑块。展开后的思考正文超过 60vh 时截到 60vh 并出竖直滚动条，放得下的一点不变。纯样式，不加监听，配色字号行距内边距全部留给上游。 | [docs/feature-7-think-scroll.md](docs/feature-7-think-scroll.md) |
 | **功能 8** | 设置页「通用设置」里的「Harness 高级配置」一行。展开后是一个精选清单面板，把只有 cordis entry config、没有 settings 命名空间、且在当前部署上真有活消费者的那类配置（会话检索分页、Bash 工具预算、请求配额……）搬进界面，写回当前 profile 的 `cordis.patch.yml` 里一个托管区段；每张卡标注改完之后值什么时候被用上。改完离开输入框即自动保存，没有保存按钮。 | [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md) |
-| **功能 9** | 对话历史导航。输入框为空时按上下键翻阅本会话的历史提问——读右侧轮次导航列，装上插件之前的提问也在，不做本地记录。 | [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md) |
+| **功能 9** | 对话历史导航。输入框为空时按上下键翻阅本会话的历史提问——读右侧轮次导航列（不足 2 轮时上游没有导航列，退到消息流 user 行兜底），装上插件之前的提问也在，不做本地记录。 | [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md) |
 | **功能 10** | 侧边栏会话行的状态可视化。当前打开的会话加青色竖条与填充底（上游的选中与 hover 同色）；有任务在跑的行加一圈沿轮廓扫动的彗尾边框与静默底边。纯样式，不加监听。 | [docs/feature-10-row-states.md](docs/feature-10-row-states.md) |
 
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)。
 
 ## 当前已兼容版本
+- 0.1.6-alpha.2
 - 0.1.2-rc.1
 - 0.1.1-rc.2
 
@@ -159,15 +160,16 @@ dsh plugin --profile web add <本目录>                                # 从本
 | 命令 | 验什么 |
 | --- | --- |
 | `npm test` | 单元测试：选择状态、时钟格式化、托管区段写入器（字节级） |
-| `npm run stack:up` / `stack:status` / `stack:down` | 隔离测试栈：`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334 |
+| `npm run stack:up` / `stack:status` / `stack:down` / `stack:restart` | 隔离测试栈：`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334；`restart` 是跑完 `verify:settings` 之后的救活动作（见 [harness 热重挂缺陷](docs/harness-hmr-session-defect.md)） |
 | `npm run verify` | 功能 1、2 端到端 |
 | `npm run verify:timestamps` | 功能 4 |
 | `npm run verify:dot` | 功能 5 |
 | `npm run verify:selection` | 功能 6 |
-| `npm run verify:settings` | 功能 8（会真的往 patch 文件写字节） |
+| `npm run verify:settings` | 功能 8（会真的往 patch 文件写字节，收尾自动重启测试栈） |
 | `npm run verify:chat-history` | 功能 9（键盘导航、历史存储、dispose 回收） |
+| `npm run verify:row-states` | 功能 10（选中态强化与运行中扫光边框） |
 
-六个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
+七个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
 
 **验证脚本一律打测试栈，不打日常在用的那个 harness**：端到端断言里有「批量归档」「批量删除」，它们会真的发出 click。
 
@@ -179,7 +181,7 @@ dsh plugin --profile web add <本目录>                                # 从本
 
 - [基础层](docs/shared-api.md#已知限制)：`rowId` 的 fiber 反查依赖 React 内部字段（1 条）
 - [功能 1、2](docs/feature-1-2-sidebar-menu.md#已知限制)：借上游词典键、图标与尺寸是拷贝、高亮延迟（4 条）
-- [功能 4](docs/feature-4-timestamps.md#已知限制)：日期不跟随语言、九类 kind 未验证、非全局单调、类名片段、56px 留白、fiber（6 条）
+- [功能 4](docs/feature-4-timestamps.md#已知限制)：日期不跟随语言、九类 kind 未验证、非全局单调、类名片段、80px 留白、fiber（6 条）
 - [功能 5](docs/feature-5-active-dot.md#已知限制)：结构假设、壁纸主题下管不到、色值写死（3 条）
 - [功能 6](docs/feature-6-selection-menu.md#已知限制)：剪贴板权限被拒即静默失效、contenteditable 分支未验证、paste 图标自绘、落点判定的引擎回落（4 条）
 - [功能 7](docs/feature-7-think-scroll.md#已知限制)：类名片段、流式思考不自动跟到底（未实测）、上限只看视口（3 条）

@@ -154,7 +154,38 @@ export function installContextMenu(deps) {
     if (actionId === 'fork') {
       // 上游 fork 完会把子会话打开，标题也带序号，两处都跟上。
       const childId = await sessions.fork({ sessionId: targets[0], increaseTitle: true })
-      sessions.open(childId)
+      await openSessionRow(childId)
+    }
+  }
+
+  /**
+   * 在侧栏点开指定会话的行——0.1.6 起这是唯一的「打开」路径：`sessions.open` 已从
+   * `ISessions` 契约移除，`retain` 只建引用不动 UI，导航归 view 自己。
+   *
+   * fork 刚返回时子会话行进侧栏列表还是异步的，所以要等它出现而不是找一次。
+   * 超时找不到就放弃并出声：fork 本身已经成功，「没帮忙打开」不该伪装成动作失败，
+   * 但静默会让用户以为菜单项坏了。
+   *
+   * @param {string} sessionId
+   * @returns {Promise<void>}
+   */
+  async function openSessionRow(sessionId) {
+    const DEADLINE_MS = 3000
+    const INTERVAL_MS = 150
+    const deadline = Date.now() + DEADLINE_MS
+    for (;;) {
+      for (const row of document.querySelectorAll('[class*="_sessionRow"], [class*="_searchResultRow"]')) {
+        if (!(row instanceof HTMLElement)) continue
+        if (rowId(row, 'session') === sessionId) {
+          row.click()
+          return
+        }
+      }
+      if (Date.now() >= deadline) {
+        console.warn(`[@Tinnikx/dsh-operation-improve] fork 后没在侧栏找到子会话 ${sessionId} 的行，未自动打开（fork 已成功）`)
+        return
+      }
+      await new Promise((r) => setTimeout(r, INTERVAL_MS))
     }
   }
 

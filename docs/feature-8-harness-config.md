@@ -1,6 +1,6 @@
 # 功能 8：「Harness 高级配置」面板
 
-设置页里多一行可展开的「Harness 高级配置」，把一批只有 cordis entry config、没有 settings 命名空间的插件参数搬进界面，改完自动保存、不重启 harness 即生效。
+设置页里多一行可展开的「Harness 高级配置」，把一批只有 cordis entry config、没有 settings 命名空间的插件参数搬进界面，改完自动保存、绝大多数不重启 harness 即生效；唯一例外是「会话检索」卡——harness 0.1.6 对 `session-query-sqlite` 的热重挂有缺陷，整卡按「重启后生效」口径标注（见[已知限制](#已知限制)与 [harness-hmr-session-defect.md](harness-hmr-session-defect.md)）。
 
 `src/harness-config/`（host）与 `src/client/settings/`（client）
 
@@ -107,7 +107,7 @@ host 半边 `inject = ['webServer', 'loader']`：非 web surface 下插件挂起
 
 ## 实测读数
 
-一轮完整跑（`passed=17 failed=0 skipped=0 total=17`）：面板渲染出 50 个 `data-field`、13 张卡，`[data-save]` 计数为 `0`，每张卡都带着 `data-effect` 生效标记（唯一的字段级「重启生效」是 `preparedSessionCacheSize`）；没人设过的 `persistedReadConcurrency` 那一行 `data-default` 在、`value` 为空、`placeholder` 是 `4`、输入框计算 `opacity` `0.55` 而整行与标签都是 `1`，手写的 `defaultLimit: 30` 那一行输入框 `opacity` `1`；`bash-sandbox.timeoutMs` 的徽标 `data-source="bundle"`、文字 `dsh-base`、`title` `@deepseek-ai/dsh-base`，与 host 归因出的包名一致，而手写行仍是 `手写`、系统默认行仍是 `系统默认`（两者都没有 `data-owner`）。只让输入框失焦、不点任何按钮，区段头写成 `# managed: {"session-query-sqlite":["maxLimit","readWindowMax"]}`，区段外逐字节不变；热重载把从基线算出的 `maxLimit: 50` / `readWindowMax: 50` 送进 loader 用了 **9ms**，那一行随即变成 `opacity` `1` 且徽标转 `本面板`；写 `snippetChars` 时 bundle 层的 `path: ":memory:"` 与 `openAt: never` 原样重述进区段，三个键都进了 live config（**10ms**）；手写那两行（`defaultLimit: 30      # 检索默认每页 30 条,…` 与 `readWindowMax: 40     # …`）连行尾中文注释原样保留；`defaultLimit = 60 > 托管中的 maxLimit = 50` 被前端拦下（`会话检索：默认每页条数不能超过每页条数上限，否则 session-query-sqlite 加载失败。`），文件 sha 前后同为 `eb325b7622198300`，点「清除」撤掉这条草稿后错误清空、待提交归零、输入框退回 `30`、文件 sha 不变；卸载副本里区段仍在、`maxLimit` 仍是 `50`，3182 上的 harness 起得来且名册里没有本插件；点「清除」之后不做任何别的操作，`snippetChars` **10ms** 内从 live config 里消失、区段里也不含这个键（**不是把默认值写进去**）；全部清空后文件逐字节回到基线（sha `f2b49ffec12da4d6`），`maxLimit` 回落到手写层的 `100`、`path` 仍是 `:memory:`，`snippetChars` 那一行的输入框重新淡化成 `opacity` `0.55`。
+一轮完整跑（`passed=17 failed=0 skipped=0 total=17`）：面板渲染出 50 个 `data-field`、13 张卡，`[data-save]` 计数为 `0`，每张卡都带着 `data-effect` 生效标记（「会话检索」卡整卡与它 6 个字段级标记全是「重启生效」——热重挂缺陷的处置，见[已知限制](#已知限制)；`bash-sandbox.timeoutMs` 是 `immediate`）；没人设过的 `persistedReadConcurrency` 那一行 `data-default` 在、`value` 为空、`placeholder` 是 `4`、输入框计算 `opacity` `0.55` 而整行与标签都是 `1`，手写的 `defaultLimit: 30` 那一行输入框 `opacity` `1`；`bash-sandbox.timeoutMs` 的徽标 `data-source="bundle"`、文字 `dsh-base`、`title` `@deepseek-ai/dsh-base`，与 host 归因出的包名一致，而手写行仍是 `手写`、系统默认行仍是 `系统默认`（两者都没有 `data-owner`）。只让输入框失焦、不点任何按钮，区段头写成 `# managed: {"session-query-sqlite":["maxLimit","readWindowMax"]}`，区段外逐字节不变；热重载把从基线算出的 `maxLimit: 50` / `readWindowMax: 50` 送进 loader 用了 **约 2.1s**（watcher 防抖之后），那一行随即变成 `opacity` `1` 且徽标转 `本面板`；写 `snippetChars` 时 bundle 层的 `path: ":memory:"` 与 `openAt: never` 原样重述进区段，三个键都进了 live config（**约 2.1s**）；手写那两行（`defaultLimit: 30      # 检索默认每页 30 条,…` 与 `readWindowMax: 40     # …`）连行尾中文注释原样保留；`defaultLimit = 60 > 托管中的 maxLimit = 50` 被前端拦下（`会话检索：默认每页条数不能超过每页条数上限，否则 session-query-sqlite 加载失败。`），文件 sha 前后同为 `eb325b7622198300`，点「清除」撤掉这条草稿后错误清空、待提交归零、输入框退回 `30`、文件 sha 不变；卸载副本里区段仍在、`maxLimit` 仍是 `50`，3182 上的 harness 起得来且名册里没有本插件；点「清除」之后不做任何别的操作，`snippetChars` **约 2s** 内从 live config 里消失、区段里也不含这个键（**不是把默认值写进去**）；全部清空后文件逐字节回到基线（sha `f2b49ffec12da4d6`），`maxLimit` 回落到手写层的 `100`、`path` 仍是 `:memory:`，`snippetChars` 那一行的输入框重新淡化成 `opacity` `0.55`。
 
 ## 已知限制
 
@@ -118,6 +118,7 @@ host 半边 `inject = ['webServer', 'loader']`：非 web surface 下插件挂起
 - host 半边要 `webServer`。非 web surface（比如终端里跑的 harness）下整个插件挂起不动，面板也就不存在——那里本来也没有设置页。
 - 每次展开重新 `GET` 一次。展开着的面板不订阅文件变化，别人在编辑器里同时改同一个文件时面板显示的是打开那一刻的快照；保存前 host 会重读一次文件再算重述，所以不会抹掉人家刚写的键，但面板上的来源徽标可能已经过时。
 - 面板样式是自己写的一段 CSS（`src/client/settings/styles.js`），只借了 `--dsw-alias-*` 那套设计令牌，不是复用上游模型页的组件。上游改版式时它不会跟上，表现是这一行与邻居长得不太一样，不报错。
+- **「会话检索」卡的写入会触发 harness 0.1.6-alpha.2 的热重挂缺陷**：`session-query-sqlite` 配置一变，host-HMR 重挂该条目时连带摘除 `sessionController` 且可能静默挂起——侧栏会话列表从那一刻全空，撤销写入不恢复，只有重启 harness 进程可救。面板侧的处置是整卡标注「重启后生效」并在说明里要求保存后立刻重启；这是止损（手改 `cordis.patch.yml` 同一个键同样触发，缺陷本体在上游）。其余会话栈条目（`session-reference`、`session-title`、`session-title-llm`、`session-projection-cache`）未逐条实测，警示范围只钉在 `session-query-sqlite`。取证与最小复现见 [harness-hmr-session-defect.md](harness-hmr-session-defect.md)。
 
 ## 验证
 

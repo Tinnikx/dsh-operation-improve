@@ -26,7 +26,7 @@
 
 **会话重命名走 `sessions.binding(id)?.session.rename(title)`**，即上游 `WorkspaceBrowser` 用的那条路径，不是 `workspaces` 上的方法。`binding()` 对「既没被列出也没被 scope」的会话返回 `undefined`；侧边栏里的行按定义都在列表里，所以走到这里拿不到 binding 说明选中的 id 根本不是会话，**必须抛**而不是当成「改名没生效」静默返回。`rename()` 自己不抛，失败包在 `RpcResult.ok` 里。**会话没有 delete**，所以多选会话永远不出现批量删除——这是服务能力决定的，不是取舍。
 
-`fork` 跟上游一样带 `increaseTitle: true` 并把返回的子会话 `open()` 出来，两个动作缺一个都是「和那个菜单看着一样、点下去不一样」。
+`fork` 跟上游一样带 `increaseTitle: true`，并把返回的子会话**打开**——两个动作缺一个都是「和那个菜单看着一样、点下去不一样」。「打开」没有服务可走：0.1.6 起 `sessions.open` 已从 `ISessions` 契约移除（`retain` 只建引用不动 UI），剩下的唯一公开路径是应用自己的导航——插件在侧栏轮询行 id 等于子会话的那一行（fork 返回后行进列表也是异步的，轮询窗口 3 秒）并 `click()` 它。超时找不到就出声放弃：fork 本身已成功，「没帮忙打开」既不该伪装成动作失败，也不该静默。
 
 二次确认也照着上游：删除工作区上游弹对话框，这里就 `window.confirm`，文案拼上游那个对话框的标题（`delete.workspace`）与正文（`delete.desc`，带 `{name}`），`confirm` 只收一段文本，两者之间补一个空行；**归档会话上游点下去直接归档，单选这里也不问**。批量两项上游没有对应入口，一律问一次——一次点掉多行没有撤销。重命名用 `window.prompt`，提示语取上游那两个对话框的标题（`rename.session.title` / `rename.workspace.title`），初值与 `{name}` 取自 [`rowTitle`](../src/shared/row-probe.js)，即上游各自对话框的初值字段（会话 `row.title`、工作区 `group.label`）——**不能退回整行 `textContent`**，会话行里连着状态点与相对时间。两个对话框都可通过 `installContextMenu({ confirm, prompt })` 注入替换（测试即这么打桩）。
 

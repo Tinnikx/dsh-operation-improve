@@ -412,4 +412,8 @@ const command = process.argv[2] ?? 'up'
 if (command === 'up') await up()
 else if (command === 'down') await down()
 else if (command === 'status') await status()
-else die(`未知命令 ${command}（up | down | status）`)
+// restart 的存在理由：verify:settings 写 session-query-sqlite 会触发 harness 0.1.6 的
+// 热重挂缺陷，会话服务死到进程重启为止（docs/harness-hmr-session-defect.md）——
+// 跑完 settings 用这条把栈救活，比 down/up 两条手敲少一步，也更不容易忘。
+else if (command === 'restart') { await down(); await up() }
+else die(`未知命令 ${command}（up | down | restart | status）`)

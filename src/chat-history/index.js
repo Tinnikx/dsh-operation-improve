@@ -3,19 +3,28 @@
  *
  * 输入框为空（或内容是上下键切换进来且未修改）时，按 ↑/↓ 在输入框中翻阅本会话的
  * 历史提问。历史来源是右侧轮次导航列（见 [nav-rail.js](./nav-rail.js)）——装上
- * 插件之前的提问也在其中，不做任何本地记录。
+ * 插件之前的提问也在其中，不做任何本地记录。上游对不足 2 轮的会话不渲染导航列，
+ * rail 读不出条目时退到消息流的 user 行气泡：单条提问的会话同样能 ↑ 调出它。
  *
- * 上游事实（0.1.2-rc.1 实测）：
- * - 应用没有 URL 路由，地址栏恒为 `/`；当前会话从 `sessions` 服务的
- *   `list.getSnapshot().current` 读，切换靠 `list.subscribe` 通知。
+ * 上游事实（0.1.6-alpha.2 起）：
+ * - 应用没有 URL 路由，地址栏恒为 `/`。「当前会话」不经过任何可注入的服务：
+ *   `SessionListState` 没有 `current` 字段，选择搬进 ui-workspace 的 navigation
+ *   内部 store（persist 键 `dsh.sessions.current`），插件读不到也写不进。
+ *   当前会话因此从 DOM 派生：侧栏里 `aria-selected="true"` 的会话行 +
+ *   fiber 反查行 id（[rowId](../shared/row-probe.js)）。`aria-selected` 是
+ *   TSX 里的字面量属性，功能 10 已验证它跨版本稳定。
+ * - 派生是**按键时刻的现算**而不是订阅：本功能只在 keydown 时起作用，会话在两次
+ *   按键之间怎么换都不需要即时知道——按键时读到的 DOM 恒是最新事实。切换的判据
+ *   （id 变了才退导航态）也跟着每次按键做，省掉一个观察侧栏子树的 MutationObserver。
  * - 输入框是 Lexical 编辑器（contenteditable div），原语在 [composer.js](./composer.js)。
  * - 轮次导航列的 fiber 携带全部轮次条目；读取是纯内存操作，且只在开始导航
  *   的那一刻进行——无网络、无轮询、不阻塞主线程。
  *
  * 纯函数层（干净判定与条目解析）在 [history-store.js](./history-store.js)。
  */
+import { rowId } from '../shared/row-probe.js'
 import { isPristine, resolveTurnTexts } from './history-store.js'
-import { bubbleTextAt, findRailItems } from './nav-rail.js'
+import { bubbleTextAt, findFlowPrompts, findRailItems } from './nav-rail.js'
 import {
   caretAtEdge,
   findComposer,
@@ -24,15 +33,33 @@ import {
 } from './composer.js'
 
 /**
- * 安装对话历史导航。
+ * 从侧栏读出当前会话 id。没有选中的会话行、或行上反查不到 id 时返回 `null`
+ * （首页、设置页，以及 fiber 形状变了的情况——后者与 `row-probe` 的失败语义一致：
+ * 当作「没有打开的会话」，不抛）。
  *
- * @param {any} sessions 插件 ctx 的 sessions 服务（`inject` 声明保证存在）
+ * @returns {string|null}
+ */
+function readCurrentSession() {
+  const rows = document.querySelectorAll(
+    '[class*="_sessionRow"][aria-selected="true"], [class*="_searchResultRow"][aria-selected="true"]',
+  )
+  for (const row of rows) {
+    if (!(row instanceof HTMLElement)) continue
+    const id = rowId(row, 'session')
+    if (id !== null) return id
+  }
+  return null
+}
+
+/**
+ * 安装对话历史导航。不依赖任何 harness 服务——当前会话与历史都从 DOM 读。
+ *
  * @returns {{ dispose: () => void, snapshot: () => { sessionId: string|null, history: string[], index: number } }}
  */
-export function installChatHistory(sessions) {
+export function installChatHistory() {
   let disposed = false
 
-  /** 当前会话 ID，随 sessions 服务通知刷新；null 表示没有打开的会话。 */
+  /** 上一次按键时看到的会话 id，用于「会话切换就退导航态」的比对基准。 */
   let sessionId = readCurrentSession()
   /** 导航用的历史：开始导航时从导航列读出，导航期间复用，退出即弃（下次重读）。 */
   /** @type {string[]} */
@@ -45,14 +72,8 @@ export function installChatHistory(sessions) {
   /** 写入队列：连按时各次写入按序完成后再按 DOM 落定形态校准 pristine 基准。 */
   let writeChain = Promise.resolve()
 
-  function readCurrentSession() {
-    const current = sessions.list.getSnapshot()?.current
-    return typeof current === 'string' ? current : null
-  }
-
-  /** 会话切换：退出导航态，下一份历史等到开始导航时再读。 */
-  function onSessionMaybeChanged() {
-    if (disposed) return
+  /** 会话切换（含第一次读到）：退出导航态，下一份历史等到开始导航时再读。 */
+  function syncSession() {
     const nextId = readCurrentSession()
     if (nextId === sessionId) return
     sessionId = nextId
@@ -61,17 +82,25 @@ export function installChatHistory(sessions) {
     lastNavigatedValue = null
   }
 
-  /** 从轮次导航列读当前会话的历史提问（开始导航时才调，纯内存读取）。 */
+  /**
+   * 读当前会话的历史提问（开始导航时才调，纯内存读取）。
+   * rail 优先；上游对不足 2 轮的会话不渲染导航列，rail 缺席或解析不出条目时
+   * 退到消息流的 user 行气泡（{@link findFlowPrompts}）。
+   */
   function readHistory() {
     const items = findRailItems()
-    if (items === null) return []
-    return resolveTurnTexts(items, bubbleTextAt)
+    if (items !== null) {
+      const texts = resolveTurnTexts(items, bubbleTextAt)
+      if (texts.length > 0) return texts
+    }
+    return findFlowPrompts()
   }
 
   /** @param {KeyboardEvent} event */
   function onKeyDown(event) {
     if (disposed) return
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    syncSession()
     if (sessionId === null) return
     const composer = findComposer()
     if (composer === null) return
@@ -136,14 +165,6 @@ export function installChatHistory(sessions) {
     })
   }
 
-  // `subscribe` 的返回形态上游没承诺：函数与 { dispose } 都认；都没有就靠 disposed 闸。
-  const subscription = sessions.list.subscribe(onSessionMaybeChanged)
-  const unsubscribe = typeof subscription === 'function'
-    ? subscription
-    : (subscription !== null && typeof subscription === 'object' && typeof subscription.dispose === 'function'
-      ? () => subscription.dispose()
-      : null)
-
   document.addEventListener('keydown', onKeyDown, true)
 
   // 本功能不读不写 localStorage；`dsh-oi-chat-history:*` 是早期实现留下的死键，
@@ -162,14 +183,13 @@ export function installChatHistory(sessions) {
   const dispose = () => {
     if (disposed) return
     disposed = true
-    unsubscribe?.()
     document.removeEventListener('keydown', onKeyDown, true)
   }
 
   return {
     dispose,
     snapshot: () => ({
-      sessionId,
+      sessionId: readCurrentSession(),
       history: readHistory(),
       index: navIndex,
     }),

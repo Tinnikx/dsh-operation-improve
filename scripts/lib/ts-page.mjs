@@ -43,8 +43,11 @@ const diffGeometry = (a, b) => {
   }
   return bad;
 };
+// 上游时间标签认两个锚点：data-time-hover-root（0.1.5 及更早的 hover 容器）与
+// data-chat-flow-key（0.1.6 起行容器就是唯一的祖先）。哪个世界都读得到。
 const upstreamTimeEls = () => [...document.querySelectorAll(
-  '[data-time-hover-root] [class*="_timeStart"], [data-time-hover-root] [class*="_timeEnd"]')];
+  '[data-time-hover-root] [class*="_timeStart"], [data-time-hover-root] [class*="_timeEnd"],'
+  + ' [data-chat-flow-key] [class*="_timeStart"], [data-chat-flow-key] [class*="_timeEnd"]')];
 const upstreamOpacity = () => {
   const tally = {};
   for (const el of upstreamTimeEls()) {

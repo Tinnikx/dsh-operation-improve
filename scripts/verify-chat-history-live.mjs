@@ -4,7 +4,7 @@
  * 不注入 bundle、不 apply 自造 ctx，验的是页面自带实例：功能 9 不调用任何 harness
  * 服务，没有需要打桩的破坏性动作。
  *
- * 断言清单（14 条）：
+ * 断言清单（16 条）：
  *  1. 页面有 chatHistory 句柄且 snapshot 返回 { sessionId, history, index }
  *  2. 打开一个多轮会话后：历史非空，且条目数与导航列条目数一致
  *  3. 历史文本与独立读取的导航列条目一致（loaded 轮次对得上气泡全文）
@@ -15,6 +15,7 @@
  *  8. ↓ 超出末尾：退出导航并清空输入框
  *  9. 输入框有未提交内容且光标在文中：↑ 不接管（文本不变）
  * 10. 多行内容：光标在非文档开头时 ↑ 不接管
+ * 10b. 单条提问的会话：导航列缺席（上游 <2 轮不渲染），↑ 从消息流 user 行兜底调出提问，再按不越界
  * 11. 会话隔离：切到另一个会话，历史换成那个会话的
  * 12. 不写 localStorage（历史只读导航列，无任何本地记录）
  * 13. dispose 后 ↑ 不再接管
@@ -360,6 +361,48 @@ check('多行：光标在第二行开头时 ↑ 不接管', { before: multiBefor
   (v) => v.before === 'line1\nline2' && v.after === 'line1\nline2'
     || `期望前后都是 line1\\nline2，实测 ${JSON.stringify(v)}`)
 
+await clearComposer()
+
+// ---- 10b：单条提问的会话——rail 缺席，历史从消息流兜底 ----
+// 上游 TurnNavigator 对不足 2 轮的会话整列不渲染（items.length < 2 → return null），
+// 插件的导航列读手（readRailIndependently）在这种会话上读到的是 null。判据：
+// user 行气泡恰好一条、导航列 0 条目，且两次读数一致（视图落定）。
+
+let singleProbe = null
+{
+  for (let rowIndex = 0; rowIndex < 14 && singleProbe === null; rowIndex += 1) {
+    if ((await clickSessionRow(rowIndex)) === false) break
+    let prev = null
+    for (let i = 0; i < 12; i += 1) {
+      await sleep(400)
+      const state = await probeState()
+      if (!state.composer) continue
+      const rail = await readRailIndependently()
+      if (rail !== null && rail.length >= 2) break // 多轮会话，换下一行
+      const bubbles = await evaluate(`(() => [...document.querySelectorAll('[data-chat-flow-kind="user"] [class*="_bubble"]')]
+        .map((el) => (el.innerText ?? '').trim()).filter((t) => t !== ''))()`)
+      if (bubbles.length === 1 && (rail === null || rail.length === 0)) {
+        if (prev === bubbles[0]) { singleProbe = { text: bubbles[0], sessionId: state.sessionId }; break }
+        prev = bubbles[0]
+      } else {
+        prev = null
+      }
+    }
+  }
+}
+if (singleProbe === null) {
+  abort('找不到恰好一条提问的会话', '单轮兜底路径实测未发生；测试栈副本里需要一个 user 行气泡恰为一条、且上游导航列不渲染的会话。')
+}
+if (!(await focusComposer())) abort('单轮会话的 composer 无法聚焦', '↑ 断言无法执行。')
+await sleep(100)
+await press('ArrowUp', 'ArrowUp', 38)
+await sleep(250)
+check('单轮会话：↑ 从消息流兜底调出唯一提问', { text: await readComposerText() },
+  (v) => v.text === singleProbe.text || `期望 ${JSON.stringify(singleProbe.text)}，实测 ${JSON.stringify(v)}`)
+await press('ArrowUp', 'ArrowUp', 38)
+await sleep(250)
+check('单轮会话：再按 ↑ 停在唯一一条不越界', { text: await readComposerText() },
+  (v) => v.text === singleProbe.text || `期望不变，实测 ${JSON.stringify(v)}`)
 await clearComposer()
 
 // ---- 11：会话隔离 ----

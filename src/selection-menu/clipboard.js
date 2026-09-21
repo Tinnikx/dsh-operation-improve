@@ -7,9 +7,10 @@
  * 同一张表），运行时由注入的 `require` 提供，因此在 [build.mjs](../../scripts/build.mjs)
  * 里声明为 external。
  *
- * 粘贴**必须派发真的 `paste` 事件**：会话输入框是受控 `<textarea>`，自己在 `onPaste` 里
- * 读 `clipboardData`、`preventDefault()`、再走 slash-token 事务；直接改 `value` 会绕过
- * 整条链路，React 下一次渲染就把值盖回去。没人接管这个事件时才回落 `insertText`。
+ * 粘贴**必须派发真的 `paste` 事件**：落点无论是 Lexical composer（contenteditable，
+ * 自己监听 `paste` 走内部事务）还是受控表单控件（在 `onPaste` 里读 `clipboardData`
+ * 再 `preventDefault`），直接改 DOM / `value` 都会绕过整条链路，被下一次渲染或
+ * reconcile 盖回去。没人接管这个事件时才回落 `insertText`。
  *
  * 两个动作都在菜单项的 click 回调里同步开始，那一拍还带着 user activation——
  * `navigator.clipboard.readText()` 要的正是它。改成 `setTimeout` 之类推迟一拍就会被拒。
@@ -23,7 +24,8 @@ import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
  * 执行前必须按它恢复，否则粘贴会落在光标复位后的位置（通常是文本开头）。
  *
  * @typedef {{ kind: 'field', field: HTMLInputElement|HTMLTextAreaElement, start: number, end: number }
- *   | { kind: 'range', range: Range }} Snapshot
+ *   | { kind: 'range', range: Range }
+ *   | { kind: 'editable', field: HTMLElement }} Snapshot
  */
 
 /** 已经报过的粘贴失败原因；一次点击刷一屏没有意义。 */
@@ -63,7 +65,7 @@ export async function pasteInto(snapshot) {
 
   const data = new DataTransfer()
   data.setData('text/plain', text)
-  const target = snapshot.kind === 'field' ? snapshot.field : activeEditable()
+  const target = snapshot.kind === 'range' ? activeEditable() : snapshot.field
   if (target === null) return
 
   const event = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })
@@ -82,6 +84,12 @@ function restore(snapshot) {
     if (!snapshot.field.isConnected) return false
     snapshot.field.focus()
     snapshot.field.setSelectionRange(snapshot.start, snapshot.end)
+    return true
+  }
+  if (snapshot.kind === 'editable') {
+    // 空态快照没有选区可恢复：把焦点还给编辑器就够了，粘贴落在当前光标处。
+    if (!snapshot.field.isConnected) return false
+    snapshot.field.focus()
     return true
   }
   const container = snapshot.range.commonAncestorContainer

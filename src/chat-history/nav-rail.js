@@ -10,6 +10,9 @@
  *   全文取不到就退化为预览。
  *
  * 读取全部是内存操作（fiber props + DOM 文本），只在开始导航时才读——无网络、无轮询。
+ *
+ * 这里同时放兜底源 {@link findFlowPrompts}：上游不足 2 轮不渲染导航列，单条提问的
+ * 会话只能从消息流的 user 行读。
  */
 
 /**
@@ -61,4 +64,26 @@ export function bubbleTextAt(anchorKey) {
   const bubble = row?.querySelector('[class*="_bubble"]')
   const text = bubble?.innerText?.trim()
   return text === undefined || text === '' ? null : text
+}
+
+/**
+ * 消息流派生的历史提问——rail 源缺席时的兜底。
+ *
+ * 上游 `TurnNavigator`（ui-chat `chat/TurnNavigator.tsx`）对不足 2 轮的会话直接
+ * `return null`：只有一条提问的会话**没有导航列**，`findRailItems()` 拿到的是 null，
+ * 但提问本身在消息流里——每轮的 user 行（`[data-chat-flow-kind="user"]`）内气泡
+ * （`[class*="_bubble"]`）就是全文。顺序与导航列同口径：文档序 = 最旧在前。
+ *
+ * 只在 rail 缺席或解析不出任何条目时被调用；多轮会话旧轮次会被虚拟化卸掉，
+ * 那种场景 rail 恰好在场，不需要这条路径兜。
+ *
+ * @returns {string[]}
+ */
+export function findFlowPrompts() {
+  const out = []
+  for (const row of document.querySelectorAll('[data-chat-flow-kind="user"]')) {
+    const text = row.querySelector('[class*="_bubble"]')?.innerText?.trim()
+    if (text !== undefined && text !== '') out.push(text)
+  }
+  return out
 }

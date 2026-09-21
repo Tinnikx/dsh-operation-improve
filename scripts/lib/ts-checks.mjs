@@ -16,10 +16,11 @@ import { HELPERS } from './ts-page.mjs'
  * 落在本行第一行、不压正文、Think 行、上游三类改常驻、空闲无自激重建。
  *
  * @param {{ evaluate: (expr: string) => Promise<any>, check: (label: string, value: any, expect?: (v: any) => true|string) => void,
- *   baseline: { geo: any, upstream: any }, needRows: number }} deps
- *   `baseline` 必须是**注入之前**采的，`upstream` 用于「装载前是 0、装载后是 1」的对照
+ *   baseline: { geo: any, upstream: any }, needRows: number, world: 'hover-root'|'upstream-always-on' }} deps
+ *   `baseline` 必须是**注入之前**采的，`upstream` 用于「装载前是 0、装载后是 1」的对照；
+ *   `world` 是编排方按 `data-time-hover-root` 锚点存在性定的常驻世界（见编排脚本）
  */
-export async function runChecks({ evaluate, check, baseline, needRows }) {
+export async function runChecks({ evaluate, check, baseline, needRows, world }) {
   const NEED_ROWS = needRows
   check('decorates every eligible row exactly once', await evaluate(`(async () => {
     ${HELPERS}
@@ -77,10 +78,19 @@ export async function runChecks({ evaluate, check, baseline, needRows }) {
   check("labels match upstream's Started derivation", await evaluate(`(() => {
     ${HELPERS}
     const pad = (n) => String(n).padStart(2, '0');
+    const now = new Date();
+    // 日期感知的时钟串：判据与 src/timestamps/format-clock.js 同一条（同日只有
+    // HH:mm:ss，同年的更早日期前置 M/D，跨年前置 Y/M/D）——独立实现，不复用被测代码。
+    // 只在零点后验这条时会露出缺口：会话是昨天的，标签带着日期前缀，而只按时钟重算
+    // 的 oracle 永远差那截 "M/D "。
     const clock = (t) => {
       if (typeof t !== 'number' || !Number.isFinite(t)) return null;
       const d = new Date(t);
-      return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      const hmss = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()) return hmss;
+      const md = (d.getMonth() + 1) + '/' + d.getDate();
+      const date = d.getFullYear() === now.getFullYear() ? md : d.getFullYear() + '/' + md;
+      return date + ' ' + hmss;
     };
     const mismatched = [], unresolved = [], differing = [];
     let checked = 0;
@@ -313,16 +323,29 @@ export async function runChecks({ evaluate, check, baseline, needRows }) {
     return true
   })
 
-  check('upstream clocks become always-on', await evaluate(`(() => {
+  // 常驻断言分两个世界：`hover-root` 里前后差（0→1）就是插件挣来的行为；
+  // `upstream-always-on`（0.1.6+）里上游自己常驻，差观测不到，能断言的是
+  // 「行为成立（恒 1）+ 插件那条双保险规则确实在注入的样式表里」。
+  // 后者测的是规则在场而不是渲染效果——如实写进标签，别读成前者。
+  check(`upstream clocks always-on（world=${world}）`, await evaluate(`(() => {
     ${HELPERS}
+    const sheet = [...document.querySelectorAll('style[data-plugin="@Tinnikx/dsh-operation-improve"]')].at(-1);
     return { before: ${JSON.stringify(baseline.upstream)}, after: upstreamOpacity(),
+      pluginRule: sheet !== undefined && sheet.textContent.includes("[data-chat-flow-key] [class*='_timeStart']"),
       sample: upstreamTimeEls().slice(0, 2).map((el) => ({
         cls: String(el.className), text: (el.textContent ?? '').trim().slice(0, 32),
         kind: el.closest('[data-chat-flow-kind]')?.getAttribute('data-chat-flow-kind') ?? null })) };
   })()`), (v) => {
     if (v.before.count === 0) return '基线里没有上游时间标签'
-    if ((v.before.opacity['0'] ?? 0) !== v.before.count) {
-      return `装载前不是全部 opacity=0：${JSON.stringify(v.before)}`
+    if (world === 'hover-root') {
+      if ((v.before.opacity['0'] ?? 0) !== v.before.count) {
+        return `装载前不是全部 opacity=0：${JSON.stringify(v.before)}`
+      }
+    } else {
+      if ((v.before.opacity['1'] ?? 0) !== v.before.count) {
+        return `upstream-always-on 世界装载前不是全部 opacity=1：${JSON.stringify(v.before)}`
+      }
+      if (v.pluginRule !== true) return '注入的样式表里没有 [data-chat-flow-key] 常驻规则（双保险缺席）'
     }
     if (v.after.count !== v.before.count) return `标签数 ${v.before.count}→${v.after.count}，页面变了`
     if ((v.after.opacity['1'] ?? 0) !== v.after.count) {
@@ -366,9 +389,10 @@ export async function runChecks({ evaluate, check, baseline, needRows }) {
  * 第十条断言：卸载复原。**必须最后跑**，它把注入的实例连同标签一起摘掉。
  *
  * @param {{ evaluate: (expr: string) => Promise<any>, check: Function,
- *   baseline: { geo: any }, assertSameContext: (stage: string) => Promise<void> }} deps
+ *   baseline: { geo: any }, assertSameContext: (stage: string) => Promise<void>,
+ *   world: 'hover-root'|'upstream-always-on' }} deps
  */
-export async function checkDispose({ evaluate, check, baseline, assertSameContext }) {
+export async function checkDispose({ evaluate, check, baseline, assertSameContext, world }) {
   await assertSameContext('dispose 之前')
 
   // dispose 之后几何必须回到基线。这条同时守着右侧留白：留白由本插件的样式表给出，
@@ -396,8 +420,11 @@ export async function checkDispose({ evaluate, check, baseline, assertSameContex
     if (v.marked !== 0) return `dispose 后仍有 ${v.marked} 条行带 [data-dsh-oi-ts] 标记`
     if (v.styles !== 0) return `dispose 后仍有 ${v.styles} 张本插件样式表`
     if (v.handle !== 'undefined') return '调试句柄没摘掉'
-    if ((v.upstream.opacity['0'] ?? 0) !== v.upstream.count) {
-      return `dispose 后上游标签没回到 opacity=0：${JSON.stringify(v.upstream)}`
+    // 卸载后回到各自世界的基线：hover-root 回到藏着（0），upstream-always-on 回到
+    // 上游自己的常驻（1）——摘掉插件规则不改变上游那份 computed opacity。
+    const wantOpacity = world === 'hover-root' ? '0' : '1'
+    if ((v.upstream.opacity[wantOpacity] ?? 0) !== v.upstream.count) {
+      return `dispose 后上游标签没回到 opacity=${wantOpacity}：${JSON.stringify(v.upstream)}`
     }
     if (v.shiftedCount !== 0) return `dispose 后几何没回到基线：${JSON.stringify(v.shifted)}`
     if (v.scrollHeight !== v.baseScrollHeight) return `dispose 后滚动高度 ${v.scrollHeight} != 基线 ${v.baseScrollHeight}`

@@ -64,28 +64,33 @@ export const MODEL_ENTRIES = [
     id: 'session-query-sqlite',
     title: '会话检索',
     plugin: '@deepseek-ai/dsh-session-query-sqlite',
-    effect: 'nextQuery',
-    description: '历史会话搜索的分页与摘要预算。下一轮查询就按新值执行。',
+    // 'restart' 不只是「新值要重启才用上」：harness 0.1.6-alpha.2 上改这个条目会触发
+    // host-HMR 热重挂缺陷，连带摘除 sessionController 且可能静默挂起——侧栏会话列表
+    // 全空、撤销写入也不稳定恢复，只有重启 harness 进程可靠。热重载有时确实能把新值
+    // 送进 loader（verify:settings 的 1b 实测约 2s），但代价是赌上会话服务，操作口径
+    // 一律按重启。见 docs/harness-hmr-session-defect.md。
+    effect: 'restart',
+    description: '历史会话搜索的分页与摘要预算。注意：harness 0.1.6 改这个条目有已知缺陷——热重载可能连带杀死会话服务（侧栏列表清空）且撤销不恢复，保存后请立刻重启 harness；按「重启后生效」操作。',
     fields: [
       {
-        key: 'defaultLimit', type: 'integer', default: 20, min: 1, max: SQLITE_MAX_PAGE_LIMIT, effect: 'nextQuery',
+        key: 'defaultLimit', type: 'integer', default: 20, min: 1, max: SQLITE_MAX_PAGE_LIMIT, effect: 'restart',
         label: '默认每页条数', help: '调用方没指定条数时用它，必须不大于每页条数上限。',
       },
       {
-        key: 'maxLimit', type: 'integer', default: 100, min: 1, max: SQLITE_MAX_PAGE_LIMIT, effect: 'nextQuery',
+        key: 'maxLimit', type: 'integer', default: 100, min: 1, max: SQLITE_MAX_PAGE_LIMIT, effect: 'restart',
         label: '每页条数上限', help: '',
       },
       {
-        key: 'snippetChars', type: 'integer', default: 240, min: 1, effect: 'nextQuery',
+        key: 'snippetChars', type: 'integer', default: 240, min: 1, effect: 'restart',
         label: '摘要长度（字符）', help: '',
       },
       {
-        key: 'readWindowMax', type: 'integer', default: 50, min: 0, effect: 'nextQuery',
+        key: 'readWindowMax', type: 'integer', default: 50, min: 0, effect: 'restart',
         label: '单次读取窗口上限', help: '',
       },
       {
-        key: 'persistedReadConcurrency', type: 'integer', default: 4, min: 1, effect: 'nextQuery',
-        label: '落盘会话读取并发', help: '并行读历史会话的并发数；下一次检索就按新值执行。',
+        key: 'persistedReadConcurrency', type: 'integer', default: 4, min: 1, effect: 'restart',
+        label: '落盘会话读取并发', help: '并行读历史会话的并发数；重启 harness 后按新值执行。',
       },
       {
         key: 'preparedSessionCacheSize', type: 'integer', default: 5, min: 1, effect: 'restart',

@@ -96,7 +96,7 @@ export function apply(ctx) {
   const harnessConfig = installHarnessConfigRow(ctx)
   ctx.effect(() => harnessConfig.dispose, '@Tinnikx/dsh-operation-improve: harness config row')
 
-  const chatHistory = installChatHistory(ctx.sessions)
+  const chatHistory = installChatHistory()
   ctx.effect(() => chatHistory.dispose, '@Tinnikx/dsh-operation-improve: chat history')
 
   // 调试与验证入口：让外部（CDP / 控制台）观察选择集、也**停得掉这一份实例**，

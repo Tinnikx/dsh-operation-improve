@@ -7,11 +7,11 @@
  * 没有选中文本也弹，只给「粘贴」。两项都没有时**不 `preventDefault`**，把原生菜单留给
  * 浏览器——空白处右键仍然是浏览器自己那套。
  *
- * **选区判定分两条互斥的路径**：`window.getSelection()` 看不见 `<input>` / `<textarea>`
- * 内部的选区（Chrome 下那里恒为折叠），表单控件只能读 `selectionStart` / `selectionEnd`。
- *
- * **必须确认点击点落在选区内**。只判「选区非空」的话，页面上还留着一段旧选区时，任何
- * 位置右键都会弹出一个「复制」——复制的还是别处那段文字。
+ * **选区判定分三条路径**：`window.getSelection()` 看不见 `<input>` / `<textarea>`
+ * 内部的选区（Chrome 下那里恒为折叠），表单控件只能读 `selectionStart` / `selectionEnd`；
+ * contenteditable（0.1.6 起的 Lexical composer）走 DOM 选区，判据**照表单控件的语义**
+ * ——控件边界把范围限死了，不要求点击点落在选区内，空态无选区也给「粘贴」。
+ * 页面别处的普通文本才是要「点击点落在选区内」的那条路。
  *
  * **侧边栏的行归功能 2**。两个 handler 都挂在 `document` 的捕获阶段，同一个节点上的
  * `stopPropagation()` 拦不住彼此，所以这道判据得自己写，否则一次右键会开两次菜单，后
@@ -52,7 +52,7 @@ export function installSelectionMenu(deps) {
     const target = event.target instanceof Element ? event.target : null
     if (target === null) return
 
-    const hit = probeField(target) ?? probeSelection(target, event.clientX, event.clientY)
+    const hit = probeField(target) ?? probeEditable(target) ?? probeSelection(target, event.clientX, event.clientY)
     if (hit === null) return
 
     const items = []
@@ -114,7 +114,39 @@ function probeField(target) {
 }
 
 /**
+ * contenteditable 那条路径（0.1.6 起的 Lexical composer 就是这种）。判据照表单控件
+ * 的语义走：编辑器边界本身就是范围限定——其内有非折叠选区就用它，给「复制」并跟上
+ * 「粘贴」（不要求点击点落在选区内）；没有选区就只有「粘贴」，快照记编辑器元素，
+ * 粘贴时恢复焦点、由当前光标处（或派发目标的默认行为）落文本。
+ *
+ * @param {Element} target
+ * @returns {null | { text: string, editable: true, anchor: HTMLElement,
+ *   snapshot: import('./clipboard.js').Snapshot }} 不在 contenteditable 里时返回 `null`
+ */
+function probeEditable(target) {
+  const host = target.closest('[contenteditable=""], [contenteditable="true"]')
+  if (!(host instanceof HTMLElement) || host.isContentEditable !== true) return null
+  const selection = window.getSelection()
+  const range = selection !== null && selection.rangeCount > 0 && !selection.isCollapsed
+    ? selection.getRangeAt(0)
+    : null
+  if (range !== null && host.contains(range.commonAncestorContainer)) {
+    return {
+      text: selection.toString(),
+      editable: true,
+      anchor: host,
+      snapshot: { kind: 'range', range: range.cloneRange() },
+    }
+  }
+  return { text: '', editable: true, anchor: host, snapshot: { kind: 'editable', field: host } }
+}
+
+/**
  * 普通文本那条路径。
+ *
+ * **必须确认点击点落在选区内**。只判「选区非空」的话，页面上还留着一段旧选区时，任何
+ * 位置右键都会弹出一个「复制」——复制的还是别处那段文字。表单控件与 contenteditable
+ * 不受这条约束：控件/编辑器边界本身就是范围限定。
  *
  * @param {Element} target
  * @param {number} x

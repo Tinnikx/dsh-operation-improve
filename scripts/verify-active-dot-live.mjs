@@ -168,6 +168,38 @@ const setup = await evaluate(`(() => {
       a.play()
       return out
     },
+    // 翻主题并要求它**存活到截图结束**。0.1.6 的主题控制器会在两帧内把
+    // data-ds-dark-theme 写回真值，跨 evaluate 的一次性翻转撑不过
+    // Page.captureScreenshot 的往返——所以这里挂一个观察者，把它写掉的每一次
+    // 都立刻翻回来；unflip 摘掉观察者并还原。verify-row-states 的「同一次求值
+    // 内摘读还原」只够读 computed style，截图要的是持续的渲染态。
+    flip: () => {
+      const p = window.__dshOiDot__
+      if (p._flipObs !== undefined) return false
+      const wantDark = !document.body.hasAttribute('data-ds-dark-theme')
+      p._flipOrig = document.body.hasAttribute('data-ds-dark-theme')
+      const enforce = () => {
+        if (document.body.hasAttribute('data-ds-dark-theme') !== wantDark) {
+          if (wantDark) document.body.setAttribute('data-ds-dark-theme', '')
+          else document.body.removeAttribute('data-ds-dark-theme')
+        }
+        p.paint()
+      }
+      enforce()
+      p._flipObs = new MutationObserver(enforce)
+      p._flipObs.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
+      return wantDark
+    },
+    unflip: () => {
+      const p = window.__dshOiDot__
+      if (p._flipObs === undefined) return
+      p._flipObs.disconnect()
+      delete p._flipObs
+      if (p._flipOrig) document.body.setAttribute('data-ds-dark-theme', '')
+      else document.body.removeAttribute('data-ds-dark-theme')
+      delete p._flipOrig
+      p.paint()
+    },
   }
   return {
     cellClass, matrixClass, upstreamOpacity, darkBase, lightBase: LIGHT_BASE,
@@ -317,13 +349,8 @@ check('done/warning/error 未被误伤（不继承 ongoing 变量）', afterStat
   (v) => Object.values(v).every((x) => x === '') || `期望三个兄弟状态都读不到 --dsh-state-ongoing，实测 ${JSON.stringify(v)}`)
 
 // ---- C 组：切到另一个主题，再截一次。垫的底色也要跟着换，否则量的是青色压在
-// 深色底上——那是 B 组已经量过的组合。
-await evaluate(`(() => {
-  const b = document.body
-  if (b.hasAttribute('data-ds-dark-theme')) b.removeAttribute('data-ds-dark-theme')
-  else b.setAttribute('data-ds-dark-theme', '')
-  window.__dshOiDot__.paint()
-})()`)
+// 深色底上——那是 B 组已经量过的组合。翻转由守卫观察者撑住（理由见 setup 里 flip 的注释）。
+await evaluate('window.__dshOiDot__.flip()')
 const flipState = await evaluate(`(() => ({
   fill: getComputedStyle(window.__dshOiDot__.rect).fill,
   dark: document.body.hasAttribute('data-ds-dark-theme'),
@@ -348,14 +375,12 @@ const cleaned = await evaluate(`(() => {
   const p = window.__dshOiDot__
   p.ourSheet.disabled = false
   p.host.remove()
-  const b = document.body
-  if (${setup.dark}) b.setAttribute('data-ds-dark-theme', '')
-  else b.removeAttribute('data-ds-dark-theme')
+  p.unflip()
   delete window.__dshOiDot__
   return {
     probeGone: document.getElementById('dsh-oi-active-dot-probe') === null,
     sheetEnabled: [...document.querySelectorAll('style[data-plugin="@Tinnikx/dsh-operation-improve"]')].every((s) => !s.disabled),
-    dark: b.hasAttribute('data-ds-dark-theme'),
+    dark: document.body.hasAttribute('data-ds-dark-theme'),
   }
 })()`)
 check('清场：探针摘除、样式表还原、主题复位', cleaned,

@@ -364,7 +364,10 @@ function resolveTime(node) {
  *      只缩一部分行，剩下的（user / steering / turn-tail，以及取不到时间的行）保持
  *      原宽，右边缘就参差不齐。代价是正文列窄 `--dsh-oi-ts-gutter`，这是有意付的：
  *      标签放在行间距里做到过零位移，但 16px 的间距上下对称，标签离本行和离下一行
- *      都是 1px，读起来归属下一行——那正是这一版要消掉的毛病。
+ *      都是 1px，读起来归属下一行——那正是这一版要消掉的毛病。宽度取 80px：过午夜
+ *      再测长会话时标签带 `M/D ` 前缀，实测 67–74px，56px 的留白会把标签右端顶进
+ *      通栏正文（`verify:timestamps` 的「不压正文」断言实测抓到）。跨年会话的
+ *      `Y/M/D ` 前缀仍会超出 80px，是已知限制。
  *   2. **行标签对齐的是本行第一行，不是最后一行**。这是「开始时间」，而一个两千 px
  *      高的回复行，把它的起始时刻放在两千 px 之下没有意义。
  *   3. **思考标签是 flex 项，不是绝对定位**。折叠头那条行里摘要是
@@ -374,12 +377,17 @@ function resolveTime(node) {
  *   4. **上游三类的常驻必须带 `!important`**。上游那条 `@media (hover: hover)` 下的
  *      `opacity: 0` 与这里特异度相同，胜负只取决于两张样式表在 `head` 里的先后，
  *      而上游样式表由构建产物插入，顺序不由插件掌控。
+ *   5. **常驻规则认两个锚点**。`[data-time-hover-root]` 是 0.1.5 及更早那个包住时间
+ *      的容器；0.1.6 起它消失了，且上游自己把 `_timeStart`/`_timeEnd` 改成常驻——
+ *      这条规则在那边是行为等价的双保险。锚点换成行容器 `[data-chat-flow-key]`，
+ *      上游哪天把 hover 藏时间改回来时它仍然压得住。旧锚点不能删：0.1.5 上没有
+ *      新锚点包着时间的结构就不生效。
  *
  * 标签一律 `pointer-events: none` + `user-select: none`：它落在正文的选区范围内，
  * 可选中就意味着复制一段回复会连时间戳一起带走。
  */
 export const TIMESTAMP_CSS = `
-[data-chat-flow-key] { padding-right: var(--dsh-oi-ts-gutter, 56px); }
+[data-chat-flow-key] { padding-right: var(--dsh-oi-ts-gutter, 80px); }
 [${ROW_ATTR}] { position: relative; }
 .${LABEL_CLASS} {
   color: var(--dsw-alias-label-caption, #8b8b8b);
@@ -402,5 +410,7 @@ export const TIMESTAMP_CSS = `
   line-height: 24px;
 }
 [data-time-hover-root] [class*='_timeStart'],
-[data-time-hover-root] [class*='_timeEnd'] { opacity: 1 !important; }
+[data-time-hover-root] [class*='_timeEnd'],
+[data-chat-flow-key] [class*='_timeStart'],
+[data-chat-flow-key] [class*='_timeEnd'] { opacity: 1 !important; }
 `

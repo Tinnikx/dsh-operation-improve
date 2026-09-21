@@ -16,9 +16,10 @@ PATH=$HOME/.nvm/versions/node/v24.14.0/bin:$PATH   # nvm，v24.14.0
 **验证脚本一律打测试栈，不打日常在用的那个 harness。** 端到端断言里有「批量归档」「批量删除」，它们会真的发出 click；服务是 spy、闸也有三道，但闸是兜底不是许可证，真数据不该出现在被点击的那一侧。
 
 ```
-PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:up      # 起
-PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:status  # 看
-PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:down    # 停
+PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:up       # 起
+PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:status   # 看
+PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:down     # 停
+PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:restart  # 重启（跑完 verify:settings 用）
 ```
 
 `PATH` 前缀在走 `npm run` 时同样不能省：这台机器上的 `npm` 是 nvm v16 那份，它 spawn 的 `node` 直接取自 PATH。
@@ -49,7 +50,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 
 ## 端到端
 
-端到端验证走 CDP 注入——对着**运行中的真实页面**，把构建出的 `lib/client.js` 注入进去、用假 `__ModuleLoader__` 截下 registration 拿到 exports，再 apply 一个最小 ctx（`effect` 收集 disposer，`workspaces` / `sessions` 换成 spy）。走注入而不是直接点页面自带的那份，是因为断言里包含批量归档与批量删除：只有服务是 spy，断言才既打在真实 DOM 上、又不会真的动用户的会话与工作区。
+端到端验证走 CDP 注入——对着**运行中的真实页面**，把构建出的 `lib/client.js` 注入进去、用假 `__ModuleLoader__` 截下 registration 拿到 exports，再 apply 一个最小 ctx（`effect` 收集 disposer，`workspaces` / `sessions` 换成 spy，`slots` 用不记账的桩——功能 8 起 `apply()` 在 boot 期就会调一次 `ctx.slots.inject`，那一下不能混进「选择期间 0 次服务调用」的计数；产物顶层 require 的 `react` / `react/jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives` 走一张平台桩表，被测路径本该不触达它们，**桩被调到即抛**，「意外进入 React 渲染路径」因此是显式失败而不是静默崩溃）。走注入而不是直接点页面自带的那份，是因为断言里包含批量归档与批量删除：只有服务是 spy，断言才既打在真实 DOM 上、又不会真的动用户的会话与工作区。
 
 **注入之前必须先停掉页面自带的那份实例**。插件装在 profile 里（见[加载方式](../README.md#加载方式)），不停掉就是两份互不知情的实例抢同一批 DOM：右键弹**两个**菜单，而捕获阶段的监听器按注册顺序触发，native 那份先 append，于是 `document.querySelector('.dsh-oi-menu')` 拿到的是 native 的菜单——脚本以为点的是自己的 spy，**实际点在真服务上**，「批量归档」那条断言会真的归档掉用户的会话（已经发生过一次，8 个真实会话）。
 
@@ -60,6 +61,8 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 3. **归属**：读菜单元素上的 `data-dsh-oi-owner`，要求逐字等于本次注入实例的 `instanceId`。前两道都靠推理（「停掉了所以只剩我」「只有一个所以是我的」），这道直接问菜单是谁开的。属性由 `openContextMenu` 写，值来自 `apply()` 里生成的 `instanceId`。
 
 真正的隔离在这三道闸之外：被点击的那一侧根本不该是真数据，见[测试栈](#测试栈)。
+
+**fork 的「把子会话打开」断言是 DOM 级的**：0.1.6 起 `sessions.open` 已从 `ISessions` 契约移除，插件改为在侧栏轮询子会话的行并点它。桩的 `fork` 因此返回**侧栏里一条真实未选中行的 id**——「那一行随后 `aria-selected` 了」是点击真的发生了的唯一证据；第二段用一个不存在的 id，断言 3 秒超时后只出声（注入桩包了 `console.warn` 收集）且不产生任何导航。
 
 **「对齐上游」那几条断言要点开的是页面自己的菜单，而它挂在真服务上。**「...」是行右侧操作区里的第一个按钮，工作区行的第二个是「新建会话」——闭着眼点操作区就会真的开一个会话。所以打开的动作只认 `button[0]`，并要求它恰好多弹出一个 portal 菜单，不满足就当没测到；对着它只读 `viewBox` / `path[d]` / `getComputedStyle`，一个菜单项都不点，关闭走 `Escape`。
 
@@ -110,9 +113,11 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify     # 改回 zh 再�
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:timestamps
 ```
 
-`verify-timestamps-live.mjs` 同样先点开一个够长的会话（要求 ≥20 条节点行、≥1 个 Think 行、≥1 枚上游时间标签，不满足一律 `abort`）。十条断言：装饰完整性、文本格式、**标签等于上游 Started**、跨 step 时间单调不减、每枚标签落在本行第一行上、不压正文、Think 行水平带上有本 step 的时间、上游三类改常驻、空闲无自激重建、dispose 复原。四处只有这个脚本才守得住的坑：
+`verify-timestamps-live.mjs` 同样先点开一个够长的会话（选取门槛 28 条节点行、≥1 个 Think 行、≥1 枚上游时间标签，不满足一律 `abort`——「标签等于上游 Started」与「单调不减」两条谓词要 **≥20 条带标签的行**，而上游自带时间的三类与空行都不贴标签，按 20 选会话会经常刚好够不上，这是实测出来的边界）。十条断言：装饰完整性、文本格式、**标签等于上游 Started**、跨 step 时间单调不减、每枚标签落在本行第一行上、不压正文、Think 行水平带上有本 step 的时间、上游三类改常驻、空闲无自激重建、dispose 复原。七处只有这个脚本才守得住的坑：
 
 - **Chrome 必须带 hover 那两个 `--blink-settings`**（[测试栈](#测试栈)起的那个自带）。headless 默认 `(hover: none)`，上游那条藏时间的规则整条不生效，装载前量到的恒是 `opacity: 1`，「改成常驻」的断言会在功能完全没生效的情况下报绿。`Emulation.setEmulatedMedia({features:[{name:'hover'}]})` **办不到**——实测下发返回 `{}` 无错，而 `matchMedia('(hover: hover)').matches` 纹丝不动地保持 `false`；Chrome 只认它支持的那几个 `prefers-*` / `color-*` 特性，多余的静默忽略。脚本因此改成读 `matchMedia` 的前置检查，不满足就 abort 并让人重起测试栈。
+- **常驻断言分两个世界**，由 `data-time-hover-root` 锚点在不在场判定，不猜版本号。`hover-root`（≤0.1.5）：装载前恒为 0，「0→1」的前后差就是插件挣来的行为，装载前读到 1 一律 abort（差观测不到就等于假通过）。`upstream-always-on`（≥0.1.6）：锚点消失且上游自己常驻，装载前就是 1，前后差测不出东西，断言退化为「恒为 1 + 插件那条 `[data-chat-flow-kind]` 双保险规则确实在注入的样式表里」，标签上写明 world。dispose 后的复原比对同样按 world 走（回到各自世界的基线，而不是恒回 0）。
+- **重算时钟的 oracle 必须日期感知**。跨午夜再跑时会话是「昨天」的，标签带着 `M/D ` 前缀，只按 `HH:mm:ss` 重算的 oracle 永远差那截前缀——这个缺口在 0.1.6 适配轮实测撞上，oracle 因此复刻 `formatClockSeconds` 的分支规则（独立实现，不复用被测代码）。
 - **插件若已装进 profile，页面自带一份实例**，不先停掉就注入会得到两份互不知情的实例、每行两枚标签（实测 160 = 2×80）。清场因此调 `window.__dshOperationImprove__.timestamps.dispose()` 而不只是删 DOM：光删 DOM，原生那份的 `MutationObserver` 下一帧就把标签贴回来。
 - **dispose 之后要等一拍再量 `opacity`**。上游那枚时间标签带 opacity 过渡，摘掉样式表后同步读回来的恒是过渡前的 `1`。
 - **单调性只能跨 step 判定，不能整列判**。同一个 step 内部本来就可以逆序：`model-retry` 携带的是重试事件时刻，而它后面那条 `assistant-step` 显示的是**该 step 的起点**，起点必然更早。实测 step 138 起于 11:42:39、重试发生在 11:42:57，两行各自都对。同 step 的逆序被显式计数报出来（`sameStepCount`），免得这条放宽把真正的反查串行一起放过去。
@@ -137,7 +142,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:dot
 
 20 条断言全过时的读数见[功能 5 · 实测读数](./feature-5-active-dot.md#实测读数)。
 
-**0.1.6-alpha.2 起 C 组（切主题后截图）两条对比度断言失败**：主题控制器在两帧内把 `data-ds-dark-theme` 写回 body，脚本跨 evaluate 翻的属性被冲掉，量到的是「深青压白底」。A/B 组 18 条仍全过，覆盖本身没有失效。修法同[功能 10](#功能-10-的验证)的第一条坑（同一次 evaluate 里摘、读、还原），待另开任务处理。
+**0.1.6 起 C 组（切主题后截图）的翻主题要由守卫观察者撑住**：主题控制器在两帧内把 `data-ds-dark-theme` 写回 body，一次性翻转撑不过 `Page.captureScreenshot` 的往返。脚本的 `flip()` 在翻转后挂一个 MutationObserver，应用每写回一次就立刻翻回来（连同探针垫底色一起重刷），`unflip()` 摘除并还原；读数与两张截图都发生在守卫窗口内。「同一次 evaluate 里摘读还原」（[功能 10](#功能-10-的验证)第一条坑）只够读 computed style，撑不住截图。
 
 ## 功能 6 的验证
 
@@ -145,14 +150,14 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:dot
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:selection
 ```
 
-同样**不注入 bundle、不 apply 自造 ctx**，验的是页面自带的那份实例：功能 6 一个 harness 服务都不调，没有需要打桩的破坏性动作，走页面自己的实例反而把「构建产物 → profile 装载 → 真实词典」整条路径一起验了。16 条断言覆盖三条命中路径（会话正文的选区、输入框里的选区、空输入框）、两项动作的实际效果、不该命中的两种情形（非可输入且无选区、侧边栏行）、样式一致、图标一致、以及 `dispose` 之后不再接管。
+同样**不注入 bundle、不 apply 自造 ctx**，验的是页面自带的那份实例：功能 6 一个 harness 服务都不调，没有需要打桩的破坏性动作，走页面自己的实例反而把「构建产物 → profile 装载 → 真实词典」整条路径一起验了。20 条断言覆盖三条命中路径（会话正文的选区、0.1.6 Lexical composer 的 contenteditable 判据——有选区「复制+粘贴」、空态「只给粘贴」、Esc 收尾，合成 `<textarea>` 的 field 路径——选区「复制+粘贴」、空态「只给粘贴」）、两项动作的实际效果、不该命中的两种情形（非可输入且无选区、侧边栏行）、样式一致、图标一致、以及 `dispose` 之后不再接管。
 
 - **手势必须走 CDP 的 `Input.dispatchMouseEvent`，不能用合成事件**。合成的 `.click()` 不带 user activation，而 `navigator.clipboard.readText()` 要的正是它——用合成事件时粘贴那条断言会在功能完好的情况下报失败。
 - **`Browser.grantPermissions` 只在 browser 级别那条连接上存在**，页面连接答 `'Browser.grantPermissions' wasn't found`。更要紧的是**那条连接必须一直开着**：授权跟着授权的那个 CDP client 走，ws 一关 Chrome 就把覆盖撤回，之后 `readText()` 报 `NotAllowedError: Read permission denied`——症状看着像没授权成功，其实是授过又收回了（`grantPermissions` 本身答的是 `{}`）。
 - **粘贴的哨兵由脚本自己写进剪贴板**，所以「粘完应该是什么」是算得出来的常量，而不是拿页面上另一处读数去对页面上这一处。
 - **contextmenu 探针挂在插件之后**（同为捕获阶段，后注册后触发），才读得到插件处理完之后的 `defaultPrevented`；探针自己随后也 `preventDefault()`，免得 headed Chrome 弹出原生菜单挡住后面的手势。
 - **图标断言按 `aria-label` 找页面上那枚真实的复制按钮**，不按 `d` 反查——按 `d` 找就成了拿常量去证明常量。`aria-label` 取自同一份 common 词典，所以它在两种语言下都定位得到。
-- **输入框里的选区要自己算右键的 x**：Chrome 在 `<textarea>` 上右键会先折叠选区，落点不在选区内就等于没选。脚本用该 textarea 自己的计算字体在 canvas 上 `measureText(value.slice(0, mid))` 求出中点的横坐标，保证这一下点在选区里。draft 的写入也走真实手势（`Delete` 键 + `Input.insertText`）而不是直接写 `value`——那是个受控 `<textarea>`。
+- **右键必须落在选区内**，Chrome 在选区之外右键会先折叠选区。composer（contenteditable）那条路径直接对 DOM Range 取 `getBoundingClientRect()`；合成 `<textarea>` 没有 Range 可用，用控件自己的计算字体在 canvas 上 `measureText(value.slice(0, mid))` 求中点横坐标，并且框必须是**单行高度**——80px 高的框里文字只占最上面一行，点垂直中心等于点在选区外（实测把选区折叠成了只剩「粘贴」）。草稿写入一律走真实手势（`Delete` 键 + `Input.insertText`）；field 段开始前要 Escape + blur + `removeAllRanges()` 收掉 composer 粘贴留下的选区。
 - **样式一致比的是 `getComputedStyle` 的完整枚举**（root 与 item 各 862 键），排除的是一张显式的几何键名单而不是正则：`font-size` 里也有 `size`，按模式排除会把字号一起放过。
 - 脚本最后一步 `Page.reload`：第 11 条断言把页面自带的实例 `dispose()` 掉了，不重载就等于给下一个人留一个功能缺失的页面。重载后再断言新实例确实回来了。
 
@@ -168,7 +173,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH node .scratch/think-scroll-check.mjs
 
 它也不注入 bundle，验的是页面自带那份实例插进去的样式表。判据全部取自真实页面上上游自己渲染的 think 块——不造 fixture、不注入文本，因为测试栈那个会话里正好既有超过 60vh 的思考、也有远不到的，两类同页；缺任一类就 `abort`（「限高分支实测未发生」）。
 
-**对照组只中和本规则那两条声明，不能整张样式表 `disabled`**。同一张表里还有功能 4 那条 `[data-chat-flow-key]` 的 56px 右侧留白，摘掉它正文列宽 748→804、文字重排少一行，于是放得下的思考也「长高」24px——那正好是一个 `line-height`，看着像本规则的副作用，实际是留白的账。
+**对照组只中和本规则那两条声明，不能整张样式表 `disabled`**。同一张表里还有功能 4 那条 `[data-chat-flow-key]` 的 80px 右侧留白，摘掉它正文列变宽、文字重排少一行，于是放得下的思考也「长高」一个 `line-height`——看着像本规则的副作用，实际是留白的账。
 
 ## 功能 8 的验证
 
@@ -187,6 +192,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:settings
 - **淡化读的是控件的 `opacity`，不是 `color`，且要连整行与标签一起读**。灰显是一条 CSS 规则的效果，断言 `data-default` 挂上了只能证明标记在；按颜色比会在把标签色压成同一个值的主题下永远相等——测试栈里那份主题正是如此，实测两行的标签色同为 `rgb(255, 255, 255)`。同时断言行与标签的 `opacity` 是 `1`：只淡控件是要求的一部分，规则写宽一格（挂到行上）不会有别的断言报错。
 - **「卸载不清空」在一份副本上真卸载**：`rsync` 出 `/tmp/dsh-oi-uninstall-home`，从 profile manifest 的 `bundles` 与 `dependencies` 里摘掉本插件，用 harness 自己那套 `loadProfile` + `composeEntries` 算该 home 的生效配置，再起一个真 harness（3182）确认它照样起得来。**不能在测试栈本身上卸载**——那会把 CDP 那一侧的页面一起掀掉，后面的断言就没得跑了。
 - **「插件确实没了」要按 entry 的 `name`（包名）判，不是 `id`**。entry 的 id 由 bundle 自己定，按包名找 id 永远找不到，那条断言就会在插件明明还在的时候报绿。
+- **跑完必须重启 harness，脚本对默认目标自动做**。本脚本写的正是 `session-query-sqlite`——harness 0.1.6-alpha.2 对它的热重挂有缺陷：连带摘除 `sessionController` 且静默挂起，此后侧栏会话列表恒空、撤销写入也不恢复，只有进程重启可救（根因与最小复现见 [harness-hmr-session-defect.md](harness-hmr-session-defect.md)）。脚本在收尾处对默认目标 spawn `test-stack.mjs restart`（npm 别名 `stack:restart`），非默认目标只出声提示。**中途 `abort` 的路劲不经过收尾**：settings 半途死过一次，之后也要手动 `stack:restart` 再跑别的会话相关脚本。
 
 一轮完整跑的读数见[功能 8 · 实测读数](./feature-8-harness-config.md#实测读数)。
 
@@ -196,17 +202,17 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:settings
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:chat-history
 ```
 
-十四条断言，全部打[测试栈](#测试栈)（`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，验的是页面自带实例：功能 9 不调用任何 harness 服务，没有需要打桩的破坏性动作。
+十六条断言，全部打[测试栈](#测试栈)（`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，验的是页面自带实例：功能 9 不调用任何 harness 服务，没有需要打桩的破坏性动作。
 
 历史断言的 oracle 是脚本自己对导航列与消息流的独立读取（fiber 里的轮次条目 + loaded 锚点行的气泡全文）——被测会话的提问全部先于插件存在，不从插件侧取任何期望值。导航的期望值取自被测会话的真实提问，不写死。
 
-覆盖：句柄与 snapshot、历史条数与导航列条目一致、历史文本与独立读取一致、↑ 从最新回翻、连续 ↑、按满停在最早一条、↓ 返程、↓ 越界清空并退出、有未提交内容且光标在文中不接管、多行且光标在非文档开头不接管、切会话后历史换成那个会话的、不写 localStorage、dispose 后不再接管、刷新后长出新实例。
+覆盖：句柄与 snapshot、历史条数与导航列条目一致、历史文本与独立读取一致、↑ 从最新回翻、连续 ↑、按满停在最早一条、↓ 返程、↓ 越界清空并退出、有未提交内容且光标在文中不接管、多行且光标在非文档开头不接管、**单条提问的会话**（上游导航列对 <2 轮不渲染，脚本用「user 行气泡恰一条且导航列读空」找真实单轮会话）↑ 从消息流兜底调出提问且再按不越界、切会话后历史换成那个会话的、不写 localStorage、dispose 后不再接管、刷新后长出新实例。
 
 - **选会话不能按名字**：测试栈副本随真实 home 漂移，且部分会话的视图没有输入框（只读/归档）或挂载很慢。脚本逐行点开侧边栏会话，等「历史 ≥2 且 composer 在、且两次读数一致（视图落定）」；**运行中的会话直接跳过**（node 的 `running` 字段，行 fiber 反查）——运行中的会话页输入框不可用。
 - **导航列 tick 数不作数**：轮次多时 tick 会被压缩采样，条数比对一律走 fiber 里的 `items`。
 - **设值断言读 `innerText`**；脚本侧清空用 `selectAll` + 真实 Delete 键（`execCommand('delete')` 在 Lexical 上不生效），`selectAll` 与 Delete 之间要让一拍——选区同步进 Lexical 是异步的。插件侧的写入坑更多，见[功能 9 文档](./feature-9-chat-history.md)。
 - **多行内容用 CDP `Input.insertText` 一次插入 `'line1\nline2'`**（真实输入管线保留换行；`execCommand('insertText')` 会抹平）。
-- **会话切换靠点侧边栏行**：应用没有 URL 路由，URL 恒为 `/`。
+- **会话切换靠点侧边栏行**：应用没有 URL 路由，URL 恒为 `/`。插件侧的「当前会话」也是从侧栏派生（`aria-selected` 行 + fiber 反查 id），脚本判定「切换已落定」同样读 `snapshot().sessionId`——两边读的是同一个 DOM 信号，换会话那条断言因此也顺带复证了派生路径。
 - 不覆盖：多设备/多浏览器——历史只读当前页面状态，没有可跨的东西。
 
 
@@ -222,7 +228,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:row-states
 
 覆盖：端到端装载、表内顺序契约（ROW_STATES 段先于多选段）、上游竞争规则在场、选中底色/竖条/字重/时间提亮、对照行无装饰、运行中底色/静默底边/彗尾动画与 mask/辉光、选中+运行中 .14 叠加、选中+多选归蓝且竖条保留、拖拽目标行彗尾让位、三行错峰相位、主题来回切换、`prefers-reduced-motion` 彗尾熄灭与复燃、清场复位。
 
-- **翻主题必须在同一次 evaluate 里摘属性、读数、还原**：0.1.6-alpha.2 起应用的主题控制器在两帧内就把 `data-ds-dark-theme` 写回 body，跨两次 evaluate 的窗口里属性已经回来了——第一轮实跑的两条「浅色底色」假失败就是这么来的（功能 5 的 C 组至今还是跨 evaluate 翻的，见下条）。
+- **翻主题必须在同一次 evaluate 里摘属性、读数、还原**：0.1.6-alpha.2 起应用的主题控制器在两帧内就把 `data-ds-dark-theme` 写回 body，跨两次 evaluate 的窗口里属性已经回来了——第一轮实跑的两条「浅色底色」假失败就是这么来的（功能 5 的 C 组要跨住截图往返，用的是守卫观察者方案，见[功能 5 的验证](#功能-5-的验证)）。
 - **`mask-composite` 的 computed 值是逐图层的列表**（`"exclude, exclude"`），断言取第一段而不是全等。
 - **时间提亮在第三方主题下可能验不到「变亮」**：测试栈副本把 `label-secondary` 与 `label-tertiary` 都解析成白色，断言因此降级为「挂上了正确的 token」；标准主题下两色不同，这条仍然区分得开。
 - 0.1.6 的 `prefers-reduced-motion` 经 `Emulation.setEmulatedMedia` 可用（功能 4 那条「Chrome 只认它支持的那几个 `prefers-*`」的坑在这里是反例：这个特性受支持，`(hover: none)` 才是不受支持的那个）。

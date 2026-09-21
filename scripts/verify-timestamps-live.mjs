@@ -56,6 +56,13 @@ const { port: PORT, prefix: PREFIX } = resolveTarget(process.argv.slice(2))
 const NEED_ROWS = 20
 
 /**
+ * 选会话用的高一档门槛：`NEED_ROWS` 是**带标签行数**的要求（两条 derivation 断言
+ * 的谓词），而上游自带时间的三类与本该为空的行都不贴标签——按 20 行选出来的会话
+ * 往往只有 18 行带标签，断言会在会话刚好够不上时被自己的人数判据掐死。留 8 行余量。
+ */
+const PICK_ROWS = NEED_ROWS + 8
+
+/**
  * hover 媒体特性不满足时给出的处理办法。
  *
  * 测试栈起的 Chrome 自带那两个 `--blink-settings`，所以正常路径下走不到这里；
@@ -93,7 +100,7 @@ const opened = await evaluate(`(async () => {
     thinks: document.querySelectorAll('[data-variant="think"]').length,
     upstreamTimes: upstreamTimeEls().length,
   });
-  const good = (p) => p.flowRows >= ${NEED_ROWS} && p.thinks >= 1 && p.upstreamTimes >= 1;
+  const good = (p) => p.flowRows >= ${PICK_ROWS} && p.thinks >= 1 && p.upstreamTimes >= 1;
   const first = probe();
   if (good(first)) return { reused: true, ...first };
   for (const r of document.querySelectorAll('[role="treeitem"]')) {
@@ -129,7 +136,7 @@ if (opened.thinks < 1) {
 }
 if (opened.upstreamTimes < 1) {
   abort(
-    '页面上没有上游时间标签（`[data-time-hover-root] [class*="_timeStart"|"_timeEnd"]`）——常驻断言实测未发生。',
+    '页面上没有上游时间标签（`[data-time-hover-root]` 或 `[data-chat-flow-key]` 下的 `_timeStart` / `_timeEnd`）——常驻断言实测未发生。',
     `观测：${JSON.stringify(opened)}\n处理：换一个含 user / turn-tail 行的会话。`,
   )
 }
@@ -175,6 +182,7 @@ const baseline = await evaluate(`(async () => {
   ${HELPERS}
   await new Promise((r) => setTimeout(r, 300));
   return { geo: geometry(), upstream: upstreamOpacity(),
+    hoverRoot: document.querySelector('[data-time-hover-root]') !== null,
     scrollTop: scrollerEl().scrollTop,
     kinds: rowsOf().reduce((acc, el) => {
       const k = el.getAttribute('data-chat-flow-kind') ?? '(null)';
@@ -183,13 +191,25 @@ const baseline = await evaluate(`(async () => {
 })()`)
 console.log('[baseline]', JSON.stringify({ ...baseline, geo: { count: baseline.geo.count, scrollHeight: baseline.geo.scrollHeight } }))
 
-// hover 匹配上了，上游标签就该全部藏着。不是的话说明选择器选空了或上游改了规则，
-// 「装载后是 1」这条断言测不出任何东西，会在功能完全没生效的情况下报绿。
+// 常驻断言有两个世界（见 src/timestamps/index.js 第 5 条）：
+// - `hover-root`（≤0.1.5）：上游把时间藏在 hover 后面，装载前恒为 0，常驻是插件挣来的
+//   ——前后对照才测得出东西。
+// - `upstream-always-on`（≥0.1.6）：`data-time-hover-root` 消失，上游自己常驻，装载前
+//   就是 1。前后差观测不到，断言退化为「行为成立 + 插件那条规则确实在表里」。
+// 哪个世界都由 hover 前置检查之外的这个锚点存在性决定，不猜版本号。
+const world = baseline.hoverRoot ? 'hover-root' : 'upstream-always-on'
 const baseZero = baseline.upstream.opacity['0'] ?? 0
-if (baseZero !== baseline.upstream.count) {
+const baseOne = baseline.upstream.opacity['1'] ?? 0
+if (world === 'hover-root' && baseZero !== baseline.upstream.count) {
   abort(
-    `装载前上游时间标签不是全部 opacity=0（${JSON.stringify(baseline.upstream)}）——常驻断言会假通过。`,
-    `hover 匹配情况见上面的 [media]。若 hover 为真而这里仍是 1，说明上游那条隐藏规则或类名片段变了。`,
+    `hover-root 世界里装载前上游时间标签不是全部 opacity=0（${JSON.stringify(baseline.upstream)}）——常驻断言会假通过。`,
+    'hover 匹配情况见上面的 [media]。若 hover 为真而这里仍是 1，说明上游那条隐藏规则或类名片段变了。',
+  )
+}
+if (world === 'upstream-always-on' && baseOne !== baseline.upstream.count) {
+  abort(
+    `0.1.6 世界里装载前上游时间标签不是全部 opacity=1（${JSON.stringify(baseline.upstream)}）——上游行为变了，两个世界的判据都不成立。`,
+    '观测：hoverRoot=false 而 opacity 读出了 0 档。处理：核对上游时间标签的渲染路径。',
   )
 }
 
@@ -204,12 +224,27 @@ const boot = `
   window.__ModuleLoader__ = { load: (r) => { captured = r } };
   try { (0, eval)(BUNDLE) } finally { window.__ModuleLoader__ = real }
   if (captured === null) return { ok: false, reason: 'bundle did not register' };
-  const exports = captured.factory((name) => { throw new Error('unexpected external require: ' + name) });
+  // 平台模块桩：与 verify-live.mjs 同一理由——被测路径不触达 React 渲染，
+  // 桩被调到即抛，把「意外进入渲染路径」变成显式失败。
+  const noRender = (what) => () => { throw new Error('verify:timestamps 不该走到 ' + what) };
+  const PLATFORM = {
+    'react': { useState: noRender('react.useState'), useRef: noRender('react.useRef'),
+      useEffect: noRender('react.useEffect'), useCallback: noRender('react.useCallback') },
+    'react/jsx-runtime': { jsx: noRender('jsx'), jsxs: noRender('jsxs'), Fragment: 'x-fragment' },
+    '@deepseek-ai/dsh-client-ui-primitives': { writeClipboard: () => {} },
+  };
+  const exports = captured.factory((name) => {
+    if (PLATFORM[name] !== undefined) return PLATFORM[name];
+    throw new Error('unexpected external require: ' + name);
+  });
   const disposers = [];
   const ctx = {
     effect: (cb) => { const d = cb(); if (typeof d === 'function') disposers.push(d) },
     workspaces: new Proxy({}, { get: () => () => Promise.resolve(undefined) }),
     sessions: new Proxy({}, { get: () => () => Promise.resolve(undefined) }),
+    // 功能 8 起产物会调 ctx.slots.inject(...)——本脚本只验时间戳，slot 收下来不渲染；
+    // 真 slots 的断言在 verify:settings。
+    slots: new Proxy({}, { get: () => () => undefined }),
     // 这个脚本验的是时间戳，右键菜单一个都不开，locale 只需让 apply() 走得通：
     // register 收下词典，bind 出的 t 原样返回键名。菜单文案的断言在 verify-live.mjs。
     locale: { register: () => () => {}, bind: () => (key) => key },
@@ -243,7 +278,7 @@ async function assertSameContext(stage) {
 
 const { check, report } = createChecker()
 
-await runChecks({ evaluate, check, baseline, needRows: NEED_ROWS })
+await runChecks({ evaluate, check, baseline, needRows: NEED_ROWS, world })
 
 // 覆盖度：真实页面上出得来哪些 kind 不由脚本决定，显式报出来而不是假装全测了。
 // 没出现的 kind **不记 skip**——它们不在本轮的断言计划里，记 skip 会让脚本永远
@@ -265,7 +300,7 @@ const ALL_KINDS = [
 console.log('[coverage] seen:', JSON.stringify(coverage))
 console.log('[coverage] not exercised:', JSON.stringify(ALL_KINDS.filter((k) => coverage[k] === undefined)))
 
-await checkDispose({ evaluate, check, baseline, assertSameContext })
+await checkDispose({ evaluate, check, baseline, assertSameContext, world })
 
 conn.ws.close()
 report()

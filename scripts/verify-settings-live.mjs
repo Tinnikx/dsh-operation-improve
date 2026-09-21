@@ -370,21 +370,26 @@ check('9 bundle 字段的徽标显示来源包名，手写 / 系统默认保持�
     : 'host 没归因出包名，或徽标没显示它 / 把手写与系统默认也改了'))
 
 // —— 10：生效方式标记——每张卡一枚，个别行为不同的字段那行 meta 里再挂一枚 ——
+// 重启级字段现在整支「会话检索」卡 6 个键全是：harness 0.1.6-alpha.2 对它的热重挂有缺陷
+// （docs/harness-hmr-session-defect.md），整卡改按「重启后生效」口径标注。
 const effects = await panelInfo()
 const effectEntries = Object.entries(effects.entryEffects)
 const fieldEffectValues = Object.values(effects.fieldEffects)
-check('10 每张卡都渲染生效方式标记，字段级标记只有预编译缓存一家是「重启生效」', {
+check('10 每张卡都渲染生效方式标记；重启级标记恰好是「会话检索」全卡 6 键', {
   cards: effectEntries.length,
   missing: effectEntries.filter(([, effect]) => effect === null).map(([id]) => id),
-  restartFields: fieldEffectValues.filter((effect) => effect === 'restart').length,
+  restartFieldKeys: Object.entries(effects.fieldEffects)
+    .filter(([, effect]) => effect === 'restart').map(([key]) => key).sort(),
   bashTimeout: effects.fieldEffects['bash-sandbox.timeoutMs'],
   preparedCache: effects.fieldEffects['session-query-sqlite.preparedSessionCacheSize'],
 }, (v) => (
   v.cards > 0 && v.missing.length === 0
-    && v.bashTimeout === 'immediate' && v.preparedCache === 'restart'
-    && v.restartFields === 1
+    && v.bashTimeout === 'immediate'
+    && v.preparedCache === 'restart'
+    && v.restartFieldKeys.length === 6
+    && v.restartFieldKeys.every((key) => key.startsWith('session-query-sqlite.'))
     ? true
-    : '生效标记缺了、标错了，或冒出了预期之外的重启级字段'))
+    : '生效标记缺了、标错了，或重启级字段越出了「会话检索」卡的范围'))
 
 
 // —— 1：改完只失焦、不点任何按钮，就该落盘并热生效 ——
@@ -550,6 +555,16 @@ check('8c 清空之后那一行的输入框重新淡化、重新空着，标签�
     : '清空之后没退回灰显'))
 
 conn.ws.close()
+// 本脚本会真写托管区段里的 session-query-sqlite：harness 0.1.6-alpha.2 的热重挂缺陷
+// 会连带杀死会话服务且不可逆（docs/harness-hmr-session-defect.md），不重启 harness
+// 下一个脚本拿到的就是空侧栏。默认目标（测试栈）自动重启；打了别的端口就自己处理。
+if (process.argv.slice(2).length === 0) {
+  console.log('[stack] 重启测试栈：verify:settings 写过 session-query-sqlite，harness 热重挂缺陷会杀掉会话服务')
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL('./test-stack.mjs', import.meta.url)), 'restart'], { stdio: 'inherit' })
+  if (r.status !== 0) console.error('[stack] 重启失败：手动 npm run stack:down && npm run stack:up 后再跑其余脚本')
+} else {
+  console.warn('[stack] 本脚本写过 session-query-sqlite（非默认目标，不自动重启）：该 harness 版本的会话服务已死到进程重启为止，见 docs/harness-hmr-session-defect.md')
+}
 report()
 
 // ------------------------------------------------------------------ 卸载分支

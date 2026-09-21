@@ -244,7 +244,7 @@ const { check, report } = createChecker()
 
 // 选一段真实正文：必须**整段落在一行里**（`getClientRects().length === 1`），否则算出来的
 // 中点可能落在行尾空白上，那里不在选区内，右键理应不弹——判据会失败，但失败的是探针。
-const picked = await evaluate(`(() => {
+const pickBodySelection = () => evaluate(`(() => {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
   let node = null
   while ((node = walker.nextNode()) !== null) {
@@ -252,7 +252,7 @@ const picked = await evaluate(`(() => {
     if (raw.trim().length < 20) continue
     const host = node.parentElement
     if (host === null) continue
-    if (host.closest('[class*="_sessionRow"], [class*="_projectRow"], textarea, input, .dsh-oi-menu') !== null) continue
+    if (host.closest('[class*="_sessionRow"], [class*="_projectRow"], textarea, input, [contenteditable], .dsh-oi-menu') !== null) continue
     const box = host.getBoundingClientRect()
     if (box.top < 80 || box.bottom > window.innerHeight - 120 || box.width < 80) continue
     const lead = raw.length - raw.trimStart().length
@@ -273,13 +273,25 @@ const picked = await evaluate(`(() => {
   }
   return null
 })()`)
+
+// 连跑多脚本时实测过一次偶发：选中后、右键前的间隙里 React 重渲染把选区掐掉，菜单数变 0
+// ——那是探针踩空，不是功能坏了（同产物单跑必过）。重选一次再判定；两次都空才记 FAIL。
+let picked = null
+let menu1 = null
+for (let attempt = 0; attempt < 2; attempt += 1) {
+  picked = await pickBodySelection()
+  if (picked === null) break
+  await rightClick(picked.x, picked.y)
+  menu1 = await readMenu()
+  if (menu1.count === 1) break
+  await escapeMenu()
+  await sleep(300)
+}
 if (picked === null) {
   abort('页面上找不到可用于选区的会话正文', '要求：≥20 字的文本节点、不在侧边栏/输入框里、'
     + '前 12 个字符在同一行内、整体落在视口内。先在测试栈里打开一个有正文的会话。')
 }
-
-await rightClick(picked.x, picked.y)
-const menu1 = await readMenu()
+if (menu1 === null) menu1 = { count: 0, owner: null, items: [] }
 check('会话正文选区上右键：恰好 1 个菜单、归属页面实例、只有「复制」', menu1,
   (v) => (v.count === 1 && v.owner === boot.instanceId
     && v.items.length === 1 && v.items[0] === EXPECT.copy)
@@ -334,64 +346,87 @@ check('点「复制」后剪贴板逐字等于选中文本，且菜单已关', {
 }, (v) => (v.match === true && v.menus === 0)
   || `期望剪贴板 === 选中文本且菜单关闭，实测 ${JSON.stringify(v)}`)
 
-// ---- 3 / 4 / 5：输入框 ----
+// ---- 3 / 4 / 5：输入框的两条路径 ----
+//
+// 0.1.6 起会话输入框是 Lexical contenteditable，页面里没有那个隐藏 textarea。
+// 插件的命中路径因此分开测：**contenteditable 判据**打真实的 composer——有选区给
+// 「复制+粘贴」，空态无选区给「粘贴」（照表单控件语义，不要求点击点落在选区内）；
+// **field 路径**打一个合成的单行 `<textarea>`——probeField 是通用 DOM 逻辑，
+// 页面上不再有现成的可写控件不等于这条路径该失去覆盖。
 
-const field = await evaluate(`(() => {
-  const found = [...document.querySelectorAll('textarea')]
-    .map((el) => ({ el, r: el.getBoundingClientRect() }))
-    .filter((o) => o.r.width > 100 && o.r.height > 10 && !o.el.disabled && !o.el.readOnly)
-    .sort((a, b) => b.r.width - a.r.width)[0]
-  if (found === undefined) return null
-  window.__dshOiField__ = found.el
-  found.el.focus()
-  found.el.setSelectionRange(0, found.el.value.length)
-  const cs = getComputedStyle(found.el)
-  return {
-    placeholder: found.el.getAttribute('placeholder'),
-    value: found.el.value,
-    rect: [Math.round(found.r.x), Math.round(found.r.y), Math.round(found.r.width), Math.round(found.r.height)],
-    padLeft: parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth),
-    font: cs.font,
-  }
+/** 读 composer 的纯文本（尾部空行不算内容，与功能 9 的读法同口径）。 */
+const readComposer = () => evaluate(`(() => {
+  const ce = document.querySelector('div[contenteditable="true"][role="textbox"]')
+  return ce === null ? null : (ce.innerText ?? '').replace(/\\n+$/, '')
 })()`)
-if (field === null) abort('页面上找不到可写的 textarea', '会话页应当有输入框；先确认测试栈打开的是会话页。')
 
-// 先清空草稿（真实按键，不改 value）：受控 textarea 直接写 value 会被 React 下一帧盖回去。
-if (field.value !== '') {
-  await press('Delete', 'Delete', 46)
+/** 清空 composer：selectAll + 真实 Delete（`execCommand('delete')` 在 Lexical 上不生效）。 */
+async function clearComposer() {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await evaluate(`(() => {
+      const ce = document.querySelector('div[contenteditable="true"][role="textbox"]')
+      if (ce === null) return false
+      ce.focus()
+      document.execCommand('selectAll', false)
+      return true
+    })()`)
+    await sleep(150) // selectAll 的选区同步进 Lexical 是异步的
+    await press('Delete', 'Delete', 46)
+    await sleep(150)
+    if ((await readComposer()) === '') return
+  }
+  abort('composer 清空失败', 'selectAll + Delete 三次后仍有内容。')
 }
-const emptied = await evaluate('window.__dshOiField__.value')
-if (emptied !== '') abort('清不掉输入框里的草稿', `实测 value=${JSON.stringify(emptied)}`)
 
-const typed = await conn.send('Input.insertText', { text: DRAFT })
-if (typed.error !== undefined) abort('Input.insertText 失败', JSON.stringify(typed.error))
+const composerFound = await evaluate(`(() => {
+  const ce = document.querySelector('div[contenteditable="true"][role="textbox"]')
+  if (ce === null) return false
+  ce.focus()
+  return document.activeElement === ce
+})()`)
+if (!composerFound) abort('页面上找不到可聚焦的 composer', '会话页应有 `div[contenteditable="true"][role="textbox"]`；先确认测试栈打开的是会话页。')
+await clearComposer()
+
+const typedDraft = await conn.send('Input.insertText', { text: DRAFT })
+if (typedDraft.error !== undefined) abort('Input.insertText 失败', JSON.stringify(typedDraft.error))
 await sleep(200)
 
-// 右键要落在选区上：Chrome 在文本控件里右键选区之外会先把光标收拢过去。用控件自己的
-// 字体量出第 PICK 段中点的横坐标，量不准也只是落在相邻字符上，仍在选区内。
-const fieldPoint = await evaluate(`(() => {
-  const el = window.__dshOiField__
-  el.focus()
-  el.setSelectionRange(${PICK[0]}, ${PICK[1]})
-  const r = el.getBoundingClientRect()
-  const c = document.createElement('canvas').getContext('2d')
-  c.font = ${JSON.stringify(field.font)}
-  const mid = (${PICK[0]} + ${PICK[1]}) / 2
-  const dx = c.measureText(el.value.slice(0, mid)).width
-  return {
-    value: el.value, start: el.selectionStart, end: el.selectionEnd,
-    x: Math.round(r.x + ${field.padLeft} + dx),
-    y: Math.round(r.y + r.height / 2),
+// 在 composer 的文本节点上选出草稿的第 PICK 段，量出选区中点。**用 Range 的
+// client rect**（旧 textarea 用 canvas measureText 是因为表单控件的选区没有
+// Range；contenteditable 有）。
+const composerSel = await evaluate(`(() => {
+  const ce = document.querySelector('div[contenteditable="true"][role="textbox"]')
+  if (ce === null) return null
+  const walker = document.createTreeWalker(ce, NodeFilter.SHOW_TEXT)
+  let node
+  while ((node = walker.nextNode()) !== null) {
+    const at = (node.nodeValue ?? '').indexOf(${JSON.stringify(DRAFT)})
+    if (at === -1) continue
+    const range = document.createRange()
+    range.setStart(node, at + ${PICK[0]})
+    range.setEnd(node, at + ${PICK[1]})
+    const s = window.getSelection()
+    s.removeAllRanges()
+    s.addRange(range)
+    const r = range.getBoundingClientRect()
+    if (r.width === 0) continue
+    window.__dshOiSelComposer__ = range.cloneRange()
+    return {
+      text: s.toString(),
+      x: Math.round(r.x + r.width / 2),
+      y: Math.round(r.y + r.height / 2),
+    }
   }
+  return null
 })()`)
-check('输入框里打进草稿并选中一段（真实 Input.insertText，受控组件跟得上）', {
-  value: fieldPoint.value, start: fieldPoint.start, end: fieldPoint.end,
-}, (v) => (v.value === DRAFT && v.start === PICK[0] && v.end === PICK[1])
-  || `期望 value=${DRAFT} 选区=${JSON.stringify(PICK)}，实测 ${JSON.stringify(v)}`)
+if (composerSel === null) abort('composer 里选不出草稿片段', `插入后文本为 ${JSON.stringify(await readComposer())}`)
+check('composer 里打进草稿并选中一段（真实 Input.insertText + DOM Range 选区）', composerSel,
+  (v) => v.text === DRAFT.slice(PICK[0], PICK[1])
+    || `期望选区文本 ${JSON.stringify(DRAFT.slice(PICK[0], PICK[1]))}，实测 ${JSON.stringify(v)}`)
 
-await rightClick(fieldPoint.x, fieldPoint.y)
+await rightClick(composerSel.x, composerSel.y)
 const menu3 = await readMenu()
-check('输入框选区上右键：「复制」+「粘贴」两项', menu3,
+check('composer 选区上右键：「复制」+「粘贴」两项', menu3,
   (v) => (v.count === 1 && v.owner === boot.instanceId
     && JSON.stringify(v.items) === JSON.stringify([EXPECT.copy, EXPECT.paste]))
     || `期望 [${EXPECT.copy}, ${EXPECT.paste}]，实测 ${JSON.stringify(v)}`)
@@ -409,34 +444,116 @@ await leftClick(pastePoint.x, pastePoint.y)
 await sleep(400)
 
 const pasted = await evaluate(`(() => {
-  const el = window.__dshOiField__
-  return { value: el.value, caret: el.selectionStart, menus: document.querySelectorAll('.dsh-oi-menu').length }
+  const ce = document.querySelector('div[contenteditable="true"][role="textbox"]')
+  if (ce === null) return null
+  const s = window.getSelection()
+  let before = null
+  if (s !== null && s.rangeCount > 0) {
+    const probe = document.createRange()
+    probe.selectNodeContents(ce)
+    probe.setEnd(s.getRangeAt(0).startContainer, s.getRangeAt(0).startOffset)
+    before = probe.toString()
+  }
+  return { text: (ce.innerText ?? '').replace(/\\n+$/, ''), before }
 })()`)
 const expectValue = DRAFT.slice(0, PICK[0]) + SENTINEL + DRAFT.slice(PICK[1])
-check('点「粘贴」后选区被剪贴板内容替换，光标落在插入尾部', {
-  ...pasted, expectValue, expectCaret: PICK[0] + SENTINEL.length,
-}, (v) => (v.value === expectValue && v.caret === PICK[0] + SENTINEL.length && v.menus === 0)
-  || `期望 value=${JSON.stringify(expectValue)} caret=${PICK[0] + SENTINEL.length}，实测 ${JSON.stringify(v)}`)
+check('点「粘贴」后 composer 选区被剪贴板内容替换，光标落在插入尾部', {
+  ...pasted, expectValue, expectBefore: expectValue.slice(0, PICK[0] + SENTINEL.length),
+}, (v) => (v.text === expectValue && v.before === v.expectBefore)
+  || `期望 text=${JSON.stringify(expectValue)} 光标前=${JSON.stringify(v.expectBefore)}，实测 ${JSON.stringify(v)}`)
 
 // 清空草稿：测试栈的会话不该被留下一条脚本写的待发消息。
-await evaluate('(() => { const el = window.__dshOiField__; el.focus(); el.setSelectionRange(0, el.value.length); return true })()')
-await press('Delete', 'Delete', 46)
-const cleared = await evaluate('window.__dshOiField__.value')
-check('测完清空草稿', { value: cleared },
-  (v) => v.value === '' || `输入框里还留着 ${JSON.stringify(v.value)}`)
+await clearComposer()
 
-await rightClick(fieldPoint.x, fieldPoint.y)
+await evaluate('(() => { window.getSelection().removeAllRanges(); return true })()')
+const emptyComposerPoint = await evaluate(`(() => {
+  const ce = document.querySelector('div[contenteditable="true"][role="textbox"]')
+  if (ce === null) return null
+  const r = ce.getBoundingClientRect()
+  return { text: (ce.innerText ?? '').replace(/\\n+$/, ''), x: Math.round(r.x + 40), y: Math.round(r.y + r.height / 2) }
+})()`)
+if (emptyComposerPoint === null) abort('清完草稿后 composer 不见了', '后续断言无法执行。')
+await evaluate('(() => { window.__dshOiCtxProbe__.last = null; return true })()')
+await rightClick(emptyComposerPoint.x, emptyComposerPoint.y)
+const menuEmpty = await readMenu()
+const emptyPrevented = await evaluate('(() => { const p = window.__dshOiCtxProbe__.last; return p === null ? null : p.defaultPrevented })()')
+check('空 composer、无选区时右键：只有「粘贴」（contenteditable 空态判据）', {
+  menu: menuEmpty, prevented: emptyPrevented, text: emptyComposerPoint.text,
+}, (v) => (v.text === '' && v.menu.count === 1 && v.menu.owner === boot.instanceId
+    && JSON.stringify(v.menu.items) === JSON.stringify([EXPECT.paste]) && v.prevented === true)
+    || `期望 composer 为空、menus=1 items=[${EXPECT.paste}] 且 defaultPrevented=true，实测 ${JSON.stringify(v)}`)
+check('Esc 关掉空态菜单', await escapeMenu(), (v) => v === 0 || `Esc 之后还剩 ${v} 个菜单`)
+
+// composer 粘贴后那段文本仍是选中态：textarea 段右键前必须把文档选区收掉——
+// Chrome 在控件里右键选区之外会先收拢光标，带着残留选区测 field 路径，读到的
+// 就是 collapsed 的选区（旧世界同一件事是靠重新 selectAll 挡住的）。
+await press('Escape', 'Escape', 27)
+await evaluate('(() => { document.activeElement?.blur(); window.getSelection().removeAllRanges(); return true })()')
+const taSetup = await evaluate(`(() => {
+  const ta = document.createElement('textarea')
+  // 单行高度：右键坐标取垂直中心，80px 高的框里文字只在最上面一行，点中间会
+  // 落在选区之外——Chrome 立刻收拢光标，field 路径读到的选区就空了。
+  ta.style.cssText = 'position:fixed;left:45%;top:45%;width:320px;height:26px;z-index:2147483647'
+  ta.value = ${JSON.stringify(DRAFT)}
+  document.body.append(ta)
+  window.__dshOiField__ = ta
+  ta.focus()
+  ta.setSelectionRange(${PICK[0]}, ${PICK[1]})
+  const cs = getComputedStyle(ta)
+  const r = ta.getBoundingClientRect()
+  const c = document.createElement('canvas').getContext('2d')
+  c.font = cs.font
+  const dx = c.measureText(ta.value.slice(0, (${PICK[0]} + ${PICK[1]}) / 2)).width
+  return {
+    value: ta.value, start: ta.selectionStart, end: ta.selectionEnd,
+    x: Math.round(r.x + parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth) + dx),
+    y: Math.round(r.y + r.height / 2),
+  }
+})()`)
+check('合成 textarea：打进草稿并选中一段（field 路径的前置状态）', taSetup,
+  (v) => (v.value === DRAFT && v.start === PICK[0] && v.end === PICK[1])
+    || `期望 value=${DRAFT} 选区=${JSON.stringify(PICK)}，实测 ${JSON.stringify(v)}`)
+
+await rightClick(taSetup.x, taSetup.y)
+const menuField = await readMenu()
+check('textarea 选区上右键：「复制」+「粘贴」两项（field 路径）', menuField,
+  (v) => (v.count === 1 && v.owner === boot.instanceId
+    && JSON.stringify(v.items) === JSON.stringify([EXPECT.copy, EXPECT.paste]))
+    || `期望 [${EXPECT.copy}, ${EXPECT.paste}]，实测 ${JSON.stringify(v)}`)
+
+const pastePointField = await itemPoint(EXPECT.paste)
+if (pastePointField === null) abort('菜单里没有「粘贴」项，field 粘贴断言无法执行', JSON.stringify(menuField))
+await leftClick(pastePointField.x, pastePointField.y)
+await sleep(400)
+const pastedField = await evaluate('(() => { const ta = window.__dshOiField__; return { value: ta.value, caret: ta.selectionStart, menus: document.querySelectorAll(".dsh-oi-menu").length } })()')
+check('textarea 点「粘贴」后选区被替换，光标落在插入尾部（field 动作链）', {
+  ...pastedField, expectValue, expectCaret: PICK[0] + SENTINEL.length,
+}, (v) => (v.value === expectValue && v.caret === v.expectCaret && v.menus === 0)
+  || `期望 value=${JSON.stringify(expectValue)} caret=${PICK[0] + SENTINEL.length}，实测 ${JSON.stringify(v)}`)
+
+// 空 field 无选区：旧世界「只给粘贴」的判据，现在打在合成 textarea 上。
+const taEmpty = await evaluate(`(() => {
+  const ta = window.__dshOiField__
+  ta.focus()
+  ta.value = ''
+  ta.setSelectionRange(0, 0)
+  const r = ta.getBoundingClientRect()
+  window.__dshOiCtxProbe__.last = null
+  return { x: Math.round(r.x + 40), y: Math.round(r.y + r.height / 2) }
+})()`)
+await rightClick(taEmpty.x, taEmpty.y)
 const menu5 = await readMenu()
-check('空输入框、无选区时右键：只有「粘贴」', menu5,
+check('空 textarea、无选区时右键：只有「粘贴」（field 路径）', menu5,
   (v) => (v.count === 1 && JSON.stringify(v.items) === JSON.stringify([EXPECT.paste]))
     || `期望 [${EXPECT.paste}]，实测 ${JSON.stringify(v)}`)
 check('Esc 关掉菜单', await escapeMenu(), (v) => v === 0 || `Esc 之后还剩 ${v} 个菜单`)
+await evaluate('(() => { const ta = window.__dshOiField__; ta.remove(); delete window.__dshOiField__; return true })()')
 
 // ---- 6：不可输入、无选区 → 不接管 ----
 
 await evaluate(`(() => {
   window.getSelection().removeAllRanges()
-  window.__dshOiField__.blur()
+  if (document.activeElement !== null && document.activeElement !== document.body) document.activeElement.blur()
   window.__dshOiCtxProbe__.last = null
   return true
 })()`)
