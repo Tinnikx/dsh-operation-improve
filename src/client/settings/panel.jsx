@@ -122,6 +122,7 @@ export function HarnessConfigPanel({ t, load, save }) {
     <div className={`${ROOT_CLASS}__panel`} data-state="ready">
       <div className={`${ROOT_CLASS}__note`}>{t('settings.file', { path: payload.profile.patchPath })}</div>
       <div className={`${ROOT_CLASS}__note`}>{t('settings.keep')}</div>
+      <div className={`${ROOT_CLASS}__warn`}>{t('settings.piNotice')}</div>
       {payload.warnings.length > 0
         ? (
           <div className={`${ROOT_CLASS}__warn`} data-warnings="">
@@ -154,6 +155,9 @@ function EntryCard({ t, entry, entryState, draft, putDraft, commit, disabled }) 
     <div className={`${ROOT_CLASS}__card`} data-entry={entry.id}>
       <div className={`${ROOT_CLASS}__cardTitle`}>{entry.title}</div>
       <div className={`${ROOT_CLASS}__cardDesc`}>{entry.description}</div>
+      {entry.notice !== undefined && entry.notice !== ''
+        ? <div className={`${ROOT_CLASS}__warn`}>{entry.notice}</div>
+        : null}
       <div
         className={`${ROOT_CLASS}__effect`}
         data-effect={entry.effect}

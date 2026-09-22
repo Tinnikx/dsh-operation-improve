@@ -19,6 +19,7 @@ export const MODEL_ENTRIES = [
     plugin: '@deepseek-ai/dsh-llm-deepseek',
     effect: 'nextRequest',
     description: '请求侧的 token、超时与文件配额。模型列表与 API key 不走这里。',
+    notice: '本卡只作用于 DeepSeek 官方接入（deepseek-official）里的模型——手动加的模型若挂在这条连接的 models 列表里也归本卡兜底；但若是按 pi-ai 路由手配的 DeepSeek 兼容端点，本卡管不到，未声明窗口时走 pi-ai 自己的 256K 兜底（见顶部黄条）。',
     fields: [
       {
         key: 'maxTokens', type: 'integer', default: 256000, min: 1, effect: 'nextRequest',
@@ -26,7 +27,7 @@ export const MODEL_ENTRIES = [
       },
       {
         key: 'defaultContextWindow', type: 'integer', default: 1000000, min: 1, effect: 'session',
-        label: '默认上下文窗口（token）', help: '模型目录没声明窗口时用它，上下文占用统计也按它算。已开的会话沿用打开时的窗口。',
+        label: '默认上下文窗口（token）', help: '模型目录没声明窗口时用它，上下文占用统计也按它算。已开的会话沿用打开时的窗口。只兜 DeepSeek 官方接入里的模型；pi-ai 路由上手配的模型不读本卡（见顶部黄条）。',
       },
       {
         key: 'streamIdleTimeoutMs', type: 'integer', default: 300000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'nextRequest',

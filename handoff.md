@@ -4,6 +4,7 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 010 | 「Harness 高级配置」上下文窗口口径说明（卡片黄条 + 顶部提示） | 完成 | [010-harness-config-context-window-notice.md](docs/handoff/010-harness-config-context-window-notice.md) |
 | 009 | harness 0.1.6-alpha.2 适配实现（功能 2/9 修复 + 脚本漂移 + 扩项①②③） | 完成 | [009-harness-0.1.6-alpha.2-fixes.md](docs/handoff/009-harness-0.1.6-alpha.2-fixes.md) |
 | 008 | harness 0.1.6-alpha.2 全功能兼容性检测 | 完成 | [008-harness-0.1.6-alpha.2-compat-check.md](docs/handoff/008-harness-0.1.6-alpha.2-compat-check.md) |
 | 007 | 功能 10 实现：sessionRow 选中态强化 + 运行中光线边框 | 完成 | [007-row-states-implementation.md](docs/handoff/007-row-states-implementation.md) |
