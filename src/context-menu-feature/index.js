@@ -2,26 +2,32 @@
  * 功能 2：侧边栏右键菜单。
  *
  * 单选（右键落在未被多选的行上）：菜单项逐项对齐该行「...」菜单——工作区
- * rename / delete，会话 pin / rename / fork / archive，顺序、文案、图标、动作都一样，
- * 上游没有分隔线这里也不加。两处翻转跟着行的状态走，都取打开菜单那一刻的
- * `workspaces.list.getSnapshot()`：pin ↔ unpin，archive ↔ unarchive（同一个菜单项换文案、
- * 图标与方法，不是多一项）；归档行上游不渲染 pin，这里同样不给。**项的集合没有任何
- * 运行时通道**——上游那份菜单在右键那一刻被 preventDefault 掉，只有状态位读得到，
- * 上游新增一类行状态时这一份要跟着改。
+ * rename / delete，会话 pin / rename / fork，顺序、文案、图标、动作都一样，
+ * 上游没有分隔线这里也不加。置顶项跟着行的置顶态翻转（pin ↔ unpin），归档行的末项是
+ * 「取消归档」；归档行上游不渲染置顶项，这里同样不给。两个状态都在开菜单那一刻读
+ * `workspaces.list.getSnapshot()`。**项的集合没有任何运行时通道**——被对齐的那份「...」
+ * 菜单是点按钮开的，上游在侧边栏行上没有任何 `contextmenu` 监听，插件弹的是自己按
+ * `buildItems` 现搭的 DOM；上游新增一类行状态或改某一项的翻转口径，这一份都要跟着改。
  *
- * 多选：只保留批量破坏性操作——同为 session 给「归档」，同为 workspace 给「删除」。
- * `sessions` 没有 delete 方法，所以多选会话永远不出现「删除」。
+ * **归档这一项是例外，故意不给**（单选与批量都不给）：上游那一项不是「调一次服务」——
+ * 会话有进行中的工作时第一次 `archiveSession` 被 host 拒（`workspace/session-active`），
+ * 上游捕获后弹「停止并归档此会话？」列出将被停的回合 / 子代理 / 后台任务 / 定时提醒，
+ * 确认了才带 `{ stopActivity: true }` 重试。只抄前半句的结果是对有进行中的会话静默失效，
+ * 所以这一项让位给行自己的「...」。**取消归档照给**：它不带 options、不会被拒，抄一半
+ * 就是完整的。连带后果说清楚：会话多选没有任何批量动作了（`sessions` 契约上没有
+ * delete），只剩选中、计数与高亮；右键落在多选会话行上时本插件不弹菜单，也**不拦**默认
+ * 行为——注意上游行上本来就没有右键菜单（`dsh-client-ui-workspace` 里没有任何 `contextmenu`
+ * 监听，桌面壳只给托盘设了原生菜单），落到的是浏览器默认，通常是"什么都不弹"。
+ *
+ * 多选：工作区给「删除 N 个工作区」。
  *
  * 文案不落在这个文件里，全部经 `t` / `tOwn` 取自词典（来源与理由见
  * [../shared/locale.js](../shared/locale.js)）。**取值必须发生在打开菜单的那一刻**，
  * 那正是它跟随语言切换的机制：`t` 调用时才读 active locale，而 `buildItems` 与
  * `run` 都在事件回调里跑。
  *
- * 二次确认也跟着上游走：删除工作区上游弹对话框，这里就 `confirm`；归档会话上游**不问**，
- * 这里单选也不问。批量两项上游没有对应入口，一律 `confirm`——一次点掉多行没有撤销。
- * 「不问」只对**没有进行中工作**的会话成立：有进行时上游走的是「第一次 `archiveSession`
- * 被 host 拒（`workspace/session-active`）→ 弹『停止并归档此会话？』→ 确认后才带
- * `{ stopActivity: true }` 重试」，本插件没有复现那一步（见 docs/feature-1-2 已知限制）。
+ * 二次确认也跟着上游走：删除工作区上游弹对话框，这里就 `confirm`，批量那一项一律问一次
+ * （一次点掉多行没有撤销）；取消归档上游不问，这里也不问。
  *
  * 重命名的初值与删除确认里的 `{name}` 都取自
  * [rowTitle](../shared/row-probe.js)，即上游那两个对话框各自的初值字段。
@@ -58,13 +64,16 @@ export function installContextMenu(deps) {
     const id = rowId(row.element, row.kind)
     if (id === null) return
 
-    event.preventDefault()
-    event.stopPropagation()
-
     const batch = store.getKind() === row.kind && store.has(row.kind, id) && store.size() > 1
     const targets = batch ? store.getIds() : [id]
     const items = buildItems(row.kind, targets)
+    // **没有项就整个不接管**：不 preventDefault 也不 stopPropagation。反过来先拦下默认
+    // 行为再返回，右键就成了「什么都不发生」——那比弹一个没用的菜单更糟。会话多选正是
+    // 这种情形：它唯一的批量动作（归档）已让位给上游的「...」（见头注释）。
     if (items.length === 0) return
+
+    event.preventDefault()
+    event.stopPropagation()
 
     openContextMenu({
       x: event.clientX,
@@ -93,9 +102,9 @@ export function installContextMenu(deps) {
         { id: 'delete', label: t('delete.workspace'), icon: MENU_ICONS.trash, danger: true },
       ]
     }
-    if (many) {
-      return [{ id: 'archive', label: tOwn('batch.archiveSessions', { n: targets.length }), icon: MENU_ICONS.archive, danger: true }]
-    }
+    // 会话多选不给任何项：批量归档让位给上游（理由见头注释），而 `sessions` 契约上没有
+    // delete，这里无事可做。调用方拿到空列表就不接管这次右键。
+    if (many) return []
     // 置顶项跟着上游走：排在最前（order 100），已置顶换成实心图 + 「取消置顶」，
     // 归档行上游不渲染这一项（「...」里和 hover 按钮都是），这里同样不给。
     const snapshot = workspaces.list.getSnapshot()
@@ -109,17 +118,14 @@ export function installContextMenu(deps) {
         icon: pinned ? MENU_ICONS.pinFill : MENU_ICONS.pinOutline,
       })
     }
-    items.push(
-      { id: 'rename', label: t('rename'), icon: MENU_ICONS.edit },
-      { id: 'fork', label: t('menu.fork'), icon: MENU_ICONS.branch },
-      // 上游这一项**没有** `danger`，跟着不标：单选菜单是照着那个「...」菜单对齐的，
-      // 多标一层红字就是又一处只有这里才有的说法。批量那条才标红。
-      // 归档行上这一项整条翻转（上游同一个 slot 按归档态换文案、图标与调用的方法），
-      // 不是多一项：给已归档的行挂一枚「归档会话」，点下去是个没有后果的死项。
-      archived
-        ? { id: 'unarchive', label: t('menu.unarchiveSession'), icon: MENU_ICONS.unarchive }
-        : { id: 'archive', label: t('menu.archiveSession'), icon: MENU_ICONS.archive },
-    )
+    items.push({ id: 'rename', label: t('rename'), icon: MENU_ICONS.edit })
+    items.push({ id: 'fork', label: t('menu.fork'), icon: MENU_ICONS.branch })
+    // 归档行给「取消归档」，未归档行**不给**「归档会话」：上游那一项在被 host 拒时还要
+    // 弹「停止并归档此会话？」并带 `stopActivity` 重试，这一份抄不起（头注释）。
+    // 取消归档不带 options、不会被拒，抄过来是完整的。上游这两项都没有 `danger`，跟着不标。
+    if (archived) {
+      items.push({ id: 'unarchive', label: t('menu.unarchiveSession'), icon: MENU_ICONS.unarchive })
+    }
     return items
   }
 
@@ -165,14 +171,6 @@ export function installContextMenu(deps) {
         : `${t('delete.workspace')}\n\n${t('delete.desc', { name: current })}`
       if (!ask(message)) return
       for (const target of targets) await workspaces.delete(target)
-      store.clear()
-      return
-    }
-    if (actionId === 'archive') {
-      // 上游的「归档会话」点下去直接归档，没有二次确认；单选这条对齐它。批量没有上游
-      // 对应入口，仍然问一次。
-      if (targets.length > 1 && !ask(tOwn('confirm.archiveSessions', { n: targets.length }))) return
-      for (const target of targets) await workspaces.archiveSession(target)
       store.clear()
       return
     }

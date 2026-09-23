@@ -208,7 +208,8 @@ const boot = await evaluate(`(() => {
     copy: h.locale?.tCommon?.('copy') ?? null,
     paste: h.locale?.tOwn?.('selection.paste') ?? null,
     rowPin: [h.locale?.t?.('menu.pinSession') ?? null, h.locale?.t?.('menu.unpinSession') ?? null],
-    rowLabels: [h.locale?.t?.('rename') ?? null, h.locale?.t?.('menu.fork') ?? null, h.locale?.t?.('menu.archiveSession') ?? null],
+    // 归档这一项右键菜单里已经没有（让位给上游的「...」），行菜单只剩置顶翻转 + 重命名 + 分叉。
+    rowLabels: [h.locale?.t?.('rename') ?? null, h.locale?.t?.('menu.fork') ?? null],
   }
 })()`)
 if (boot.fatal !== undefined) {
@@ -590,7 +591,7 @@ const menu7 = await readMenu()
 // 这两者之一（用真词典的值），后面三项与词典逐字相等。
 check('有选中文本时右键侧边栏的行：开出来的是功能 2 的行菜单', {
   ...menu7, selected: row.selected, expect: boot.rowLabels, pinLabels: boot.rowPin,
-}, (v) => (v.count === 1 && v.items.length === 4
+}, (v) => (v.count === 1 && v.items.length === 3
     && v.pinLabels.includes(v.items[0])
     && JSON.stringify(v.items.slice(1)) === JSON.stringify(boot.rowLabels))
   || `期望 [置顶翻转, ${JSON.stringify(boot.rowLabels)}]，实测 ${JSON.stringify(v.items)}`)

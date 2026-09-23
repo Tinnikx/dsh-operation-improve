@@ -1,7 +1,7 @@
 /**
  * 右键菜单用的 glyph。除 `paste` 外全部逐字拷自 `@deepseek-ai/dsh-client-ui-primitives`
  * 的 Regular 档图标（`IconEditOutlineRegular`、`IconBranchOutlineRegular`、
- * `IconArchiveOutlineRegular`、`IconUnarchiveOutlineRegular`、`IconTrashOutlineRegular`、
+ * `IconUnarchiveOutlineRegular`、`IconTrashOutlineRegular`、
  * `IconCopyOutlineRegular`、`IconPinOutlineRegular`、`IconPinFillRegular`）。
  *
  * **为什么是拷贝而不是引用**：`ui-primitives` 只导出 React 组件，而本插件的菜单是纯
@@ -29,8 +29,6 @@ const EDIT = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke
 /** 上游 `IconBranchOutlineRegular` —— 会话的「分叉」。 */
 const BRANCH = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.01503 8.0001L5.6964 8.0001C6.41913 8.0001 6.78049 8.0001 7.12115 7.91951C7.4232 7.84804 7.71233 7.73014 7.97821 7.57C8.27809 7.38939 8.5364 7.13669 9.05303 6.63129L11.3281 4.40564" stroke="currentColor"/><path d="M1.01221 7.9999L5.6964 7.9999C6.41913 7.9999 6.78049 7.9999 7.12115 8.08049C7.4232 8.15196 7.71233 8.26986 7.97821 8.43C8.27809 8.61061 8.5364 8.86331 9.05303 9.36871L11.3281 11.5944" stroke="currentColor"/><circle cx="12.4502" cy="3.3079" r="1.56962" stroke="currentColor"/><circle cx="12.4502" cy="12.6921" r="1.56962" stroke="currentColor"/></svg>'
 
-/** 上游 `IconArchiveOutlineRegular`（菜单里按 size=14 渲染）—— 会话的「归档」。 */
-const ARCHIVE = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke-width="1" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M13.5 2.5H2.5C1.94772 2.5 1.5 2.94772 1.5 3.5V4.5C1.5 5.05228 1.94772 5.5 2.5 5.5H13.5C14.0523 5.5 14.5 5.05228 14.5 4.5V3.5C14.5 2.94772 14.0523 2.5 13.5 2.5Z" stroke="currentColor"/><path d="M2.5 5.5V13.5C2.5 13.7652 2.60536 14.0196 2.79289 14.2071C2.98043 14.3946 3.23478 14.5 3.5 14.5H12.5C12.7652 14.5 13.0196 14.3946 13.2071 14.2071C13.3946 14.0196 13.5 13.7652 13.5 13.5V5.5" stroke="currentColor"/><path d="M6.5 9.5H9.5" stroke="currentColor"/></svg>'
 
 /**
  * 上游 `IconUnarchiveOutlineRegular`（同样按 size=14 渲染）—— 归档行的「取消归档」。
@@ -64,7 +62,6 @@ const PASTE = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" strok
 export const MENU_ICONS = {
   edit: EDIT,
   branch: BRANCH,
-  archive: ARCHIVE,
   unarchive: UNARCHIVE,
   trash: TRASH,
   copy: COPY,

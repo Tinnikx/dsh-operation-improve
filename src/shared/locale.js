@@ -30,9 +30,7 @@ export const OWN_NS = '@Tinnikx/dsh-operation-improve'
 /** 简体中文词典（键集以它为准）。 */
 const zh = {
   'batch.deleteWorkspaces': '删除 {n} 个工作区',
-  'batch.archiveSessions': '归档 {n} 个会话',
   'confirm.deleteWorkspaces': '删除 {n} 个工作区？其会话将显示在“{group}”下。',
-  'confirm.archiveSessions': '归档 {n} 个会话？',
   'selection.paste': '粘贴',
   'settings.title': 'Harness 高级配置',
   'settings.subtitle': '检索分页、工具预算等只能手改配置文件的项目',
@@ -62,9 +60,7 @@ const zh = {
 /** 英文词典，键集与 zh 对齐。 */
 const en = {
   'batch.deleteWorkspaces': 'Delete {n} workspaces',
-  'batch.archiveSessions': 'Archive {n} sessions',
   'confirm.deleteWorkspaces': 'Delete {n} workspaces? Their sessions will appear under {group}.',
-  'confirm.archiveSessions': 'Archive {n} sessions?',
   'selection.paste': 'Paste',
   'settings.title': 'Harness advanced configuration',
   'settings.subtitle': 'Search paging, tool budgets — settings that otherwise need a hand-edited config file',

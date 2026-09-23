@@ -41,7 +41,7 @@
 七套 live 验证在同一 0.1.7 测试栈上全绿（一轮完整回归 + 各套件重复跑均复现）：
 
 ```
-verify                 passed=28 failed=0 skipped=0 total=28   # 含「置顶项逐字对齐」、pin 动作、归档行两项新增断言
+verify                 passed=27 failed=0 skipped=0 total=27   # 置顶项对齐、pin 动作、归档行两条、会话多选让位一条
 verify:row-states      passed=24 failed=0 skipped=0 total=24
 verify:dot             passed=21 failed=0 skipped=0 total=21   # spinner 版重写
 verify:timestamps      passed=10 failed=0 skipped=0 total=10
@@ -73,7 +73,7 @@ verify:settings        passed=20 failed=0 skipped=0 total=20   # 清单改键 + 
 
 ## 菜单与清单的对照口径（两处漂移的共同根因）
 
-**右键菜单不会自动同步，是结构决定的**：右键那一刻插件 `preventDefault()` 掉上游那份 React 菜单，弹的是按 `buildItems` 现搭的 DOM。上游按行状态翻转的项（置顶 ↔ 取消置顶、归档 ↔ 取消归档）没有任何运行时通道过来——只有**状态位**读上游快照（`workspaces.list.getSnapshot()`），**项的集合**不读。表现不是报错，是「和邻居那个『...』菜单不一样」。归档这一半此前连哨兵都没有：`verify` 取的是第一条会话行，而归档行默认被侧栏视图筛掉，注入桩的 `archivedSessionIds` 因此恒空。本轮补两条（自己点「视图选项 → 显示已归档」让行现形，比完关回去），实测读数：
+**右键菜单不会自动同步，是结构决定的**：上游侧边栏行上没有右键菜单（`dsh-client-ui-workspace` 里 `contextmenu` / `onContextMenu` 零命中），被对齐的「...」是点按钮开的另一棵 React DOM，插件弹的是按 `buildItems` 现搭的一份。上游按行状态翻转的项（置顶 ↔ 取消置顶、归档 ↔ 取消归档）没有任何运行时通道过来——只有**状态位**读上游快照（`workspaces.list.getSnapshot()`），**项的集合**不读。表现不是报错，是「和邻居那个『...』菜单不一样」。归档这一半此前连哨兵都没有：`verify` 取的是第一条会话行，而归档行默认被侧栏视图筛掉，注入桩的 `archivedSessionIds` 因此恒空。本轮补两条（自己点「视图选项 → 显示已归档」让行现形，比完关回去），实测读数：
 
 | | 上游归档行「...」 | 本插件右键（修复后） |
 | --- | --- | --- |
@@ -82,6 +82,8 @@ verify:settings        passed=20 failed=0 skipped=0 total=20   # 清单改键 + 
 | 点末项 | — | `workspaces.unarchiveSession`，参数 `session-d5895eef-…` 与行 `data-row-key` 去掉前缀相等，菜单关闭，未处理 rejection 0 |
 
 修复前该行的末项是「归档会话」（源码里 unconditional push，没有 unarchive 分支），点下去对已归档会话重复发 `archiveSession`。
+
+未归档行的镜像则是**真子集**：上游四项（置顶翻转 / 重命名 / 分叉 / 归档），本插件三项，断言要求少的必须是末项且文案等于词典的 `menu.archiveSession`——写成「上游减归档」而不是写死三个字符串，上游换顺序或多一项时照样 FAIL。会话多选那条（`session batch right-click hands the menu back`）读的是 `menus === 0` 与 `defaultPrevented === false` 两件事：只断言"没弹"会放过一个更糟的实现——拦下默认行为再什么都不做。
 
 **精选清单同样只能人肉对**（口径见 [docs/feature-8](docs/feature-8-harness-config.md) 已知限制一节）。本轮对 0.1.7 dist 里那 13 个包的 `Config = z.object({…})` 与 bundle 层默认值逐键核过——原有 52 个字段的结果，与随后按用户决定收进来的六个新键：
 
@@ -103,5 +105,5 @@ verify:settings        passed=20 failed=0 skipped=0 total=20   # 清单改键 + 
 - **0.1.6 的 host-HMR 会话摘除缺陷在 0.1.7 是否消失：未确认**。本轮 settings 的自动保存写入执行了 4+ 次，一次中途栈上观察到「自动保存 20 秒未落定」ABORT（重跑干净栈 17/17 不复现），且该 ABORT 之后 row-states 24 条仍全绿（侧栏列表未空）——单例观察不构成结论；`stack:restart` 的收尾缓解按 0.1.6 轮的处置保留不动。
 - 功能 4 的 `turn-process` 行时间取的是节点 step 起点，`[coverage]` 行未逐一核对该 kind 在上游轨迹页的 `startedAt` 口径（当前测试会话可见读数与行尾上游自渲染的时刻一致）。
 - 旧版行为为代码面推演，无实跑证据（原因见本节前提）。
-- **待决：上游的「停止并归档」确认没被复现**。0.1.7 归档一条**有进行中工作**（进行中的回合 / 子代理 / 后台任务 / 定时提醒）的会话时，第一次 `archiveSession(id)` 会被 host 拒（`WorkspaceArchiveError`，`rpcError.code === 'workspace/session-active'`），UI 捕获后弹「停止并归档此会话？」并列出将被停的东西，确认才带 `{ stopActivity: true }` 重试。本插件单选那一项发的就是不带 options 的那一次，且 `run()` 没有 catch——被拒的表现是菜单关掉、什么都没发生，只在控制台留一次未处理 rejection。要不要跟（跟就要复现那个对话框与 activity 列表），是个产品决定，本轮没动。
+- **归档这一项已让位（011 交付后单独一轮，用户决定）**。上游归档一条有进行中工作的会话时，第一次 `archiveSession(id)` 被 host 拒（`workspace/session-active`），UI 捕获后弹「停止并归档此会话？」列出将被停的回合 / 子代理 / 后台任务 / 定时提醒，确认才带 `{ stopActivity: true }` 重试；插件原先只发第一次且 `run()` 不 catch，对有活儿的会话表现为静默没反应。处置是右键菜单不再提供归档：单选会话只剩 置顶翻转 / 重命名 / 分叉，会话多选不给任何批量动作，且这时连 `preventDefault` 都不做（不弹菜单也不拦默认行为）。归档行的「取消归档」留着——它不带 options、不会被拒，那份复制是完整的。`batch.archiveSessions` / `confirm.archiveSessions` 两条词条与 `IconArchiveOutlineRegular` 那枚 glyph 一并删除。代价：会话多选失去唯一的批量动作，只剩选中、计数与高亮。
 - **已收（用户决定）**：上述六个键进了清单，清单从 52 个字段长到 58 个（面板 `data-field` 从 50 到 56，两个布尔走复选框）。它们**不是 0.1.7 新增**——0.1.6 源码里同名、同默认值、同约束（`packages/llm/llm-deepseek/src/config.ts`、`packages/context/session-reference/src/index.ts`），收它们不增加旧版失配。哨兵两处：`checkCrossRules` 新增 `atMost` 一种（上游写的是 `if (a > b) throw`，等号合法，不能拿 `lessThan` 顶替），[tests/catalog.test.mjs](tests/catalog.test.mjs) 六条测规则键名存在、全默认值不自炸、默认值过自己的边界、`atMost`/`lessThan` 等号语义、合成值参与；`verify:settings` 的 4c / 4c-b / 4d 在真面板上验拦截与撤销。

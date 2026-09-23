@@ -481,7 +481,7 @@ check('contextmenu single (session)', await evaluate(`(() => {
 })()`), (v) => {
   if (v.defaultPrevented !== true) return '没有 preventDefault，浏览器原生菜单会弹出来'
   if (v.items === null) return '菜单没渲染出来'
-  if (v.items.length !== 4) return `单选会话应有 4 项，实际 ${JSON.stringify(v.items)}`
+  if (v.items.length !== 3) return `单选会话应有 3 项（归档动作让位给上游的「...」），实际 ${JSON.stringify(v.items)}`
   for (const key of ['pin', 'unp', 'rename', 'fork', 'archive']) {
     if (v.upstream[key] === undefined) return `断言自己没取到 ${key}`
   }
@@ -495,7 +495,8 @@ check('contextmenu single (session)', await evaluate(`(() => {
   }
   if (v.items[1] !== v.upstream.rename) return `重命名项是 ${JSON.stringify(v.items[1])}，上游词典给的是 ${JSON.stringify(v.upstream.rename)}`
   if (v.items[2] !== v.upstream.fork) return `fork 项是 ${JSON.stringify(v.items[2])}，上游词典给的是 ${JSON.stringify(v.upstream.fork)}`
-  if (v.items[3] !== v.upstream.archive) return `归档项是 ${JSON.stringify(v.items[3])}，上游词典给的是 ${JSON.stringify(v.upstream.archive)}`
+  // 归档这一项**必须在**——不是漏抄，是有意让位（上游那条还要处理被拒后的「停止并归档」确认）。
+  if (v.items.includes(v.upstream.archive)) return '菜单里出现了「归档会话」，这一项已决定不在右键菜单里提供'
   if (v.inViewport !== true) return '菜单溢出视口，翻转逻辑失效'
   return true
 })
@@ -700,7 +701,8 @@ const sessionPair = await evaluate(`(async () => {
   const row = [...document.querySelectorAll('[role="treeitem"]')].find((el) =>
     String(el.className).includes('_sessionRow') && el.querySelector('[class*="rowActions"] button') !== null)
   if (!row) return { why: 'no session row carries the ... button' }
-  return await pair(row, 200, 200)
+  const result = await pair(row, 200, 200)
+  return { ...result, archiveLabel: window.__dshOiT__('menu.archiveSession') }
 })()`)
 
 check('session menu mirrors the row\'s own menu', sessionPair, (v) => {
@@ -708,14 +710,21 @@ check('session menu mirrors the row\'s own menu', sessionPair, (v) => {
   if (v.menus !== 1) return `页面上有 ${v.menus} 个本插件菜单`
   if (v.owner !== v.mine) return `菜单归属对不上：owner=${v.owner} 而本次注入的是 ${v.mine}`
   if (v.upstreamItems.length !== 4) {
-    return `上游「...」菜单有 ${v.upstreamItems.length} 项（本条按 4 项对齐）：${JSON.stringify(v.upstreamItems.map((i) => i.label))}`
+    return `上游「...」菜单有 ${v.upstreamItems.length} 项（本条按「上游 4 项、我们有意少 1 项」对齐）：${JSON.stringify(v.upstreamItems.map((i) => i.label))}`
   }
   if (v.myItems.some((i) => i.paths === null || i.paths.length === 0)) {
     return `有菜单项没有图标：${JSON.stringify(v.myItems.map((i) => ({ label: i.label, paths: i.paths })))}`
   }
-  if (JSON.stringify(v.myItems) !== JSON.stringify(v.upstreamItems)) {
+  // 有意缺席的那一项必须是**末项且是归档会话**；上游换顺序或换文案都要在这里露出来，
+  // 否则「少一项」会从决定变成漂移。
+  const dropped = v.upstreamItems.filter((i) => !v.myItems.some((m) => m.label === i.label))
+  if (dropped.length !== 1 || dropped[0].label !== v.archiveLabel || v.upstreamItems.at(-1).label !== v.archiveLabel) {
+    return `本插件应当只少末项「${v.archiveLabel}」，实际少了 ${JSON.stringify(dropped.map((i) => i.label))}`
+  }
+  const kept = v.upstreamItems.filter((i) => i.label !== v.archiveLabel)
+  if (JSON.stringify(v.myItems) !== JSON.stringify(kept)) {
     return '逐项（顺序 / 文案 / viewBox / 尺寸 / path）比对不等：\n'
-      + `  本插件 ${JSON.stringify(v.myItems)}\n  上游   ${JSON.stringify(v.upstreamItems)}`
+      + `  本插件 ${JSON.stringify(v.myItems)}\n  上游（去掉归档项） ${JSON.stringify(kept)}`
   }
   if (v.upstreamClosed !== true || v.mineClosed !== true) return '收尾没关掉菜单，会污染后续断言'
   return true
@@ -1091,41 +1100,6 @@ check('fork increases the title and opens the child via the sidebar row', await 
 
 // 上游的「归档会话」点下去直接归档。这条锁的是**没有**二次确认——多问一次不会报错，
 // 只会让同一个动作在两个入口上手感不同。
-check('single archive skips the confirmation', await evaluate(`(async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  window.__dshOperationImprove__.selection.clear()
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_sessionRow'))
-  if (!row) return { bail: 'no session row' }
-  row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200, view: window }))
-  const menus = document.querySelectorAll('.dsh-oi-menu')
-  if (menus.length !== 1 || menus[0].getAttribute('data-dsh-oi-owner') !== window.__dshOiTest__.instanceId) {
-    return { bail: 'menu ownership check failed' }
-  }
-  const realConfirm = window.confirm
-  let confirmCalled = false
-  // 恒返回 false：真被问了，动作也不会发生，观测值一样分得清。
-  window.confirm = () => { confirmCalled = true; return false }
-  const before = window.__dshOiTest__.calls.length
-  const beforeRejections = window.__dshOiTest__.rejections.length
-  menus[0].querySelectorAll('.dsh-oi-menu__item')[3].click()
-  await sleep(200)
-  window.confirm = realConfirm
-  const calls = window.__dshOiTest__.calls.slice(before)
-  return { confirmCalled, calls: calls.map((c) => c.label + '.' + c.method),
-    arg: (calls[0] || { args: [null] }).args[0],
-    menuClosed: document.querySelector('.dsh-oi-menu') === null,
-    rejections: window.__dshOiTest__.rejections.length - beforeRejections }
-})()`), (v) => {
-  if (v.bail !== undefined) return `没测到：${v.bail}`
-  if (v.confirmCalled !== false) return '单选归档弹了二次确认，上游点下去就直接归档'
-  if (v.calls.join(',') !== 'workspaces.archiveSession') return `应只调一次 archiveSession，实际 ${JSON.stringify(v.calls)}`
-  if (typeof v.arg !== 'string' || v.arg.length === 0) return `参数不是真实 id：${JSON.stringify(v.arg)}`
-  if (v.menuClosed !== true) return '执行后菜单没关'
-  if (v.rejections !== 0) return `归档过程中出现了 ${v.rejections} 次未处理的 rejection`
-  return true
-})
-
 check('pin dispatches the workspaces pin command', await evaluate(`(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   window.__dshOperationImprove__.selection.clear()
@@ -1301,29 +1275,56 @@ const OWN = `
     return entries[key].replace('{n}', String(n))
   }
 `
-check('contextmenu batch', await evaluate(`(() => {
+// 会话多选现在**什么都不给**：批量归档让位给了上游的「...」。不弹菜单还不够——
+// 也必须在 preventDefault 之前就走掉，否则右键会变成「什么都发生不了」，比弹一个没用的
+// 菜单更糟。判据因此是两条：没有本插件的菜单 + 默认行为没被拦。
+check('session batch right-click hands the menu back', await evaluate(`(() => {
   ${PICK}
-  ${OWN}
+  window.__dshOiPreferKind__ = 'session'
   const sel = window.__dshOperationImprove__.selection
   sel.clear()
   const { kind, rows } = pick()
-  if (kind === null) return { skipped: 'need >= 2 same-kind rows' }
+  window.__dshOiPreferKind__ = undefined
+  if (kind !== 'session') return { skipped: 'need >= 2 session rows' }
   const fire = (el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, view: window }))
   fire(rows[0]); fire(rows[1])
-  rows[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300, view: window }))
+  const evt = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300, view: window })
+  rows[1].dispatchEvent(evt)
+  const result = { selected: sel.size(), menus: document.querySelectorAll('.dsh-oi-menu').length,
+    defaultPrevented: evt.defaultPrevented }
+  sel.clear()
+  return result
+})()`), (v) => {
+  if (v.selected !== 2) return `应有 2 个选中，实际 ${v.selected}（多选本身还得工作，否则这条测不到东西）`
+  if (v.menus !== 0) return `会话多选右键还弹出 ${v.menus} 个本插件菜单，归档项没摘干净`
+  if (v.defaultPrevented !== false) return '默认行为被拦了：没有菜单又不让页面自己处理，右键成了"点了没反应"'
+  return true
+})
+
+// 另一半批量分支：强制用工作区行，菜单必须是 `batch.deleteWorkspaces` 套 n=2 的那一条。
+check('contextmenu batch (workspaces)', await evaluate(`(() => {
+  ${PICK}
+  ${OWN}
+  window.__dshOiPreferKind__ = 'workspace'
+  const sel = window.__dshOperationImprove__.selection
+  sel.clear()
+  const { kind, rows } = pick()
+  window.__dshOiPreferKind__ = undefined
+  if (kind !== 'workspace') return { skipped: 'need >= 2 workspace rows' }
+  const fire = (el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, view: window }))
+  fire(rows[0]); fire(rows[1])
+  rows[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 340, clientY: 340, view: window }))
   const menu = document.querySelector('.dsh-oi-menu')
   const items = menu ? [...menu.querySelectorAll('.dsh-oi-menu__item')].map(b => b.textContent) : null
-  return { usedKind: kind, selected: sel.size(), items,
-    expected: ownText(kind === 'session' ? 'batch.archiveSessions' : 'batch.deleteWorkspaces', 2) }
+  const result = { usedKind: kind, selected: sel.size(), items, expected: ownText('batch.deleteWorkspaces', 2) }
+  // **不关菜单也不清选择集**：下一条断言就在这份菜单上点「删除 2 个工作区」，
+  // 服务是 spy，点击不动真数据。
+  return result
 })()`), (v) => {
-  if (v.selected !== 2) return `应有 2 个选中，实际 ${v.selected}`
+  if (v.selected !== 2) return `应有 2 个工作区选中，实际 ${v.selected}`
   if (v.items === null) return '菜单没渲染出来'
-  if (v.items.length !== 1) return `多选菜单应只剩 1 个批量项，实际 ${JSON.stringify(v.items)}`
-  if (v.items[0] !== v.expected) {
-    return v.usedKind === 'session'
-      ? `多选会话应为批量归档项 ${JSON.stringify(v.expected)}（sessions 无 delete 方法），实际 ${JSON.stringify(v.items)}`
-      : `多选工作区应为批量删除项 ${JSON.stringify(v.expected)}，实际 ${JSON.stringify(v.items)}`
-  }
+  if (v.items.length !== 1) return `应只剩 1 个批量项，实际 ${JSON.stringify(v.items)}`
+  if (v.items[0] !== v.expected) return `应为 ${JSON.stringify(v.expected)}，实际 ${JSON.stringify(v.items)}`
   return true
 })
 
@@ -1375,42 +1376,14 @@ check('batch action dispatches service', await evaluate(`(() => {
       + '这个菜单背后的服务不是 spy 而是真的，已拒绝点击'
   }
   if (v.calls.length !== 2) return `应对 2 个目标各调一次，实际 ${JSON.stringify(v.calls)}`
-  if (v.kind !== 'session' && v.kind !== 'workspace') return `选择集的 kind 读不出来：${JSON.stringify(v.kind)}`
-  const expected = v.kind === 'session' ? 'workspaces.archiveSession' : 'workspaces.delete'
-  if (!v.calls.every((c) => c === expected)) return `批量 ${v.kind} 应调 ${expected}：${JSON.stringify(v.calls)}`
+  if (v.kind !== 'workspace') return `会话多选已不提供批量动作，这条只该跑在工作区上，实际 kind=${JSON.stringify(v.kind)}`
+  if (!v.calls.every((c) => c === 'workspaces.delete')) return `批量删除应调 workspaces.delete：${JSON.stringify(v.calls)}`
   if (v.args.length !== 2 || v.args.some((a) => typeof a !== 'string' || a.length === 0)) {
     return `参数不是两个真实 id：${JSON.stringify(v.args)}`
   }
   if (v.args[0] === v.args[1]) return `两次调用传了同一个 id：${JSON.stringify(v.args)}`
   if (v.menuClosed !== true) return '执行后菜单没关'
   if (v.selectionCleared !== true) return '执行后选择集没清空'
-  return true
-})
-
-// 另一半批量分支：强制用工作区行，菜单必须是 `batch.deleteWorkspaces` 套 n=2 的那一条。
-check('contextmenu batch (workspaces)', await evaluate(`(() => {
-  ${PICK}
-  ${OWN}
-  window.__dshOiPreferKind__ = 'workspace'
-  const sel = window.__dshOperationImprove__.selection
-  sel.clear()
-  const { kind, rows } = pick()
-  window.__dshOiPreferKind__ = undefined
-  if (kind !== 'workspace') return { skipped: 'need >= 2 workspace rows' }
-  const fire = (el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, view: window }))
-  fire(rows[0]); fire(rows[1])
-  rows[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 340, clientY: 340, view: window }))
-  const menu = document.querySelector('.dsh-oi-menu')
-  const items = menu ? [...menu.querySelectorAll('.dsh-oi-menu__item')].map(b => b.textContent) : null
-  const result = { usedKind: kind, selected: sel.size(), items, expected: ownText('batch.deleteWorkspaces', 2) }
-  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-  sel.clear()
-  return result
-})()`), (v) => {
-  if (v.selected !== 2) return `应有 2 个工作区选中，实际 ${v.selected}`
-  if (v.items === null) return '菜单没渲染出来'
-  if (v.items.length !== 1) return `应只剩 1 个批量项，实际 ${JSON.stringify(v.items)}`
-  if (v.items[0] !== v.expected) return `应为 ${JSON.stringify(v.expected)}，实际 ${JSON.stringify(v.items)}`
   return true
 })
 

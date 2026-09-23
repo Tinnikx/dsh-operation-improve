@@ -13,7 +13,7 @@ PATH=$HOME/.nvm/versions/node/v24.14.0/bin:$PATH   # nvm，v24.14.0
 
 ## 测试栈
 
-**验证脚本一律打测试栈，不打日常在用的那个 harness。** 端到端断言里有「批量归档」「批量删除」，它们会真的发出 click；服务是 spy、闸也有三道，但闸是兜底不是许可证，真数据不该出现在被点击的那一侧。
+**验证脚本一律打测试栈，不打日常在用的那个 harness。** 端到端断言里有「批量删除工作区」，它会真的发出 click；服务是 spy、闸也有三道，但闸是兜底不是许可证，真数据不该出现在被点击的那一侧。
 
 ```
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:up       # 起
@@ -56,9 +56,9 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 
 ## 端到端
 
-端到端验证走 CDP 注入——对着**运行中的真实页面**，把构建出的 `lib/client.js` 注入进去、用假 `__ModuleLoader__` 截下 registration 拿到 exports，再 apply 一个最小 ctx（`effect` 收集 disposer，`workspaces` 与 `sessions` 是「记账 Proxy + 少量真实形状的桩」——`workspaces.list.getSnapshot()` 的置顶与归档两个集合**都从页面真 UI 现推**（行上挂着「取消置顶」/「取消归档」按钮即该行处于该状态，id 走 fiber 反查），这样单选菜单的两处翻转项与上游逐项比对才不用写死状态；归档行默认被侧栏视图筛掉，推导结果随之为空，归档那一半由下一条断言自己开「显示已归档」再关回去；`slots` 用不记账的桩——功能 8 起 `apply()` 在 boot 期就会调一次 `ctx.slots.inject`，那一下不能混进「选择期间 0 次服务调用」的计数；产物顶层 require 的 `react` / `react/jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives` 走一张平台桩表，被测路径本该不触达它们，**桩被调到即抛**，「意外进入 React 渲染路径」因此是显式失败而不是静默崩溃）。走注入而不是直接点页面自带的那份，是因为断言里包含批量归档与批量删除：只有服务是 spy，断言才既打在真实 DOM 上、又不会真的动用户的会话与工作区。
+端到端验证走 CDP 注入——对着**运行中的真实页面**，把构建出的 `lib/client.js` 注入进去、用假 `__ModuleLoader__` 截下 registration 拿到 exports，再 apply 一个最小 ctx（`effect` 收集 disposer，`workspaces` 与 `sessions` 是「记账 Proxy + 少量真实形状的桩」——`workspaces.list.getSnapshot()` 的置顶与归档两个集合**都从页面真 UI 现推**（行上挂着「取消置顶」/「取消归档」按钮即该行处于该状态，id 走 fiber 反查），这样单选菜单的两处翻转项与上游逐项比对才不用写死状态；归档行默认被侧栏视图筛掉，推导结果随之为空，归档那一半由下一条断言自己开「显示已归档」再关回去；`slots` 用不记账的桩——功能 8 起 `apply()` 在 boot 期就会调一次 `ctx.slots.inject`，那一下不能混进「选择期间 0 次服务调用」的计数；产物顶层 require 的 `react` / `react/jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives` 走一张平台桩表，被测路径本该不触达它们，**桩被调到即抛**，「意外进入 React 渲染路径」因此是显式失败而不是静默崩溃）。走注入而不是直接点页面自带的那份，是因为断言里包含批量删除工作区：只有服务是 spy，断言才既打在真实 DOM 上、又不会真的动用户的会话与工作区。
 
-**注入之前必须先停掉页面自带的那份实例**。插件装在 profile 里（见[加载方式](../README.md#加载方式)），不停掉就是两份互不知情的实例抢同一批 DOM：右键弹**两个**菜单，而捕获阶段的监听器按注册顺序触发，native 那份先 append，于是 `document.querySelector('.dsh-oi-menu')` 拿到的是 native 的菜单——脚本以为点的是自己的 spy，**实际点在真服务上**，「批量归档」那条断言会真的归档掉用户的会话（已经发生过一次，8 个真实会话）。
+**注入之前必须先停掉页面自带的那份实例**。插件装在 profile 里（见[加载方式](../README.md#加载方式)），不停掉就是两份互不知情的实例抢同一批 DOM：右键弹**两个**菜单，而捕获阶段的监听器按注册顺序触发，native 那份先 append，于是 `document.querySelector('.dsh-oi-menu')` 拿到的是 native 的菜单——脚本以为点的是自己的 spy，**实际点在真服务上**，批量那条断言会真的删掉用户的工作区（同类事故早先发生在归档上，一次进去 8 个真实会话）。
 
 所以点击破坏性菜单项之前有三道闸，任何一道不满足都原路返回、**一个 click 都不发**：
 
@@ -71,6 +71,8 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 **fork 的「把子会话打开」断言是 DOM 级的**：`ISessions` 契约上没有 `open`，插件在侧栏轮询子会话的行并点它。桩的 `fork` 因此返回**侧栏里一条真实未选中行的 id**——「那一行随后 `aria-selected` 了」是点击真的发生了的唯一证据；第二段用一个不存在的 id，断言 3 秒超时后只出声（注入桩包了 `console.warn` 收集）且不产生任何导航。
 
 **「对齐上游」那几条断言要点开的是页面自己的菜单，而它挂在真服务上。**「...」是行右侧操作区里的第一个按钮，工作区行的第二个是「新建会话」——闭着眼点操作区就会真的开一个会话。所以打开的动作只认 `button[0]`，并要求它恰好多弹出一个 portal 菜单，不满足就当没测到；对着它只读 `viewBox` / `path[d]` / `getComputedStyle`，一个菜单项都不点，关闭走 `Escape`。
+
+**单选会话那份菜单是上游的真子集，镜像断言因此不比「全等」而比「只少末项」**（`session menu mirrors the row's own menu`）：上游四项，本插件三项，断言要求少掉的那一项**必须是末项且文案等于词典里的 `menu.archiveSession`**，其余三项仍逐项比 `viewBox` / `width` / `height` / 全部 `path[d]`。写成「上游减去归档项」而不是写死三个字符串，是为了让上游换顺序、换文案或多一项时立刻 FAIL——否则「少一项」会从决定悄悄变成漂移。配套的 `session batch right-click hands the menu back` 测的是另一半契约：多选会话右键后**没有**本插件菜单，且 `defaultPrevented` 为 `false`（只断言"没弹"会放过一个更糟的实现：拦下默认行为再什么都不做）。第二条不是"要弹出上游的菜单"——0.1.7 的侧边栏行上没有任何 `contextmenu` 监听，不拦的结果就是浏览器默认。
 
 **归档行单独比一条**（`archived session row mirrors the row's own menu` + `archived row dispatches the workspaces unarchive command`）。上游的「归档会话」与「取消归档」是同一个 slot（order 400）按归档态换文案、图标与调用的方法，置顶项在归档行整条不渲染——只看第一条会话行的那几条断言取到的永远是未归档行，这一半漂移看不见。归档行又默认被侧栏视图筛掉，所以这两条自己点「视图选项 → 显示已归档」让行现形，比完再关回去（留在打开态会让后续取行取到归档行）。判据仍是同一行的逐项比对：上游三项（重命名 / 分叉会话 / 取消归档），末项 `viewBox` 是 `0 0 20 20` 而非这一批常见的 `0 0 16 16`（上游那枚原件自己就是 20），本插件必须逐字相等；再点末项，要求发出 `workspaces.unarchiveSession(id)` 且 id 等于行上的 `data-row-key` 去掉 `session:` 前缀。**前置条件是这个 home 里至少有一条归档会话**，没有就 FAIL 并点名去归档一条再重跑——「实测未发生」在这里不能记 skip。两条断言跑完必须把开关关回去：「显示已归档」是全站共享的视图偏好，留着会让后面的套件串台——`verify:chat-history` 的会话挑选会取到打不开的归档行（归档行被上游的 `guardedOpen` 拦下），表现为 ABORT「找不到恰好一条提问的会话」。
 
@@ -96,7 +98,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify
 - 每条断言前缀是 `[PASS]` / `[FAIL]` / `[SKIP]`，结尾固定打印 `passed=N failed=N skipped=N total=N`。
 - **`failed + skipped > 0` 一律非零退出**，全绿时最后一行是 `[OK] 全部断言实际执行且通过。`
 
-所以确认「真的测了」只需两步：`echo $?` 为 0，且 summary 是 `passed=28 failed=0 skipped=0 total=28`。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
+所以确认「真的测了」只需两步：`echo $?` 为 0，且 summary 是 `passed=27 failed=0 skipped=0 total=27`。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
 
 判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，七个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
 

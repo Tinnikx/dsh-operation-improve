@@ -4,6 +4,7 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 012 | 右键菜单让位：摘掉单选与批量的归档动作 | 完成 | [012-context-menu-drop-archive.md](docs/handoff/012-context-menu-drop-archive.md) |
 | 011 | harness 0.1.7-alpha.2 检测与适配 + 向下兼容报告 | 完成 | [011-harness-0.1.7-alpha.2-adaptation.md](docs/handoff/011-harness-0.1.7-alpha.2-adaptation.md) |
 | 010 | 「Harness 高级配置」上下文窗口口径说明（卡片黄条 + 顶部提示） | 完成 | [010-harness-config-context-window-notice.md](docs/handoff/010-harness-config-context-window-notice.md) |
 | 009 | harness 0.1.6-alpha.2 适配实现（功能 2/9 修复 + 脚本漂移 + 扩项①②③） | 完成 | [009-harness-0.1.6-alpha.2-fixes.md](docs/handoff/009-harness-0.1.6-alpha.2-fixes.md) |
