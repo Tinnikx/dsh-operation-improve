@@ -16,10 +16,12 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)。
 
-## 当前已兼容版本
-- 0.1.6-alpha.2
-- 0.1.2-rc.1
-- 0.1.1-rc.2
+## 当前兼容版本
+- 0.1.7-alpha.2（当前锚定版本，七套 live 验证全绿）
+
+本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。0.1.7-alpha.2 轮起，
+菜单样式档与图标（功能 2、6）与活跃标记覆盖（功能 5）跟随新版视觉，回到旧 harness 上不再保证逐项对齐。
+历史验证记录：0.1.6-alpha.2、0.1.2-rc.1、0.1.1-rc.2（各轮细节见 `harness-v*-adaptation-report.md`）。
 
 ## 截图
 
@@ -173,7 +175,7 @@ dsh plugin --profile web add <本目录>                                # 从本
 
 **验证脚本一律打测试栈，不打日常在用的那个 harness**：端到端断言里有「批量归档」「批量删除」，它们会真的发出 click。
 
-**判据是退出码，不是屏幕上有没有红字。** 脚本把「没测到」与「测失败」同等对待：`failed + skipped > 0` 一律非零退出，环境不满足时直接 `abort()` 并点名「实测未发生」。确认真的测了只需两步：`echo $?` 为 0，且末行 summary 形如 `passed=25 failed=0 skipped=0 total=25`。
+**判据是退出码，不是屏幕上有没有红字。** 脚本把「没测到」与「测失败」同等对待：`failed + skipped > 0` 一律非零退出，环境不满足时直接 `abort()` 并点名「实测未发生」。确认真的测了只需两步：`echo $?` 为 0，且末行 summary 形如 `passed=28 failed=0 skipped=0 total=28`。
 
 ## 已知限制
 

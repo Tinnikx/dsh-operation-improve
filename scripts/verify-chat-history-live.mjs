@@ -129,13 +129,18 @@ const readRailIndependently = () => evaluate(`(() => {
           let full = null
           const a = it.anchor
           if (a && a.kind === 'loaded' && typeof a.key === 'string') {
-            const row = document.querySelector('[data-chat-flow-key="' + CSS.escape(a.key) + '"]')
+            const row = document.querySelector('[data-chat-node-key="' + CSS.escape(a.key) + '"], [data-chat-flow-key="' + CSS.escape(a.key) + '"]')
             const bubble = row?.querySelector('[class*="_bubble"]')
             const t = bubble?.innerText?.trim()
             full = t || null
           }
           return { turn: it.turn, prompt: it.prompt ?? '', full }
         })
+          // 与插件「无可导航文本的条目被丢弃」的契约同口径（src/chat-history/
+          // history-store.js 的 resolveTurnTexts）：气泡读不到全文且 prompt 为空的
+          // 轮次没有可插入的内容。这条过滤是数据层的判据，oracle 自己实现一遍，
+          // 不复用被测代码。
+          .filter((it) => (it.full ?? '').trim() !== '' || it.prompt.trim() !== '')
       }
       fiber = fiber.return
       depth += 1

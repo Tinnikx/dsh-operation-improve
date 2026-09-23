@@ -2,8 +2,12 @@
  * 功能 2：侧边栏右键菜单。
  *
  * 单选（右键落在未被多选的行上）：菜单项逐项对齐该行「...」菜单——工作区
- * rename / delete，会话 rename / fork / archive，顺序、文案、图标、动作都一样，
- * 上游没有分隔线这里也不加。
+ * rename / delete，会话 pin / rename / fork / archive，顺序、文案、图标、动作都一样，
+ * 上游没有分隔线这里也不加。两处翻转跟着行的状态走，都取打开菜单那一刻的
+ * `workspaces.list.getSnapshot()`：pin ↔ unpin，archive ↔ unarchive（同一个菜单项换文案、
+ * 图标与方法，不是多一项）；归档行上游不渲染 pin，这里同样不给。**项的集合没有任何
+ * 运行时通道**——上游那份菜单在右键那一刻被 preventDefault 掉，只有状态位读得到，
+ * 上游新增一类行状态时这一份要跟着改。
  *
  * 多选：只保留批量破坏性操作——同为 session 给「归档」，同为 workspace 给「删除」。
  * `sessions` 没有 delete 方法，所以多选会话永远不出现「删除」。
@@ -15,6 +19,9 @@
  *
  * 二次确认也跟着上游走：删除工作区上游弹对话框，这里就 `confirm`；归档会话上游**不问**，
  * 这里单选也不问。批量两项上游没有对应入口，一律 `confirm`——一次点掉多行没有撤销。
+ * 「不问」只对**没有进行中工作**的会话成立：有进行时上游走的是「第一次 `archiveSession`
+ * 被 host 拒（`workspace/session-active`）→ 弹『停止并归档此会话？』→ 确认后才带
+ * `{ stopActivity: true }` 重试」，本插件没有复现那一步（见 docs/feature-1-2 已知限制）。
  *
  * 重命名的初值与删除确认里的 `{name}` 都取自
  * [rowTitle](../shared/row-probe.js)，即上游那两个对话框各自的初值字段。
@@ -89,13 +96,31 @@ export function installContextMenu(deps) {
     if (many) {
       return [{ id: 'archive', label: tOwn('batch.archiveSessions', { n: targets.length }), icon: MENU_ICONS.archive, danger: true }]
     }
-    return [
+    // 置顶项跟着上游走：排在最前（order 100），已置顶换成实心图 + 「取消置顶」，
+    // 归档行上游不渲染这一项（「...」里和 hover 按钮都是），这里同样不给。
+    const snapshot = workspaces.list.getSnapshot()
+    const pinned = snapshot.pinnedSessionIds.includes(targets[0])
+    const archived = snapshot.archivedSessionIds.includes(targets[0])
+    const items = []
+    if (!archived) {
+      items.push({
+        id: pinned ? 'unpin' : 'pin',
+        label: t(pinned ? 'menu.unpinSession' : 'menu.pinSession'),
+        icon: pinned ? MENU_ICONS.pinFill : MENU_ICONS.pinOutline,
+      })
+    }
+    items.push(
       { id: 'rename', label: t('rename'), icon: MENU_ICONS.edit },
       { id: 'fork', label: t('menu.fork'), icon: MENU_ICONS.branch },
       // 上游这一项**没有** `danger`，跟着不标：单选菜单是照着那个「...」菜单对齐的，
       // 多标一层红字就是又一处只有这里才有的说法。批量那条才标红。
-      { id: 'archive', label: t('menu.archiveSession'), icon: MENU_ICONS.archive },
-    ]
+      // 归档行上这一项整条翻转（上游同一个 slot 按归档态换文案、图标与调用的方法），
+      // 不是多一项：给已归档的行挂一枚「归档会话」，点下去是个没有后果的死项。
+      archived
+        ? { id: 'unarchive', label: t('menu.unarchiveSession'), icon: MENU_ICONS.unarchive }
+        : { id: 'archive', label: t('menu.archiveSession'), icon: MENU_ICONS.archive },
+    )
+    return items
   }
 
   /**
@@ -155,6 +180,19 @@ export function installContextMenu(deps) {
       // 上游 fork 完会把子会话打开，标题也带序号，两处都跟上。
       const childId = await sessions.fork({ sessionId: targets[0], increaseTitle: true })
       await openSessionRow(childId)
+      return
+    }
+    if (actionId === 'pin') {
+      await workspaces.pinSession(targets[0])
+      return
+    }
+    if (actionId === 'unpin') {
+      await workspaces.unpinSession(targets[0])
+      return
+    }
+    if (actionId === 'unarchive') {
+      // 与上游一致：取消归档不是破坏性操作，不问，直接把行放回正常视图。
+      await workspaces.unarchiveSession(targets[0])
     }
   }
 

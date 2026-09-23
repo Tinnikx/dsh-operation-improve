@@ -35,8 +35,8 @@
  *   口径标注，复现与取证见 [docs/harness-hmr-session-defect.md](../../docs/harness-hmr-session-defect.md)。
  *
  * `default` 只用于界面提示，**从不写进文件**：未设置就是键不存在，走 harness 自己的默认。
- * 上游改了默认，最坏是提示过时，行为不受影响。少数键（`session-title` 那几个）上游 schema
- * 本来就没有默认值，此处填的是 bundle 层给的值。
+ * 上游改了默认，最坏是提示过时，行为不受影响。少数键（`session-title` 那几个、`spill-policy`
+ * 的 `maxInlineTokens`）上游 schema 本来就没有默认值，此处填的是 bundle 层给的值。
  *
  * `min` / `max` / `crossRules` 镜像上游会**硬抛**的边界。镜像不是装饰——patch 是热的，
  * 写下去那一刻整棵树就起不来了。

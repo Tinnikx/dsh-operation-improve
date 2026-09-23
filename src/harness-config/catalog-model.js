@@ -38,15 +38,25 @@ export const MODEL_ENTRIES = [
         label: '单次请求图片数上限', help: '',
       },
       {
-        key: 'maxRequestFilesBytes', type: 'integer', default: 134217728, min: IMAGE_OFFLOAD_BYTE_QUANTUM, effect: 'nextRequest',
-        label: '单次请求文件总上限（字节）',
-        help: `不能小于图片转存配额 ${IMAGE_OFFLOAD_BYTE_QUANTUM}，否则 llm-deepseek 加载失败。`,
+        key: 'imageOffloadCountQuantum', type: 'integer', default: 20, min: 1, effect: 'nextRequest',
+        label: '图片转存张数步长', help: '图片张数超过上限时，要转存的量按这个步长向上取整（从最旧的几张起）。不能超过单次请求图片数上限。',
       },
       {
-        key: 'maxInlineRequestImageBytes', type: 'integer', default: 20971520,
-        min: INLINE_IMAGE_OFFLOAD_BYTE_QUANTUM, effect: 'nextRequest',
-        label: '内联图片上限（字节）',
-        help: `不能小于内联转存配额 ${INLINE_IMAGE_OFFLOAD_BYTE_QUANTUM}，否则 llm-deepseek 加载失败。`,
+        key: 'maxRequestFilesBytes', type: 'integer', default: 134217728, min: 1, effect: 'nextRequest',
+        label: '单次请求文件总上限（字节）',
+        help: '以 Files 引用形式带上去的图片总量。与下面的转存步长之间的约束由上游硬抛，面板按合成值拦。',
+      },
+      {
+        key: 'imageOffloadByteQuantum', type: 'integer', default: IMAGE_OFFLOAD_BYTE_QUANTUM, min: 1, effect: 'nextRequest',
+        label: '图片转存字节步长（Files 引用）', help: '请求图片总字节超过文件总上限时，要腾出的量按这个步长向上取整。不能超过单次请求文件总上限。',
+      },
+      {
+        key: 'maxInlineRequestImageBytes', type: 'integer', default: 20971520, min: 1, effect: 'nextRequest',
+        label: '内联图片上限（字节）', help: '直接内联（base64）带上去的图片总量。',
+      },
+      {
+        key: 'inlineImageOffloadByteQuantum', type: 'integer', default: INLINE_IMAGE_OFFLOAD_BYTE_QUANTUM, min: 1, effect: 'nextRequest',
+        label: '图片转存字节步长（内联）', help: '内联那一路的同类步长。不能超过内联图片上限。',
       },
       {
         key: 'filesApiTimeoutMs', type: 'integer', default: 60000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'nextRequest',
@@ -54,12 +64,37 @@ export const MODEL_ENTRIES = [
       },
       {
         key: 'fileExpiresAfterSeconds', type: 'integer', default: 604800,
-        min: FILE_REFRESH_MARGIN_SECONDS + 1, max: 2592000, effect: 'session',
+        min: 3600, max: 2592000, effect: 'session',
         label: '上传文件保留时长（秒）',
         help: '已上传的文件按各自上传时点套旧有效期；要全部用新时长，得重新上传。',
       },
+      {
+        key: 'fileRefreshMarginSeconds', type: 'integer', default: FILE_REFRESH_MARGIN_SECONDS, min: 0, effect: 'nextRequest',
+        label: '文件续期余量（秒）', help: '距过期不足这么久就算快到期，用图片时会先重新上传。必须严格小于保留时长。',
+      },
+      {
+        key: 'fileQuotaCleanupBatch', type: 'integer', default: 100, min: 1, max: 1000, effect: 'nextRequest',
+        label: '配额清理批量（个）', help: '上传撞上 Files 配额时，一次删掉最旧的多少个本 harness 的文件再重试。',
+      },
     ],
-    crossRules: [],
+    crossRules: [
+      {
+        kind: 'atMost', field: 'imageOffloadByteQuantum', than: 'maxRequestFilesBytes',
+        message: '图片转存字节步长（Files 引用）不能超过单次请求文件总上限，否则 llm-deepseek 加载失败。',
+      },
+      {
+        kind: 'atMost', field: 'inlineImageOffloadByteQuantum', than: 'maxInlineRequestImageBytes',
+        message: '图片转存字节步长（内联）不能超过内联图片上限，否则 llm-deepseek 加载失败。',
+      },
+      {
+        kind: 'atMost', field: 'imageOffloadCountQuantum', than: 'maxImagesPerRequest',
+        message: '图片转存张数步长不能超过单次请求图片数上限，否则 llm-deepseek 加载失败。',
+      },
+      {
+        kind: 'lessThan', field: 'fileRefreshMarginSeconds', than: 'fileExpiresAfterSeconds',
+        message: '文件续期余量必须严格小于上传文件保留时长，否则 llm-deepseek 加载失败。',
+      },
+    ],
   },
   {
     id: 'session-query-sqlite',
@@ -121,8 +156,13 @@ export const MODEL_ENTRIES = [
         label: '候选池上限', help: '',
       },
       {
-        key: 'referenceContextFraction', type: 'number', default: 0.2, min: 0, effect: 'nextRequest',
-        label: '引用内容占比', help: '被引用内容最多占上下文窗口的比例。',
+        key: 'maxReferenceBytes', type: 'integer', default: 65536, min: 1, effect: 'nextRequest',
+        label: '单条引用内容上限（字节）',
+        help: '设了就固定按这个字节数裁切被引用的会话内容。不设则按上下文窗口 × 4 × 引用占比推导，提示里的 65536 是那条推导式的下限，不是推导结果。',
+      },
+      {
+        key: 'referenceContextFraction', type: 'number', default: 0.2, min: 0, max: 1, effect: 'nextRequest',
+        label: '引用内容占比', help: '被引用内容最多占上下文窗口的比例，取值 0–1（上游按这个区间硬抛）。',
       },
     ],
     crossRules: [],

@@ -182,10 +182,6 @@ const boot = `
   })
   const disposers = []
   const calls = []
-  const spy = (label) => new Proxy({}, { get: (_t, method) => (...args) => {
-    calls.push({ label, method: String(method), args })
-    return Promise.resolve(undefined)
-  } })
   // sessions 不能是纯 spy：插件的 rename 走 \`sessions.binding(id)?.session.rename()\`，
   // 而 Proxy 的通用分支返回 Promise，\`?.session\` 就是 undefined，rename 那条路径永远
   // 走不到。这里给 binding / fork 两个真实形状的桩，其余方法照旧记账。
@@ -230,6 +226,51 @@ const boot = `
   const realWarn = console.warn
   console.warn = (...args) => { warns.push(args.map(String).join(' ')); realWarn.apply(console, args) }
   disposers.push(() => { console.warn = realWarn })
+  // workspaces 也不能是纯 spy：会话的单选菜单构建时要读
+  // \`workspaces.list.getSnapshot()\` 的置顶/归档态——这两项逐项对齐上游，上游按行的
+  // 状态翻转它们（归档行不渲染置顶项；置顶项与归档项各自换成「取消置顶」「取消归档」）。
+  // 两个集合都现从真应用 UI 推导：行上有「取消置顶」/「取消归档」按钮即该行为该状态，
+  // id 反查照抄 'rows found' 的 fiber 候选路径。归档行默认被视图筛选藏起来，推导结果
+  // 随「显示已归档」开关而变——归档分支的断言因此自带开关（见 archivedPair 那条）。
+  // 命令方法照旧记账。
+  const resolveSessionId = (row) => {
+    let fiber = null
+    for (const k of Object.keys(row)) if (k.startsWith('__reactFiber$')) { fiber = row[k]; break }
+    let depth = 0
+    while (fiber && depth < 24) {
+      const p = fiber.memoizedProps
+      if (p && typeof p === 'object') {
+        const cands = [p.sessionId, p.node && p.node.id, p.row && p.row.id, p.item && p.item.id, p.session && p.session.id]
+        for (const c of cands) if (typeof c === 'string' && c) return c
+      }
+      fiber = fiber.return; depth += 1
+    }
+    return null
+  }
+  // 行上带某个动作按钮 = 上游认为该行动作可用 = 该行处于对应状态。
+  const idsWithAction = (label) => {
+    const ids = []
+    for (const row of document.querySelectorAll('[class*="_sessionRow"]')) {
+      let hit = false
+      for (const b of row.querySelectorAll('[aria-label]')) {
+        if (b.getAttribute('aria-label') === label) { hit = true; break }
+      }
+      if (!hit) continue
+      const id = resolveSessionId(row)
+      if (id !== null) ids.push(id)
+    }
+    return ids
+  }
+  const pinnedIds = () => idsWithAction(window.__dshOiT__('menu.unpinSession'))
+  const archivedIds = () => idsWithAction(window.__dshOiT__('menu.unarchiveSession'))
+  const workspacesState = {
+    list: { getSnapshot: () => ({ items: [], pinnedSessionIds: pinnedIds(), archivedSessionIds: archivedIds() }) },
+  }
+  const workspaces = new Proxy(workspacesState, { get: (target, prop) => {
+    if (prop in target) return target[prop]
+    const method = String(prop)
+    return (...args) => { calls.push({ label: 'workspaces', method, args }); return Promise.resolve(undefined) }
+  } })
   const dicts = {}
   const activeLocale = () => (document.documentElement.lang || 'en').toLowerCase().split('-')[0]
   const render = (template, params) => params === undefined
@@ -237,7 +278,7 @@ const boot = `
     : template.replace(/\\{(\\w+)\\}/g, (m, k) => (k in params ? String(params[k]) : m))
   const ctx = {
     effect: (cb) => { const d = cb(); if (typeof d === 'function') disposers.push(d) },
-    workspaces: spy('workspaces'),
+    workspaces,
     sessions,
     // 功能 8 起 apply() 会调 ctx.slots.inject(...)——本脚本的被测路径不渲染 slot
     // 组件（react 桩被调到即抛），收下注册即可；**不走 spy**，boot 期的这一次
@@ -433,22 +474,28 @@ check('contextmenu single (session)', await evaluate(`(() => {
   const items = menu ? [...menu.querySelectorAll('.dsh-oi-menu__item')].map(b => b.textContent) : null
   const rect = menu ? menu.getBoundingClientRect() : null
   return { defaultPrevented: evt.defaultPrevented, items, lang: document.documentElement.lang,
-    upstream: { rename: window.__dshOiT__('rename'), fork: window.__dshOiT__('menu.fork'),
+    upstream: { pin: window.__dshOiT__('menu.pinSession'), unp: window.__dshOiT__('menu.unpinSession'),
+      rename: window.__dshOiT__('rename'), fork: window.__dshOiT__('menu.fork'),
       archive: window.__dshOiT__('menu.archiveSession') },
     inViewport: rect ? (rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1) : null }
 })()`), (v) => {
   if (v.defaultPrevented !== true) return '没有 preventDefault，浏览器原生菜单会弹出来'
   if (v.items === null) return '菜单没渲染出来'
-  if (v.items.length !== 3) return `单选会话应有 3 项，实际 ${JSON.stringify(v.items)}`
-  for (const key of ['rename', 'fork', 'archive']) {
+  if (v.items.length !== 4) return `单选会话应有 4 项，实际 ${JSON.stringify(v.items)}`
+  for (const key of ['pin', 'unp', 'rename', 'fork', 'archive']) {
     if (v.upstream[key] === undefined) return `断言自己没取到 ${key}`
   }
   if (v.upstream.rename === 'rename') return '上游词典查不出 rename，菜单会显示键名本身'
   if (v.upstream.fork === 'menu.fork') return '上游词典查不出 menu.fork，菜单会显示键名本身'
   if (v.upstream.archive === 'menu.archiveSession') return '上游词典查不出 menu.archiveSession'
-  if (v.items[0] !== v.upstream.rename) return `重命名项是 ${JSON.stringify(v.items[0])}，上游词典给的是 ${JSON.stringify(v.upstream.rename)}`
-  if (v.items[1] !== v.upstream.fork) return `fork 项是 ${JSON.stringify(v.items[1])}，上游词典给的是 ${JSON.stringify(v.upstream.fork)}`
-  if (v.items[2] !== v.upstream.archive) return `归档项是 ${JSON.stringify(v.items[2])}，上游词典给的是 ${JSON.stringify(v.upstream.archive)}`
+  if (v.upstream.pin === 'menu.pinSession') return '上游词典查不出 menu.pinSession'
+  const first = v.items[0]
+  if (first !== v.upstream.pin && first !== v.upstream.unp) {
+    return `第一项应是置顶态翻转（${JSON.stringify([v.upstream.pin, v.upstream.unp])} 之一），实际 ${JSON.stringify(first)}`
+  }
+  if (v.items[1] !== v.upstream.rename) return `重命名项是 ${JSON.stringify(v.items[1])}，上游词典给的是 ${JSON.stringify(v.upstream.rename)}`
+  if (v.items[2] !== v.upstream.fork) return `fork 项是 ${JSON.stringify(v.items[2])}，上游词典给的是 ${JSON.stringify(v.upstream.fork)}`
+  if (v.items[3] !== v.upstream.archive) return `归档项是 ${JSON.stringify(v.items[3])}，上游词典给的是 ${JSON.stringify(v.upstream.archive)}`
   if (v.inViewport !== true) return '菜单溢出视口，翻转逻辑失效'
   return true
 })
@@ -465,7 +512,7 @@ check('escape closes', await evaluate(`(() => {
 })
 
 // 单选工作区：另外两项同样必须逐字等于上游词典。这条和上一条合起来覆盖单选的全部
-// 四项——四项都对上，「同一个动作在两个菜单里叫两个名字」就不可能再发生。
+// 六项——六项都对上，「同一个动作在两个菜单里叫两个名字」就不可能再发生。
 check('contextmenu single (workspace)', await evaluate(`(() => {
   const sel = window.__dshOperationImprove__.selection
   sel.clear()
@@ -660,8 +707,8 @@ check('session menu mirrors the row\'s own menu', sessionPair, (v) => {
   if (v.why != null) return `没测到：${v.why}`
   if (v.menus !== 1) return `页面上有 ${v.menus} 个本插件菜单`
   if (v.owner !== v.mine) return `菜单归属对不上：owner=${v.owner} 而本次注入的是 ${v.mine}`
-  if (v.upstreamItems.length !== 3) {
-    return `上游「...」菜单有 ${v.upstreamItems.length} 项（本条按 3 项对齐）：${JSON.stringify(v.upstreamItems.map((i) => i.label))}`
+  if (v.upstreamItems.length !== 4) {
+    return `上游「...」菜单有 ${v.upstreamItems.length} 项（本条按 4 项对齐）：${JSON.stringify(v.upstreamItems.map((i) => i.label))}`
   }
   if (v.myItems.some((i) => i.paths === null || i.paths.length === 0)) {
     return `有菜单项没有图标：${JSON.stringify(v.myItems.map((i) => ({ label: i.label, paths: i.paths })))}`
@@ -722,6 +769,115 @@ check('danger row keeps upstream colouring', workspacePair, (v) => {
   return true
 })
 
+// ---- 归档行：同一个 slot 的翻转 ------------------------------------------------
+//
+// 上游的「归档会话」与「取消归档」是**同一个菜单项**（order 400 那一个 slot）按归档态
+// 换文案、图标与调用的方法，置顶项则在归档行整条不渲染。取第一条会话行的那些断言看不见
+// 这一半：归档行默认被侧栏视图筛掉。所以这里自己打开「显示已归档」（一个视图偏好，不改
+// 数据），同一行上比完再关回去。
+const archivedPair = await evaluate(`(async () => {
+  ${ROWMENU}
+  const t = window.__dshOiT__
+  const archivedRows = () => [...document.querySelectorAll('[role="treeitem"]')].filter((el) =>
+    String(el.className).includes('_sessionRow') && String(el.className).includes('_archived'))
+  // 归档行可见与否就是开关的读回值（视图偏好没有可读的 DOM 状态位，别猜 class）。
+  // **收尾一律关**，不管这一轮是不是自己开的：上一轮中途失败会把它留在打开态，
+  // 而后面每条断言取的都是「第一条会话行」，取到归档行会串台成别的失败。
+  const setArchivedView = async (want) => {
+    for (let i = 0; i < 3; i += 1) {
+      if ((archivedRows().length > 0) === want) return true
+      const view = [...document.querySelectorAll('[aria-label]')].find((el) =>
+        (el.getAttribute('aria-label') ?? '') === t('viewOptions.label'))
+      if (view === undefined) return false
+      view.click()
+      await sleep(400)
+      const item = [...document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]')].find((el) =>
+        (el.textContent ?? '').trim() === t('viewOptions.showArchived'))
+      if (item === undefined) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        await sleep(200)
+        continue
+      }
+      item.click()
+      await sleep(700)
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await sleep(200)
+    }
+    return (archivedRows().length > 0) === want
+  }
+  const opened = archivedRows().length > 0 ? true : await setArchivedView(true)
+  const row = archivedRows().find((el) => el.querySelector('[class*="rowActions"] button') !== null) ?? null
+  if (row === null) {
+    await setArchivedView(false)
+    return { why: '这个 home 里没有归档会话行——先在该 home 里归档任意一条会话再重跑'
+      + '（视图开关' + (opened ? '已开又关回' : '打不开') + '）' }
+  }
+  const pairResult = await pair(row, 200, 240)
+  // 最后一项点下去发的是什么：桩把服务全换成 spy，这一击不改数据。id 取行上的
+  // data-row-key（上游在行渲染处给的字面量前缀），与 fiber 反查互为对照。
+  let dispatch = null
+  if (pairResult.why == null) {
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 240, view: window }))
+    const mineMenus = document.querySelectorAll('.dsh-oi-menu')
+    const one = mineMenus.length === 1 && mineMenus[0].getAttribute('data-dsh-oi-owner') === window.__dshOiTest__.instanceId
+      ? mineMenus[0] : null
+    if (one !== null) {
+      const items = one.querySelectorAll('.dsh-oi-menu__item')
+      const last = items[items.length - 1]
+      const label = (last.textContent ?? '').trim()
+      const before = window.__dshOiTest__.calls.length
+      const beforeRejections = window.__dshOiTest__.rejections.length
+      last.click()
+      await sleep(200)
+      const calls = window.__dshOiTest__.calls.slice(before)
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
+      dispatch = { label, calls: calls.map((c) => c.label + '.' + c.method),
+        arg: (calls[0] || { args: [null] }).args[0],
+        expectedId: (row.getAttribute('data-row-key') ?? '').replace(/^session:/, ''),
+        menuClosed: document.querySelector('.dsh-oi-menu') === null,
+        rejections: window.__dshOiTest__.rejections.length - beforeRejections }
+    }
+  }
+  const viewRestored = await setArchivedView(false)
+  return { ...pairResult, dispatch, viewRestored, unarchiveLabel: t('menu.unarchiveSession'), archivedCount: archivedRows().length }
+})()`)
+
+check('archived session row mirrors the row\'s own menu', archivedPair, (v) => {
+  if (v.why != null) return `没测到：${v.why}`
+  if (v.viewRestored !== true) return '「显示已归档」没能关回去，会串台到后面的套件与下一次跑'
+  if (v.menus !== 1) return `页面上有 ${v.menus} 个本插件菜单`
+  if (v.owner !== v.mine) return `菜单归属对不上：owner=${v.owner} 而本次注入的是 ${v.mine}`
+  if (v.upstreamItems.length !== 3) {
+    return `归档行的上游「...」菜单有 ${v.upstreamItems.length} 项（本条按 3 项对齐，置顶缺席 + 末项翻转）：`
+      + JSON.stringify(v.upstreamItems.map((i) => i.label))
+  }
+  if (v.upstreamItems[2].label !== v.unarchiveLabel) {
+    return `上游末项不是「${v.unarchiveLabel}」而是 ${JSON.stringify(v.upstreamItems[2].label)}——上游的翻转口径变了`
+  }
+  if (JSON.stringify(v.myItems) !== JSON.stringify(v.upstreamItems)) {
+    return '归档行逐项（顺序 / 文案 / viewBox / 尺寸 / path）比对不等：\n'
+      + `  本插件 ${JSON.stringify(v.myItems)}\n  上游   ${JSON.stringify(v.upstreamItems)}`
+  }
+  return true
+})
+
+check('archived row dispatches the workspaces unarchive command', archivedPair, (v) => {
+  if (v.why != null) return `没测到：${v.why}`
+  if (v.dispatch === null) return '归档行的菜单没打开或归属不对，这一半没测到'
+  if (v.dispatch.label !== v.unarchiveLabel) {
+    return `末项标签是 ${JSON.stringify(v.dispatch.label)}，应为 ${JSON.stringify(v.unarchiveLabel)}`
+  }
+  if (v.dispatch.calls.join(',') !== 'workspaces.unarchiveSession') {
+    return `点「${v.unarchiveLabel}」发出的调用是 ${JSON.stringify(v.dispatch.calls)}`
+  }
+  if (v.dispatch.arg !== v.dispatch.expectedId) {
+    return `收到的 id 是 ${JSON.stringify(v.dispatch.arg)}，行自己的 id 是 ${JSON.stringify(v.dispatch.expectedId)}`
+  }
+  if (v.dispatch.menuClosed !== true) return '执行后菜单没关'
+  if (v.dispatch.rejections !== 0) return `取消归档过程中出现了 ${v.dispatch.rejections} 次未处理的 rejection`
+  return true
+})
+
 // ---- 单选的四个动作各自打在什么上 ----------------------------------------------
 //
 // 这四条比文案断言更靠后一层：文案对了不代表点下去做的是同一件事。桩把服务全换成
@@ -754,13 +910,13 @@ check('session rename dispatches session.rename', await evaluate(`(async () => {
   const before = window.__dshOiTest__.calls.length
   // rejections 是整轮累积的，只能取增量。
   const beforeRejections = window.__dshOiTest__.rejections.length
-  menu.querySelectorAll('.dsh-oi-menu__item')[0].click()
+  menu.querySelectorAll('.dsh-oi-menu__item')[1].click()
   await sleep(200)
   const calls = window.__dshOiTest__.calls.slice(before)
   window.prompt = () => null
   const cancelMenu = openMine()
   const before2 = window.__dshOiTest__.calls.length
-  if (cancelMenu !== null) cancelMenu.querySelectorAll('.dsh-oi-menu__item')[0].click()
+  if (cancelMenu !== null) cancelMenu.querySelectorAll('.dsh-oi-menu__item')[1].click()
   await sleep(200)
   const cancelledCalls = window.__dshOiTest__.calls.length - before2
   restore()
@@ -815,7 +971,7 @@ check('rename without a binding fails loudly', await evaluate(`(async () => {
   window.__dshOiSessionStub__.binding = 'missing'
   const beforeCalls = window.__dshOiTest__.calls.length
   const beforeRejections = window.__dshOiTest__.rejections.length
-  menus[0].querySelectorAll('.dsh-oi-menu__item')[0].click()
+  menus[0].querySelectorAll('.dsh-oi-menu__item')[1].click()
   await sleep(200)
   window.__dshOiSessionStub__.binding = 'ok'
   window.prompt = realPrompt
@@ -875,7 +1031,7 @@ check('fork increases the title and opens the child via the sidebar row', await 
   if (menu1 === null) { window.confirm = realConfirm; return { bail: 'menu ownership check failed' } }
   const before1 = window.__dshOiTest__.calls.length
   const beforeRej1 = window.__dshOiTest__.rejections.length
-  menu1.querySelectorAll('.dsh-oi-menu__item')[1].click()
+  menu1.querySelectorAll('.dsh-oi-menu__item')[2].click()
   let opened = false
   for (let i = 0; i < 20; i += 1) {
     await sleep(150)
@@ -896,7 +1052,7 @@ check('fork increases the title and opens the child via the sidebar row', await 
   const before2 = window.__dshOiTest__.calls.length
   const beforeRej2 = window.__dshOiTest__.rejections.length
   const beforeWarns = window.__dshOiTest__.warns.length
-  menu2.querySelectorAll('.dsh-oi-menu__item')[1].click()
+  menu2.querySelectorAll('.dsh-oi-menu__item')[2].click()
   await sleep(3400)
   const calls2 = window.__dshOiTest__.calls.slice(before2).map((c) => c.label + '.' + c.method)
   const warns2 = window.__dshOiTest__.warns.slice(beforeWarns).filter((w) => w.includes('@Tinnikx/dsh-operation-improve'))
@@ -952,7 +1108,7 @@ check('single archive skips the confirmation', await evaluate(`(async () => {
   window.confirm = () => { confirmCalled = true; return false }
   const before = window.__dshOiTest__.calls.length
   const beforeRejections = window.__dshOiTest__.rejections.length
-  menus[0].querySelectorAll('.dsh-oi-menu__item')[2].click()
+  menus[0].querySelectorAll('.dsh-oi-menu__item')[3].click()
   await sleep(200)
   window.confirm = realConfirm
   const calls = window.__dshOiTest__.calls.slice(before)
@@ -967,6 +1123,49 @@ check('single archive skips the confirmation', await evaluate(`(async () => {
   if (typeof v.arg !== 'string' || v.arg.length === 0) return `参数不是真实 id：${JSON.stringify(v.arg)}`
   if (v.menuClosed !== true) return '执行后菜单没关'
   if (v.rejections !== 0) return `归档过程中出现了 ${v.rejections} 次未处理的 rejection`
+  return true
+})
+
+check('pin dispatches the workspaces pin command', await evaluate(`(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  window.__dshOperationImprove__.selection.clear()
+  const row = [...document.querySelectorAll('[role="treeitem"]')]
+    .find((el) => String(el.className).includes('_sessionRow'))
+  if (!row) return { bail: 'no session row' }
+  const menus0 = document.querySelectorAll('.dsh-oi-menu').length
+  row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200, view: window }))
+  const menus = document.querySelectorAll('.dsh-oi-menu')
+  if (menus.length !== 1 || menus[0].getAttribute('data-dsh-oi-owner') !== window.__dshOiTest__.instanceId) {
+    return { bail: 'menu ownership check failed', menus0 }
+  }
+  const item = menus[0].querySelectorAll('.dsh-oi-menu__item')[0]
+  const label = item.textContent
+  const before = window.__dshOiTest__.calls.length
+  const beforeRejections = window.__dshOiTest__.rejections.length
+  item.click()
+  await sleep(200)
+  const calls = window.__dshOiTest__.calls.slice(before)
+  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
+  return { label, calls: calls.map((c) => c.label + '.' + c.method),
+    arg: (calls[0] || { args: [null] }).args[0],
+    pinLabel: window.__dshOiT__('menu.pinSession'), unpLabel: window.__dshOiT__('menu.unpinSession'),
+    menuClosed: document.querySelector('.dsh-oi-menu') === null,
+    rejections: window.__dshOiTest__.rejections.length - beforeRejections }
+})()`), (v) => {
+  if (v.bail !== undefined) return `没测到：${v.bail}`
+  // 桩不动真状态：置顶态由行上的真 UI 推导，标签与服务调用必须自洽地配对。
+  if (v.label === v.pinLabel && v.calls.join(',') !== 'workspaces.pinSession') {
+    return `标签是「${v.label}」却发出 ${JSON.stringify(v.calls)}`
+  }
+  if (v.label === v.unpLabel && v.calls.join(',') !== 'workspaces.unpinSession') {
+    return `标签是「${v.label}」却发出 ${JSON.stringify(v.calls)}`
+  }
+  if (v.label !== v.pinLabel && v.label !== v.unpLabel) {
+    return `第一项标签 ${JSON.stringify(v.label)} 不是置顶翻转（${JSON.stringify([v.pinLabel, v.unpLabel])}）`
+  }
+  if (typeof v.arg !== 'string' || v.arg.length === 0) return `参数不是真实 id：${JSON.stringify(v.arg)}`
+  if (v.menuClosed !== true) return '执行后菜单没关'
+  if (v.rejections !== 0) return `置顶过程中出现了 ${v.rejections} 次未处理的 rejection`
   return true
 })
 

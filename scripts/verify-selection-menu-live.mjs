@@ -207,6 +207,7 @@ const boot = await evaluate(`(() => {
     lang: document.documentElement.lang,
     copy: h.locale?.tCommon?.('copy') ?? null,
     paste: h.locale?.tOwn?.('selection.paste') ?? null,
+    rowPin: [h.locale?.t?.('menu.pinSession') ?? null, h.locale?.t?.('menu.unpinSession') ?? null],
     rowLabels: [h.locale?.t?.('rename') ?? null, h.locale?.t?.('menu.fork') ?? null, h.locale?.t?.('menu.archiveSession') ?? null],
   }
 })()`)
@@ -255,6 +256,9 @@ const pickBodySelection = () => evaluate(`(() => {
     if (host.closest('[class*="_sessionRow"], [class*="_projectRow"], textarea, input, [contenteditable], .dsh-oi-menu') !== null) continue
     const box = host.getBoundingClientRect()
     if (box.top < 80 || box.bottom > window.innerHeight - 120 || box.width < 80) continue
+    // 折叠组里的行有布局盒但没有渲染可见性（rect 非零而选区 API 取不到文本）。
+    // 真实用户选不到invisible 的文字——探针必须同样只挑**可见**的正文。
+    if (!host.checkVisibility({ visibility: true, opacity: false })) continue
     const lead = raw.length - raw.trimStart().length
     const range = document.createRange()
     range.setStart(node, lead)
@@ -582,10 +586,14 @@ if (row === null) abort('侧边栏里没有会话行', '功能 2 的对照断言
 
 await rightClick(row.x, row.y)
 const menu7 = await readMenu()
+// 置顶项排第一，文本随行的置顶态在「置顶会话 / 取消置顶」之间翻转——这里只验它是
+// 这两者之一（用真词典的值），后面三项与词典逐字相等。
 check('有选中文本时右键侧边栏的行：开出来的是功能 2 的行菜单', {
-  ...menu7, selected: row.selected, expect: boot.rowLabels,
-}, (v) => (v.count === 1 && JSON.stringify(v.items) === JSON.stringify(boot.rowLabels))
-  || `期望 ${JSON.stringify(boot.rowLabels)}，实测 ${JSON.stringify(v.items)}`)
+  ...menu7, selected: row.selected, expect: boot.rowLabels, pinLabels: boot.rowPin,
+}, (v) => (v.count === 1 && v.items.length === 4
+    && v.pinLabels.includes(v.items[0])
+    && JSON.stringify(v.items.slice(1)) === JSON.stringify(boot.rowLabels))
+  || `期望 [置顶翻转, ${JSON.stringify(boot.rowLabels)}]，实测 ${JSON.stringify(v.items)}`)
 
 const styleTwo = await evaluate(`(() => {
   const root = document.querySelector('.dsh-oi-menu')

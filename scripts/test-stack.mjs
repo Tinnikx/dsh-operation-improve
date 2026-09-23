@@ -30,6 +30,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { splitManaged } from '../src/harness-config/patch-file.js'
 
 /** 日常在用的那个 harness 的端口——测试栈绝不能起在它上面。 */
 const RESERVED_PORT = 3080
@@ -193,8 +194,37 @@ function syncHome() {
   const res = spawnSync('rsync', args, { stdio: ['ignore', 'inherit', 'inherit'] })
   if (res.error !== undefined) die(`rsync 起不来：${res.error.message}`)
   if (res.status !== 0) die(`rsync 失败（退出码 ${res.status}）`)
+  preparePatchBaseline()
   relinkPlugin()
   console.log(`[test-stack] 副本已同步：${TEST_HOME}`)
+}
+
+/**
+ * 把副本 profile 的 `cordis.patch.yml` 归置成 verify:settings 需要的基线。
+ * 真 home 会被日常使用改动作。
+ */
+function preparePatchBaseline() {
+  const path = join(TEST_HOME, 'profiles/web/cordis.patch.yml')
+  if (!existsSync(path)) return
+  const { before, after, found } = splitManaged(readFileSync(path, 'utf8'))
+  let text = found ? `${before}${after}` : readFileSync(path, 'utf8')
+  if (found) console.log('[test-stack] 副本的托管区段已剥除（真 home 未动）')
+  // 断言 9 探的 `bash-sandbox.timeoutMs` 必须是 bundle 来源；真 home 里用户手写的
+  // bash-sandbox 项会把它变成 manual。副本里整项删掉——只影响这一项探针的基线。
+  const hand = text.split('\n')
+  const out = []
+  let skipping = false
+  for (const line of hand) {
+    if (/^- id: bash-sandbox\s*$/u.test(line)) { skipping = true; continue }
+    if (skipping && line.startsWith('- ')) skipping = false
+    if (!skipping) out.push(line)
+  }
+  if (out.join('\n') !== hand.join('\n')) {
+    console.log('[test-stack] 副本的手写 bash-sandbox 项已剥除（真 home 未动）')
+    writeFileSync(path, `${out.join('\n').replace(/\n*$/u, '\n')}\n`, 'utf8')
+  } else if (found) {
+    writeFileSync(path, text, 'utf8')
+  }
 }
 
 /**
@@ -253,9 +283,17 @@ function rescopeManifest() {
 
 /** harness 的入口。 */
 function harnessBin() {
-  // 两个候选按「离用户实际跑的那份最近」排序：真 home 解析得到的是产品自带的
-  // 那个 CLI——也就是 3080 上正在服务的同一份；解析不到（没装产品）才回落到外层
-  // 工作区里的 npm 依赖。两者同版本，差别只在谁更能代表用户看到的行为。
+  // `DSH_TEST_BIN` 强制指定入口：向下兼容回跑要用旧版构建，不能让候选顺序说了算。
+  const forced = process.env.DSH_TEST_BIN
+  if (forced !== undefined && forced !== '') {
+    if (!existsSync(forced)) die(`DSH_TEST_BIN 指向的文件不存在：${forced}`)
+    return forced
+  }
+  // 候选按「离用户实际跑的那份最近」排序：desktop dist 打包的 CLI 就是产品随
+  // 版本发布带出去的那份，且不受真 home 的 node_modules 指向 dev 工作区旧构建
+  // 的影响；解析不到（没装产品）才回落到真 home / 外层工作区的 npm 依赖。
+  const desktopBin = join(REPO, '../dsh-desktop/dist/desktop/dsh-linux-x64/resources/app/node_modules/@deepseek-ai/dsh/lib/bin.js')
+  if (existsSync(desktopBin)) return desktopBin
   const candidates = [join(REAL_HOME, 'profiles/web/noop.js'), join(REPO, '../apps/shell/src/noop.js')]
   for (const from of candidates) {
     try {
@@ -264,7 +302,7 @@ function harnessBin() {
       // MODULE_NOT_FOUND：这个起点够不着 CLI，试下一个。别的错误 require.resolve 不抛。
     }
   }
-  die(`解析不到 @deepseek-ai/dsh/lib/bin.js（试过 ${candidates.join('、')}）`)
+  die(`解析不到 @deepseek-ai/dsh/lib/bin.js（desktop dist 不在，且试过 ${candidates.join('、')}）`)
 }
 
 /** 起 harness，等到首页答 200 且带插件名册。 */

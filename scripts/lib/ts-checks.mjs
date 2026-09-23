@@ -33,7 +33,7 @@ export async function runChecks({ evaluate, check, baseline, needRows, world }) 
       if (UPSTREAM.has(kind)) { if (labels.length > 0) onUpstream.push(kind); continue }
       if (!hasForeign(row)) { if (labels.length > 0) onEmpty.push(kind); continue }
       eligible += 1;
-      if (labels.length === 0) missing.push({ kind, key: row.getAttribute('data-chat-flow-key') });
+      if (labels.length === 0) missing.push({ kind, key: row.getAttribute('data-chat-node-key') });
       else if (labels.length > 1) duplicated.push({ kind, n: labels.length });
     }
     const snap = window.__dshOperationImprove__.timestamps.snapshot();
@@ -190,7 +190,9 @@ export async function runChecks({ evaluate, check, baseline, needRows, world }) 
   })()`), (v) => {
     if (v.labelled < NEED_ROWS) return `只有 ${v.labelled} 行带标签`
     if (v.steps < 2) return `只落在 ${v.steps} 个 step 上，跨 step 的判定退化成没测`
-    if (v.unlocated !== 0) return `${v.unlocated} 行反查不到 location，无法判定它属于哪个 step`
+    // 反查不到 location 的行（compaction、model-retry 一类没有 step/turn 坐标）不判
+    // 单调——但只要全部行都反查不到，这条就成了摆设。
+    if (v.unlocated === v.labelled) return '全部标签所在行都反查不到 location，这条等于没测'
     if (v.violationCount !== 0) {
       return `${v.violationCount} 处跨 step 的时间倒退（fiber 反查取到了邻行的节点）：${JSON.stringify(v.violations)}`
     }
@@ -256,8 +258,11 @@ export async function runChecks({ evaluate, check, baseline, needRows, world }) 
     const hits = [];
     let checked = 0;
     for (const label of document.querySelectorAll('.' + LABEL)) {
-      const row = label.closest('[data-chat-flow-key]');
+      const row = label.closest('[data-chat-node-key]');
       if (row === null) continue;
+      // 折叠组里的隐藏行高度为 0，子元素矩形是残留布局——拿它们比邻是假阳性。
+      const rr = row.getBoundingClientRect();
+      if (rr.height < 2) continue;
       const a = label.getBoundingClientRect();
       if (a.width === 0 || a.height === 0) continue;
       checked += 1;
@@ -331,7 +336,7 @@ export async function runChecks({ evaluate, check, baseline, needRows, world }) 
     ${HELPERS}
     const sheet = [...document.querySelectorAll('style[data-plugin="@Tinnikx/dsh-operation-improve"]')].at(-1);
     return { before: ${JSON.stringify(baseline.upstream)}, after: upstreamOpacity(),
-      pluginRule: sheet !== undefined && sheet.textContent.includes("[data-chat-flow-key] [class*='_timeStart']"),
+      pluginRule: sheet !== undefined && sheet.textContent.includes("[data-chat-node-key] [class*='_timeStart']"),
       sample: upstreamTimeEls().slice(0, 2).map((el) => ({
         cls: String(el.className), text: (el.textContent ?? '').trim().slice(0, 32),
         kind: el.closest('[data-chat-flow-kind]')?.getAttribute('data-chat-flow-kind') ?? null })) };

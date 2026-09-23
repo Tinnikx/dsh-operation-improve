@@ -136,7 +136,7 @@ if (opened.thinks < 1) {
 }
 if (opened.upstreamTimes < 1) {
   abort(
-    '页面上没有上游时间标签（`[data-time-hover-root]` 或 `[data-chat-flow-key]` 下的 `_timeStart` / `_timeEnd`）——常驻断言实测未发生。',
+    '页面上没有上游时间标签（`[data-chat-node-key]` 行下的 `_timeStart` / `_timeEnd`）——常驻断言实测未发生。',
     `观测：${JSON.stringify(opened)}\n处理：换一个含 user / turn-tail 行的会话。`,
   )
 }

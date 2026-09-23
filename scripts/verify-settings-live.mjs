@@ -495,6 +495,46 @@ check('4b 点「清除」撤掉被拒的草稿：错误消失、待提交归零�
   ? true
   : '撤销后错误没清、草稿没退回，或文件被动了'))
 
+// —— 4c / 4d：新收进来的键带来的那两条 `atMost` 与「严格小于」也得由前端拦 ——
+//
+// 「步长不能超过上限」这类约束跑在**合成值**上：上游校验看到的是整份 config，而 `min`
+// 单独挡不住（步长与上限都可以各自合法）。这两条各写一个只越界的草稿，要求报错、文件
+// 一个字节不动，然后撤销。等号必须放行——上游写的是 `if (a > b) throw`。
+const llmOutside = (await state()).state['llm-deepseek'].outside ?? {}
+const QUANTUM_CAP = typeof llmOutside.maxRequestFilesBytes === 'number' ? llmOutside.maxRequestFilesBytes : 134217728
+const EXPIRES = typeof llmOutside.fileExpiresAfterSeconds === 'number' ? llmOutside.fileExpiresAfterSeconds : 604800
+
+const shaBefore4c = sha(readPatch())
+await type('llm-deepseek.imageOffloadByteQuantum', String(QUANTUM_CAP + 1))
+const rejected4c = await commit('llm-deepseek.imageOffloadByteQuantum')
+check('4c 图片转存步长超过文件总上限被前端拦下（atMost：等号放行、超过才拒）', {
+  tried: `imageOffloadByteQuantum=${QUANTUM_CAP + 1} > maxRequestFilesBytes=${QUANTUM_CAP}`,
+  errors: rejected4c.errors,
+  wrote: sha(readPatch()).slice(0, 16) !== shaBefore4c.slice(0, 16),
+}, (v) => (v.errors.some((e) => e.includes('图片转存字节步长（Files 引用）不能超过单次请求文件总上限')) && v.wrote === false
+  ? true
+  : `没拦下来或写了文件：${JSON.stringify(v)}`))
+
+const withdrawn4c = await clickClear('llm-deepseek.imageOffloadByteQuantum')
+check('4c-b 撤销被拒草稿：错误消失、文件仍然没动', {
+  errors: withdrawn4c.errors,
+  dirty: withdrawn4c.dirty,
+  wrote: sha(readPatch()).slice(0, 16) !== shaBefore4c.slice(0, 16),
+}, (v) => (v.errors.length === 0 && v.dirty === 0 && v.wrote === false
+  ? true
+  : `撤销后仍有错误或写了文件：${JSON.stringify(v)}`))
+
+await type('llm-deepseek.fileRefreshMarginSeconds', String(EXPIRES))
+const rejected4d = await commit('llm-deepseek.fileRefreshMarginSeconds')
+check('4d 续期余量等于保留时长被拦下（上游要的是严格小于）', {
+  tried: `fileRefreshMarginSeconds=${EXPIRES} == fileExpiresAfterSeconds=${EXPIRES}`,
+  errors: rejected4d.errors,
+  wrote: sha(readPatch()).slice(0, 16) !== shaBefore4c.slice(0, 16),
+}, (v) => (v.errors.some((e) => e.includes('文件续期余量必须严格小于上传文件保留时长')) && v.wrote === false
+  ? true
+  : `没拦下来或写了文件：${JSON.stringify(v)}`))
+await clickClear('llm-deepseek.fileRefreshMarginSeconds')
+
 // —— 5：把本插件从一份副本里真卸载，区段与它的效力都不该消失 ——
 const uninstall = await verifyUninstall()
 check('5 卸载本插件后：区段仍在文件里、profile 照样加载、值照样生效', uninstall, (v) => (

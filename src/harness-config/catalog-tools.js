@@ -12,11 +12,13 @@ export const TOOL_ENTRIES = [
     title: '大块内容外溢',
     plugin: '@deepseek-ai/dsh-spill-policy',
     effect: 'immediate',
-    description: '超过阈值的内容不再内联进会话，改为落盘引用。',
+    description: '工具结果按估算 token 给保留预算，超出的部分外溢为可恢复引用。',
     fields: [
       {
-        key: 'maxInlineBytes', type: 'integer', default: 50000, min: 1, effect: 'immediate',
-        label: '内联上限（字节）', help: '超过就外溢到存储，会话里只留引用。',
+        // 上游只拒绝负数与非整数，0 合法但必然出事：预算 0 意味着整条结果都外溢，
+        // 而外溢提示本身放不下时上游在**该工具结果落地那一刻**抛错，不是加载时。
+        key: 'maxInlineTokens', type: 'integer', default: 12500, min: 1, effect: 'immediate',
+        label: '内联上限（估算 token）', help: '超过就把超出部分外溢到存储，会话里留提示与可恢复引用；预算太小连那条提示都放不下，会在结果超预算时抛错。不写这个键＝不启用外溢。',
       },
     ],
     crossRules: [],

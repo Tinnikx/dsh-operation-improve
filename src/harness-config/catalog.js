@@ -88,6 +88,12 @@ export function checkCrossRules(entry, values) {
       const a = pick(values, rule.field, entry)
       const b = pick(values, rule.than, entry)
       if (typeof a === 'number' && typeof b === 'number' && !(a < b)) problems.push(rule.message)
+    } else if (rule.kind === 'atMost') {
+      // 上游的写法是 `if (a > b) throw`，等号合法——不能拿 lessThan 顶替，那会拒掉一个
+      // 上游允许的取值。
+      const a = pick(values, rule.field, entry)
+      const b = pick(values, rule.than, entry)
+      if (typeof a === 'number' && typeof b === 'number' && a > b) problems.push(rule.message)
     } else if (rule.kind === 'sumAtMost') {
       const sum = rule.fields.reduce((acc, key) => acc + toNumber(pick(values, key, entry)), rule.plus)
       const cap = pick(values, rule.atMost, entry)

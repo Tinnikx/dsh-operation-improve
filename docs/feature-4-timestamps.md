@@ -1,6 +1,6 @@
 # 功能 4：逐行开始时间戳
 
-会话页逐行开始时间戳。每条回复、工具调用、思考等节点行的右上角显示它的**开始**时刻（`HH:mm:ss`），user / steering / turn-tail 三类改成常驻显示上游自己的时间标签。
+会话页逐行开始时间戳。每条回复、工具调用、思考等节点行的右上角显示它的**开始**时刻（`HH:mm:ss`），user / steering / turn-tail / turn-process 四类改成常驻显示上游自己的时间标签。
 
 `src/timestamps/index.js`
 
@@ -17,7 +17,7 @@ formatClockSeconds(time, now?) -> string | null   // 非有限数返回 null
 
 只读会话页的 DOM 与 React fiber，标签作为节点行自己的子节点插入，由观察 `document.body` 的 `MutationObserver` 驱动。
 
-数据源是 React fiber：每个节点行由上游 `ui-conversation` 渲染成 `div[data-chat-flow-key][data-chat-flow-kind]`，其内部第 7 层 fiber 的 `memoizedProps.node` 就是完整节点（`kind` / `key` / `data` / `location`）。反查**只接受 `node.key` 与行上 `data-chat-flow-key` 逐字相等的那一个**：上游改了层级或复用了节点，结果是这一行没有标签，而不是安上邻行的时间。
+数据源是 React fiber：每个节点行由上游 `ChatNodeSeat` 渲染成 `div[data-chat-node-key][data-chat-flow-key][data-chat-flow-kind]`，其内部第 7 层 fiber 的 `memoizedProps.node` 就是完整节点（`kind` / `key` / `data` / `location`）。`data-chat-node-key` 恒等于节点的 `key`；`data-chat-flow-key` 在被分组切块的行上是 `JSON.stringify([nodeKey, part])`——同一步骤的 reasoning 与 response 分段各自成行，两段共用同一个开始时刻。分组壳（`ChatGroupSeat`）只有 flow-key 没有 node-key，它聚合多个节点，一个时间戳代表不了，跳过。反查**只接受 `node.key` 与行上 `data-chat-node-key` 逐字相等的那一个**：上游改了层级或复用了节点，结果是这一行没有标签，而不是安上邻行的时间。
 
 ## 时间取的是开始时刻
 
@@ -37,9 +37,9 @@ formatClockSeconds(time, now?) -> string | null   // 非有限数返回 null
 
 ## 标签的放置
 
-**每个 `[data-chat-flow-key]` 留出 `--dsh-oi-ts-gutter`（80px）右侧留白**，行标签绝对定位到 `top: 0; right: 0`，落在这条留白里、与本行第一行水平对齐。
+**每个 `[data-chat-node-key]` 留出 `--dsh-oi-ts-gutter`（80px）右侧留白**，行标签绝对定位到 `top: 0; right: 0`，落在这条留白里、与本行第一行水平对齐。锚点用 node-key 而不是 flow-key：分组壳也带 flow-key，两层都加留白就成了分段行的双倍内缩。
 
-- **留白必须给到每一个节点行，不只是被贴了标签的那些**。只缩一部分行，剩下的（user / steering / turn-tail，以及取不到时间的行）保持原宽，右边缘就参差不齐。代价是正文列窄 80px——这是有意付的：标签放进 16px 的列间距里可以做到零布局位移，但那条间距上下对称，标签离本行和离下一行都是 1px，**读起来归属下一行**。80 这个数是量出来要容下带 `M/D ` 前缀的标签（过午夜再测长会话时标签带日期前缀，实测 67–74px；留白小了标签右端会顶进通栏正文，`verify:timestamps` 的「不压正文」断言实测抓到）。
+- **留白必须给到每一个节点行，不只是被贴了标签的那些**。只缩一部分行，剩下的（user / steering / turn-tail / turn-process，以及取不到时间的行）保持原宽，右边缘就参差不齐。代价是正文列窄 80px——这是有意付的：标签放进 16px 的列间距里可以做到零布局位移，但那条间距上下对称，标签离本行和离下一行都是 1px，**读起来归属下一行**。80 这个数是量出来要容下带 `M/D ` 前缀的标签（过午夜再测长会话时标签带日期前缀，实测 67–74px；留白小了标签右端会顶进通栏正文，`verify:timestamps` 的「不压正文」断言实测抓到）。
 - **对齐的是本行第一行，不是最后一行**。这是「开始时间」，而一个两千 px 高的回复行，把它的起始时刻放在两千 px 之下没有意义。
 - **不能把标签内联到首行末尾**。实测 tool-call 的命令行带 ellipsis 裁切、assistant-step 的代码块横向滚动，两类的首行右端可用宽度都是负数（分别 −257px、−1688px），内联必然压在正文上。
 - 标签一律 `pointer-events: none` + `user-select: none`：它落在正文的选区范围内，可选中就意味着复制一段回复会连时间戳一起带走。
@@ -52,16 +52,14 @@ Think 折叠头那条 flex 行末尾插一枚标签，时间用**所属 assistan
 
 **落在所属 step 第一行水平带上的 Think 不单独贴标签**——行标签就在同一条水平带的右端，两枚一字不差的时间并排出现只是噪声。实测一个 73 行的真实会话里 7 个 Think 行全部落在这一带上，`snapshot().thinks` 因此是 0。判据要读矩形，所以 `rebuild()` 拆成读、写两相：读相位把整页量完再统一写，读写交替就是一行一次布局抖动。
 
-## 上游三类改常驻
+## 上游四类改常驻
 
 ```css
-[data-time-hover-root] [class*="_timeStart"],
-[data-time-hover-root] [class*="_timeEnd"],
-[data-chat-flow-key] [class*="_timeStart"],
-[data-chat-flow-key] [class*="_timeEnd"] { opacity: 1 !important; }
+[data-chat-node-key] [class*="_timeStart"],
+[data-chat-node-key] [class*="_timeEnd"] { opacity: 1 !important; }
 ```
 
-user / steering / turn-tail 三类上游自己就在渲染时间（还带 `Ran for` / `TTFT` / `tok/s` 读数），插件不另贴，只保证它**常驻**。规则认两个锚点，对应两个世界：`[data-time-hover-root]` 是 ≤0.1.5 那个包住时间的容器，时间藏在 hover 后面，这条 `!important` 是真在挣行为差异；0.1.6 起锚点消失、上游自己把 `_timeStart` / `_timeEnd` 改成了常驻，规则退化为等价的双保险——上游哪天把 hover 藏时间改回来，`[data-chat-flow-key]` 这一支还压得住。旧锚点不能删：那是 0.1.5 上唯一有效的锚点。`!important` 在两个世界都是必要的：上游那条 `@media (hover: hover)` 下的 `opacity: 0` 与这条特异度相同，胜负只取决于两张样式表在 `head` 里的先后，而上游样式表由构建产物插入，顺序不由插件掌控。
+user / steering / turn-tail 三类上游自己就在渲染时间（还带 `Ran for` / `TTFT` / `tok/s` 读数），turn-process 折叠行尾端也带着开始时刻——插件对这四类不另贴，只保证时间**常驻**。上游的隐藏通道还在：`@media (hover: hover)` 下 `[data-actions-reveal=hover]` 的 actions 整条 `opacity: 0`（相邻两条同 kind 的行也会触发同款隐藏），当前实测页面走不到这条，插件规则是双保险——上游哪天把 hover 藏时间改回来，它仍然压得住。与上游规则特异度相同，胜负只取决于两张样式表在 `head` 里的先后，而上游样式表由构建产物插入，顺序不由插件掌控，所以必须带 `!important`。锚点与留白同源（node-key）：时间标签恒挂在节点行的 actions 里。
 
 ## 自激环两道闸
 
@@ -77,7 +75,7 @@ user / steering / turn-tail 三类上游自己就在渲染时间（还带 `Ran f
 - 时间戳的日期部分不跟随 harness 语言：上游 zh 下写「8月27日」，这里写 `8/27`。`formatClockSeconds` 是个不带 ctx 的纯函数，接词典要把 `conversation` 词典的 `clock.md` / `clock.ymd` 传进去。右键菜单不在此列，它的文案[全部取自词典](./feature-1-2-sidebar-menu.md#菜单项与服务映射)。
 - 16 类 kind 里，真实页面上只跑到过 `assistant-step` / `tool-call` / `context` / `compaction` / `model-retry` / `turn-tail` / `user` 七类。另外九类（`steering`、`manual-compaction`、`command`、`command-input`、`turn-error`、`turn-max-tokens`、`workflow-run`、`agent-teams`、`unknown`）**从未在真实页面上被验证过**，它们走的是 `resolveTime` 的通用兜底；取不到时间的表现是这一行没有标签，不报错。
 - **整页时间戳不是全局单调的**。同一个 step 内 `model-retry` 显示的重试时刻会晚于其后 `assistant-step` 显示的 step 起点——两者都对，只是读起来像倒退。
-- 常驻规则认的是 `_timeStart` / `_timeEnd` 两个类名片段与 `[data-time-hover-root]` / `[data-chat-flow-key]` 两个锚点（各对应一个版本世界）。上游改类名片段，那三类行的时间退回藏起来，且不报错；改锚点则两条规则一起失效，`verify:timestamps` 的「基线里没有上游时间标签」前置检查会先撞上。0.1.6 世界里上游本就常驻，锚点失效的表现只是行为退回「没人保证常驻」，肉眼当下看不出来。
+- 常驻规则认的是 `_timeStart` / `_timeEnd` 两个类名片段与 `[data-chat-node-key]` 锚点。上游改类名片段，这四类行的时间退回藏起来，且不报错；改锚点则整条规则失效，`verify:timestamps` 的「基线里没有上游时间标签」前置检查会先撞上。锚点失效当下的表现只是「没人保证常驻」，肉眼看不出来。
 - 右侧留白默认 80px（`--dsh-oi-ts-gutter`）。它容得下 `M/D HH:mm:ss`（实测 74px 封顶），容不下跨年的 `Y/M/D HH:mm:ss`——那种宽度只在跨年后的老会话上出现，实测覆盖不到，容不下时表现是标签被挤出行的右边缘、极端情况压上正文（`verify:timestamps` 的「不压正文」断言只在当前世界的会话上跑）。
 - fiber 反查与 `rowId` 依赖同一个 React 内部字段，React 版本变化同样会失效；表现是整页没有标签（`key` 自校验挡住了「安上邻行时间」这种更糟的失效方式）。
 

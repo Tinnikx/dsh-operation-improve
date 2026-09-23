@@ -11,9 +11,9 @@
  * 的实现会让「标签等于上游 Started」那条断言变成自己和自己比。
  */
 export const HELPERS = `
-const UPSTREAM = new Set(['user', 'steering', 'turn-tail']);
+const UPSTREAM = new Set(['user', 'steering', 'turn-tail', 'turn-process']);
 const LABEL = 'dsh-oi-ts';
-const rowsOf = () => [...document.querySelectorAll('[data-chat-flow-key]')];
+const rowsOf = () => [...document.querySelectorAll('[data-chat-node-key]')];
 const labelsOf = (row) => [...row.children].filter((el) => el.classList.contains(LABEL));
 const hasForeign = (row) => [...row.children].some((el) => !el.classList.contains(LABEL));
 const scrollerEl = () => document.querySelector('[data-conversation-scroll]');
@@ -26,7 +26,7 @@ const geometry = () => {
   const out = {};
   for (const row of rowsOf()) {
     const r = row.getBoundingClientRect();
-    out[row.getAttribute('data-chat-flow-key')] = [
+    out[row.getAttribute('data-chat-node-key')] = [
       Math.round((r.top - base.top + scroller.scrollTop) * 100) / 100,
       Math.round(r.height * 100) / 100,
       Math.round(r.width * 100) / 100,
@@ -43,11 +43,9 @@ const diffGeometry = (a, b) => {
   }
   return bad;
 };
-// 上游时间标签认两个锚点：data-time-hover-root（0.1.5 及更早的 hover 容器）与
-// data-chat-flow-key（0.1.6 起行容器就是唯一的祖先）。哪个世界都读得到。
+// 上游时间标签挂在节点行的 actions 里；行锚点与留白同源（data-chat-node-key）。
 const upstreamTimeEls = () => [...document.querySelectorAll(
-  '[data-time-hover-root] [class*="_timeStart"], [data-time-hover-root] [class*="_timeEnd"],'
-  + ' [data-chat-flow-key] [class*="_timeStart"], [data-chat-flow-key] [class*="_timeEnd"]')];
+  '[data-chat-node-key] [class*="_timeStart"], [data-chat-node-key] [class*="_timeEnd"]')];
 const upstreamOpacity = () => {
   const tally = {};
   for (const el of upstreamTimeEls()) {
@@ -81,7 +79,7 @@ const fiberOf = (el) => {
   return null;
 };
 const nodeOf = (row) => {
-  const wanted = row.getAttribute('data-chat-flow-key');
+  const wanted = row.getAttribute('data-chat-node-key');
   const root = fiberOf(row);
   if (root === null || root === undefined) return null;
   const stack = [{ f: root, d: 0 }];

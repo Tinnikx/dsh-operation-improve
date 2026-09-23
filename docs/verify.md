@@ -36,7 +36,9 @@ harness 带 token 认证：`up` 从 harness 日志提取 `?token=`，先给就�
 
 本脚本用 `fetch` 与顶层 `await`，而这台机器默认 PATH 上的 `node` 是 nvm 的 v16；版本不够时它在第一行就 `die`。**这不是洁癖**：v16 上 `fetch` 是 `undefined`，探测端口的那次调用抛 ReferenceError 被吞成「端口被占」，脚本于是报一句和事实相反的话就退出。
 
-`rsync` 会把真 home 里已有的[托管区段](./feature-8-harness-config.md#托管区段)一起搬进副本，而 `verify:settings` 要求基线干净——用过设置面板保存过配置的话，每次 `stack:up` 之后都得先把副本那份 `profiles/web/cordis.patch.yml` 里两行标记之间的内容删掉，否则那个脚本开头就 `abort`。
+harness 入口按「离用户实际跑的那份最近」挑：desktop dist 打包的 CLI 第一，真 home 与外层工作区的 npm 依赖兜底（`harnessBin()`）。`DSH_TEST_BIN=<绝对 bin.js 路径>` 强制指定入口，用于对着别的 harness 构建回跑整套件。
+
+`rsync` 会把真 home 里的日常改动一起搬进副本——`verify:settings` 要求「没有托管区段、`bash-sandbox.timeoutMs` 出自 bundle 层」的干净基线。`syncHome()` 因此在 rsync 之后**只归置副本**：剥掉标记区段，并删掉区段外的手写 `bash-sandbox` 项（用户日常用面板或手写过配置的话，这两样会随真 home 进来）。真 `~/.dsh` 一个字节不动；副本上那句「用过设置面板后要手动删区段」的老规矩由此作废。
 
 ## 单元测试
 
@@ -46,11 +48,15 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 
 **参数必须写成 glob，不能给目录**：`npm test` 里那条命令是 `node --test tests/*.test.mjs`，写成 `node --test tests/` 在这个版本上报 `pass 0 / fail 1`，那是参数处理，不是测试失败。
 
+[catalog.test.mjs](../tests/catalog.test.mjs) 兜的是精选清单**抄下来之后的自洽**：每条跨字段规则引用的键必须在同一张卡里、把全部字段的清单默认值合成一份 config 不许触发任何规则、每个数值字段的默认值必须过自己的 `min`/`max`、`atMost` 与 `lessThan` 的等号语义不许互换、只改一个键时另一个键要按清单默认值参与规则。它证明不了「抄得对」（上游 schema 不在这台机器的依赖里，见[功能 8 已知限制](./feature-8-harness-config.md#已知限制)），但挡得住抄错方向、边界写反、默认值自己打自己这三类。
+
 其中 [patch-file.test.mjs](../tests/patch-file.test.mjs) 的六条断言全部对**字节**，输入是 [fixtures/web-cordis.patch.yml](../tests/fixtures/web-cordis.patch.yml)——真实 web profile 用户 patch 层的逐字副本（含中文行内注释、`file-reference-local`、`agent-teams`、手写的 `session-query-sqlite`）。覆盖：加区段后区段外逐字节不变、改一个字段只有区段内那一个数变、清掉最后一个字段后文件逐字节回到原文、区段清空后补裸 `[]`、落盘换掉整个 inode、有开标记没闭标记时拒绝改写。**判据不能是「解析出来一样」**：那样写的话，把别人行尾的注释吞掉的实现也照样通过。
+
+[catalog.test.mjs](../tests/catalog.test.mjs) 兜的是精选清单**抄下来之后自不自洽**：每条跨字段规则引用的键必须在同一张卡里、拿全部字段的清单默认值合成一份 config 不许触发任何规则、每个数值字段的默认值必须过自己的 `min`/`max`、`atMost` 与 `lessThan` 的等号语义不许互换、只改一个键时另一个键要按清单默认值参与规则。它证明不了「抄得对」（上游 schema 不在这台机器的依赖里，见[功能 8 已知限制](./feature-8-harness-config.md#已知限制)），但能挡住抄错方向、边界写反、默认值自己打自己这三类。
 
 ## 端到端
 
-端到端验证走 CDP 注入——对着**运行中的真实页面**，把构建出的 `lib/client.js` 注入进去、用假 `__ModuleLoader__` 截下 registration 拿到 exports，再 apply 一个最小 ctx（`effect` 收集 disposer，`workspaces` / `sessions` 换成 spy，`slots` 用不记账的桩——功能 8 起 `apply()` 在 boot 期就会调一次 `ctx.slots.inject`，那一下不能混进「选择期间 0 次服务调用」的计数；产物顶层 require 的 `react` / `react/jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives` 走一张平台桩表，被测路径本该不触达它们，**桩被调到即抛**，「意外进入 React 渲染路径」因此是显式失败而不是静默崩溃）。走注入而不是直接点页面自带的那份，是因为断言里包含批量归档与批量删除：只有服务是 spy，断言才既打在真实 DOM 上、又不会真的动用户的会话与工作区。
+端到端验证走 CDP 注入——对着**运行中的真实页面**，把构建出的 `lib/client.js` 注入进去、用假 `__ModuleLoader__` 截下 registration 拿到 exports，再 apply 一个最小 ctx（`effect` 收集 disposer，`workspaces` 与 `sessions` 是「记账 Proxy + 少量真实形状的桩」——`workspaces.list.getSnapshot()` 的置顶与归档两个集合**都从页面真 UI 现推**（行上挂着「取消置顶」/「取消归档」按钮即该行处于该状态，id 走 fiber 反查），这样单选菜单的两处翻转项与上游逐项比对才不用写死状态；归档行默认被侧栏视图筛掉，推导结果随之为空，归档那一半由下一条断言自己开「显示已归档」再关回去；`slots` 用不记账的桩——功能 8 起 `apply()` 在 boot 期就会调一次 `ctx.slots.inject`，那一下不能混进「选择期间 0 次服务调用」的计数；产物顶层 require 的 `react` / `react/jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives` 走一张平台桩表，被测路径本该不触达它们，**桩被调到即抛**，「意外进入 React 渲染路径」因此是显式失败而不是静默崩溃）。走注入而不是直接点页面自带的那份，是因为断言里包含批量归档与批量删除：只有服务是 spy，断言才既打在真实 DOM 上、又不会真的动用户的会话与工作区。
 
 **注入之前必须先停掉页面自带的那份实例**。插件装在 profile 里（见[加载方式](../README.md#加载方式)），不停掉就是两份互不知情的实例抢同一批 DOM：右键弹**两个**菜单，而捕获阶段的监听器按注册顺序触发，native 那份先 append，于是 `document.querySelector('.dsh-oi-menu')` 拿到的是 native 的菜单——脚本以为点的是自己的 spy，**实际点在真服务上**，「批量归档」那条断言会真的归档掉用户的会话（已经发生过一次，8 个真实会话）。
 
@@ -62,9 +68,11 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 
 真正的隔离在这三道闸之外：被点击的那一侧根本不该是真数据，见[测试栈](#测试栈)。
 
-**fork 的「把子会话打开」断言是 DOM 级的**：0.1.6 起 `sessions.open` 已从 `ISessions` 契约移除，插件改为在侧栏轮询子会话的行并点它。桩的 `fork` 因此返回**侧栏里一条真实未选中行的 id**——「那一行随后 `aria-selected` 了」是点击真的发生了的唯一证据；第二段用一个不存在的 id，断言 3 秒超时后只出声（注入桩包了 `console.warn` 收集）且不产生任何导航。
+**fork 的「把子会话打开」断言是 DOM 级的**：`ISessions` 契约上没有 `open`，插件在侧栏轮询子会话的行并点它。桩的 `fork` 因此返回**侧栏里一条真实未选中行的 id**——「那一行随后 `aria-selected` 了」是点击真的发生了的唯一证据；第二段用一个不存在的 id，断言 3 秒超时后只出声（注入桩包了 `console.warn` 收集）且不产生任何导航。
 
 **「对齐上游」那几条断言要点开的是页面自己的菜单，而它挂在真服务上。**「...」是行右侧操作区里的第一个按钮，工作区行的第二个是「新建会话」——闭着眼点操作区就会真的开一个会话。所以打开的动作只认 `button[0]`，并要求它恰好多弹出一个 portal 菜单，不满足就当没测到；对着它只读 `viewBox` / `path[d]` / `getComputedStyle`，一个菜单项都不点，关闭走 `Escape`。
+
+**归档行单独比一条**（`archived session row mirrors the row's own menu` + `archived row dispatches the workspaces unarchive command`）。上游的「归档会话」与「取消归档」是同一个 slot（order 400）按归档态换文案、图标与调用的方法，置顶项在归档行整条不渲染——只看第一条会话行的那几条断言取到的永远是未归档行，这一半漂移看不见。归档行又默认被侧栏视图筛掉，所以这两条自己点「视图选项 → 显示已归档」让行现形，比完再关回去（留在打开态会让后续取行取到归档行）。判据仍是同一行的逐项比对：上游三项（重命名 / 分叉会话 / 取消归档），末项 `viewBox` 是 `0 0 20 20` 而非这一批常见的 `0 0 16 16`（上游那枚原件自己就是 20），本插件必须逐字相等；再点末项，要求发出 `workspaces.unarchiveSession(id)` 且 id 等于行上的 `data-row-key` 去掉 `session:` 前缀。**前置条件是这个 home 里至少有一条归档会话**，没有就 FAIL 并点名去归档一条再重跑——「实测未发生」在这里不能记 skip。两条断言跑完必须把开关关回去：「显示已归档」是全站共享的视图偏好，留着会让后面的套件串台——`verify:chat-history` 的会话挑选会取到打不开的归档行（归档行被上游的 `guardedOpen` 拦下），表现为 ABORT「找不到恰好一条提问的会话」。
 
 这也是为什么 `apply()` 挂出去的 [`window.__dshOperationImprove__`](./shared-api.md#调试句柄) 必须列全每一项带监听或带注册的功能并带一条整体 `dispose()`：只暴露一部分，脚本就停不干净 native，那正是把真会话归档掉的路径。
 
@@ -88,7 +96,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify
 - 每条断言前缀是 `[PASS]` / `[FAIL]` / `[SKIP]`，结尾固定打印 `passed=N failed=N skipped=N total=N`。
 - **`failed + skipped > 0` 一律非零退出**，全绿时最后一行是 `[OK] 全部断言实际执行且通过。`
 
-所以确认「真的测了」只需两步：`echo $?` 为 0，且 summary 是 `passed=25 failed=0 skipped=0 total=25`。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
+所以确认「真的测了」只需两步：`echo $?` 为 0，且 summary 是 `passed=28 failed=0 skipped=0 total=28`。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
 
 判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，七个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
 
@@ -113,10 +121,11 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify     # 改回 zh 再�
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:timestamps
 ```
 
-`verify-timestamps-live.mjs` 同样先点开一个够长的会话（选取门槛 28 条节点行、≥1 个 Think 行、≥1 枚上游时间标签，不满足一律 `abort`——「标签等于上游 Started」与「单调不减」两条谓词要 **≥20 条带标签的行**，而上游自带时间的三类与空行都不贴标签，按 20 选会话会经常刚好够不上，这是实测出来的边界）。十条断言：装饰完整性、文本格式、**标签等于上游 Started**、跨 step 时间单调不减、每枚标签落在本行第一行上、不压正文、Think 行水平带上有本 step 的时间、上游三类改常驻、空闲无自激重建、dispose 复原。七处只有这个脚本才守得住的坑：
+`verify-timestamps-live.mjs` 同样先点开一个够长的会话（选取门槛 28 条节点行、≥1 个 Think 行、≥1 枚上游时间标签，不满足一律 `abort`——「标签等于上游 Started」与「单调不减」两条谓词要 **≥20 条带标签的行**，而上游自带时间的四类与空行都不贴标签，按 20 选会话会经常刚好够不上，这是实测出来的边界）。十条断言：装饰完整性、文本格式、**标签等于上游 Started**、跨 step 时间单调不减、每枚标签落在本行第一行上、不压正文、Think 行水平带上有本 step 的时间、上游四类改常驻、空闲无自激重建、dispose 复原。八处只有这个脚本才守得住的坑：
 
 - **Chrome 必须带 hover 那两个 `--blink-settings`**（[测试栈](#测试栈)起的那个自带）。headless 默认 `(hover: none)`，上游那条藏时间的规则整条不生效，装载前量到的恒是 `opacity: 1`，「改成常驻」的断言会在功能完全没生效的情况下报绿。`Emulation.setEmulatedMedia({features:[{name:'hover'}]})` **办不到**——实测下发返回 `{}` 无错，而 `matchMedia('(hover: hover)').matches` 纹丝不动地保持 `false`；Chrome 只认它支持的那几个 `prefers-*` / `color-*` 特性，多余的静默忽略。脚本因此改成读 `matchMedia` 的前置检查，不满足就 abort 并让人重起测试栈。
-- **常驻断言分两个世界**，由 `data-time-hover-root` 锚点在不在场判定，不猜版本号。`hover-root`（≤0.1.5）：装载前恒为 0，「0→1」的前后差就是插件挣来的行为，装载前读到 1 一律 abort（差观测不到就等于假通过）。`upstream-always-on`（≥0.1.6）：锚点消失且上游自己常驻，装载前就是 1，前后差测不出东西，断言退化为「恒为 1 + 插件那条 `[data-chat-flow-kind]` 双保险规则确实在注入的样式表里」，标签上写明 world。dispose 后的复原比对同样按 world 走（回到各自世界的基线，而不是恒回 0）。
+- **常驻断言按 world 走**，由 `data-time-hover-root` 锚点在不在场判定，不猜版本号。当前 harness 恒为 `upstream-always-on`：上游自带时间常驻，装载前就是 1，前后差测不出东西，断言是「恒为 1 + 插件那条 `[data-chat-node-key]` 双保险规则确实在注入的样式表里」，标签上写明 world。dispose 后的复原比对同样按 world 走（回到各自世界的基线，而不是恒回 0）。
+- **行集合与反查锚点是 `data-chat-node-key`，不是 `data-chat-flow-key`**。flow-key 在分段行上是 `JSON.stringify([nodeKey, part])`，分组壳（`ChatGroupSeat`）也带 flow-key 却聚合多个节点——拿它当锚点，「装饰完整性」会把分组壳算成缺标签的行、「不压正文」会拿零高度的隐藏行做几何。node-key 恒等于节点 `key`，反查自校验以它为准。
 - **重算时钟的 oracle 必须日期感知**。跨午夜再跑时会话是「昨天」的，标签带着 `M/D ` 前缀，只按 `HH:mm:ss` 重算的 oracle 永远差那截前缀——这个缺口在 0.1.6 适配轮实测撞上，oracle 因此复刻 `formatClockSeconds` 的分支规则（独立实现，不复用被测代码）。
 - **插件若已装进 profile，页面自带一份实例**，不先停掉就注入会得到两份互不知情的实例、每行两枚标签（实测 160 = 2×80）。清场因此调 `window.__dshOperationImprove__.timestamps.dispose()` 而不只是删 DOM：光删 DOM，原生那份的 `MutationObserver` 下一帧就把标签贴回来。
 - **dispose 之后要等一拍再量 `opacity`**。上游那枚时间标签带 opacity 过渡，摘掉样式表后同步读回来的恒是过渡前的 `1`。
@@ -134,15 +143,18 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:timestamps
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:dot
 ```
 
-`verify-active-dot-live.mjs` 和 `verify:selection`、`verify:settings` 一样**不注入 bundle、也不 apply 自造的 ctx**（七个脚本里只有这五个这样——再加 `verify:chat-history` 与本节的功能 10），验的是页面自带那份实例的实际效果。这一条被验的是一张纯样式表，而页面自带的那份实例已经把它插进 `<head>` 了。断言读的就是那张表的效果，走的是「`npm run build` 的产物 → profile 装载 → 页面自己的实例插入」这条真实路径。基线靠**摘掉那张表**取得（`disabled = true`，测完还原），同一个 DOM 上一摘一装，前后两组读数才可比。探针是脚本现搭的一个 `StateDot`，class 从页面真实样式表里反查，所以它与上游那条规则形成的是真实的特异性竞争。不去等一个真的活跃会话：那要在测试栈里真跑一轮模型调用，代价与风险都远大于它能多验到的东西（同一个组件、同一条 CSS 规则）。
+`verify-active-dot-live.mjs` 和 `verify:selection`、`verify:settings` 一样**不注入 bundle、也不 apply 自造的 ctx**（七个脚本里只有这五个这样——再加 `verify:chat-history` 与本节的功能 10），验的是页面自带那份实例的实际效果。这一条被验的是一张纯样式表，而页面自带的那份实例已经把它插进 `<head>` 了。断言读的就是那张表的效果，走的是「`npm run build` 的产物 → profile 装载 → 页面自己的实例插入」这条真实路径。基线靠**摘掉那张表**取得（`disabled = true`，测完还原），同一个 DOM 上一摘一装，前后两组读数才可比。探针是脚本现搭的同构 spinner（`svg[data-state='ongoing']` 里 `g` 包两条 `circle`），class 从页面真实样式表里反查——**spinner 根类必须与 track 同一个 CSS module**（页面里还有别的组件也叫 `.spinner`，拿错类的表现是探针渲染成别的几何，采样点落空）。不去等一个真的活跃会话：那要在测试栈里真跑一轮模型调用，代价与风险都远大于它能多验到的东西（同一个组件、同一条 CSS 规则）。
 
 **对比度读的是截图像素，但底色是脚本垫出来的名义值。** 前景那半必须由浏览器渲染——`fill × opacity` 的合成交给它，脚本自己算一遍就等于验证脚本重写了一次被测逻辑。底色那半则不能取自页面：装了壁纸主题的页面整个 UI 是半透明的，标记压着的是一张逐像素变化的照片（实测同一列上下极差 187），`--dsw-alias-bg-base` 本身就解析成 `rgba(108, 96, 97, .28)` 且不随主题变，从格子到 `html` 一层不透明背景都没有。那种页面上不存在「一个底色」，任何单点采样都是偶然值。所以探针自带一块名义底色（深色取页面的 `--dsw-static-neutral-bluish-950` = `rgb(21, 21, 23)`，浅色取白——`--dsw-static-white` 在壁纸主题下被改成了透明，不能用），`Page.captureScreenshot` 把格子连同这块底色一起截下来，两个颜色取自同一张图。量的是「这个配色在标准主题底色上有多少对比度」，与用户装了什么主题无关。
 
-`conn.send()` 回的是整条 CDP 消息，截图数据在 `res.result.data` 上；读成 `res.data` 得到 `undefined`，表现是页面侧 `img.decode()` 抛 `EncodingError`，看不出是取错了字段。
+`conn.send()` 回的是整条 CDP 消息，截图数据在 `res.result.data` 上；读成 `res.data` 得到 `undefined`，表现是页面侧 `img.decode()` 抛 `EncodingError`，看不出是取错了字段。出图像素与 CSS 坐标的换算系数按**整个 clip 的宽**（探针 2× 边长）算，按单边算会在 dpr≠1 时把所有采样点推出画布，读回 `rgb(0,0,0)` 的透明像素——「底色均匀」「环点与底色不同色」会一本满足地为假成立。
 
-20 条断言全过时的读数见[功能 5 · 实测读数](./feature-5-active-dot.md#实测读数)。
+- **亮弧不能用行内 `stroke-dasharray: none` 拉成整环**——dash 动画逐帧驱动这个属性，**动画值优先于行内样式**，拉不动。可做的是在 `isolate()` 里把 `g` 的旋转与 arc 的 dash 两条动画 `pause()` 并钉在 `currentTime = 0`，此时弧恒在「3 点钟起顺时针 72°」的扇区里，亮环采样点按该扇区中点算；底环是完整圆环，冻结与否都采得到。截图完 `restoreIsolation()` 里 `play()` 还原。
+- **两条环靠 `visibility` 互相摘除来隔离采样对象**（几何隔离，不碰 `color × opacity` 的合成，浏览器仍然自己算）。
 
-**0.1.6 起 C 组（切主题后截图）的翻主题要由守卫观察者撑住**：主题控制器在两帧内把 `data-ds-dark-theme` 写回 body，一次性翻转撑不过 `Page.captureScreenshot` 的往返。脚本的 `flip()` 在翻转后挂一个 MutationObserver，应用每写回一次就立刻翻回来（连同探针垫底色一起重刷），`unflip()` 摘除并还原；读数与两张截图都发生在守卫窗口内。「同一次 evaluate 里摘读还原」（[功能 10](#功能-10-的验证)第一条坑）只够读 computed style，撑不住截图。
+21 条断言全过时的读数见[功能 5 · 实测读数](./feature-5-active-dot.md#实测读数)。
+
+**C 组（切主题后截图）的翻主题要由守卫观察者撑住**：主题控制器在两帧内把 `data-ds-dark-theme` 写回 body，一次性翻转撑不过 `Page.captureScreenshot` 的往返。脚本的 `flip()` 在翻转后挂一个 MutationObserver，应用每写回一次就立刻翻回来（连同探针垫底色一起重刷），`unflip()` 摘除并还原；读数与两张截图都发生在守卫窗口内。「同一次 evaluate 里摘读还原」（[功能 10](#功能-10-的验证)第一条坑）只够读 computed style，撑不住截图。
 
 ## 功能 6 的验证
 
@@ -158,6 +170,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:selection
 - **contextmenu 探针挂在插件之后**（同为捕获阶段，后注册后触发），才读得到插件处理完之后的 `defaultPrevented`；探针自己随后也 `preventDefault()`，免得 headed Chrome 弹出原生菜单挡住后面的手势。
 - **图标断言按 `aria-label` 找页面上那枚真实的复制按钮**，不按 `d` 反查——按 `d` 找就成了拿常量去证明常量。`aria-label` 取自同一份 common 词典，所以它在两种语言下都定位得到。
 - **右键必须落在选区内**，Chrome 在选区之外右键会先折叠选区。composer（contenteditable）那条路径直接对 DOM Range 取 `getBoundingClientRect()`；合成 `<textarea>` 没有 Range 可用，用控件自己的计算字体在 canvas 上 `measureText(value.slice(0, mid))` 求中点横坐标，并且框必须是**单行高度**——80px 高的框里文字只占最上面一行，点垂直中心等于点在选区外（实测把选区折叠成了只剩「粘贴」）。草稿写入一律走真实手势（`Delete` 键 + `Input.insertText`）；field 段开始前要 Escape + blur + `removeAllRanges()` 收掉 composer 粘贴留下的选区。
+- **选区探针只挑真正可见的正文**。折叠组里的行有布局盒但没有渲染可见性：`getBoundingClientRect()` 非零、`range.getClientRects()` 也量得到，可 `window.getSelection().addRange()` 之后 `toString()` 恒为空——选区 API 取不到 invisible 文字，真实用户也选不到。判据用 `host.checkVisibility({visibility:true, opacity:false})`，光看矩形会整轮踩空（右键永远 count=0，且现象酷似功能坏了）。
 - **样式一致比的是 `getComputedStyle` 的完整枚举**（root 与 item 各 862 键），排除的是一张显式的几何键名单而不是正则：`font-size` 里也有 `size`，按模式排除会把字号一起放过。
 - 脚本最后一步 `Page.reload`：第 11 条断言把页面自带的实例 `dispose()` 掉了，不重载就等于给下一个人留一个功能缺失的页面。重载后再断言新实例确实回来了。
 
@@ -181,7 +194,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH node .scratch/think-scroll-check.mjs
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:settings
 ```
 
-十七条断言，全部打[测试栈](#测试栈)（`DSH_HOME=<repo>/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，驱动的是页面自带那份实例渲染出来的真面板：打开设置 → 展开这一行 → 用真实输入事件改值 → 让输入框失焦，然后同时读三处——patch 文件的字节、host 路由回的 `live`、面板自己的 DOM。覆盖：手写值即当前值且标 `manual`、DOM 里根本没有保存按钮、只失焦就写出区段且区段外逐字节不变、不重启 harness 就热重载生效、写 `snippetChars` 时 restate 住 bundle 层的 `path`/`openAt`、手写行连行尾注释原样保留、跨字段规则被前端拦下且文件一个字节没动、点「清除」撤掉被拒的草稿、卸载本插件后区段与效力都还在、点「清除」不做别的操作就把键摘掉、托管键清空后区段整体消失且文件逐字节回到基线、没人设过的字段只淡化控件且默认值只在 `placeholder` 里（设过之后恢复、清空之后重新淡化）、bundle 字段的徽标显示来源包名而手写与系统默认的文案不变、每张卡都渲染生效方式标记。
+二十条断言，全部打[测试栈](#测试栈)（`DSH_HOME=<repo>/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，驱动的是页面自带那份实例渲染出来的真面板：打开设置 → 展开这一行 → 用真实输入事件改值 → 让输入框失焦，然后同时读三处——patch 文件的字节、host 路由回的 `live`、面板自己的 DOM。覆盖：手写值即当前值且标 `manual`、DOM 里根本没有保存按钮、只失焦就写出区段且区段外逐字节不变、不重启 harness 就热重载生效、写 `snippetChars` 时 restate 住 bundle 层的 `path`/`openAt`、手写行连行尾注释原样保留、跨字段规则被前端拦下且文件一个字节没动（两条：`defaultLimit > maxLimit`，以及 `imageOffloadByteQuantum` 压过 `maxRequestFilesBytes` 那条 `atMost`）、余量**等于**保留时长也被拦（`lessThan` 的等号不在合法那一侧）、点「清除」撤掉被拒的草稿、卸载本插件后区段与效力都还在、点「清除」不做别的操作就把键摘掉、托管键清空后区段整体消失且文件逐字节回到基线、没人设过的字段只淡化控件且默认值只在 `placeholder` 里（设过之后恢复、清空之后重新淡化）、bundle 字段的徽标显示来源包名而手写与系统默认的文案不变、每张卡都渲染生效方式标记。
 
 - **本脚本会真的往 patch 文件里写字节**，所以它比别的 verify 脚本更依赖测试栈那道隔离。开头先做两道前置检查：基线里已经有托管区段就 `abort`（上一轮中途失败留下的脏基线，或[从真 home 同步进来的那一段](#测试栈)），基线里没有手写的 `session-query-sqlite` 块也 `abort`——「手写行共存」那组断言要靠它，副本里被删掉时应该说出来而不是静默少测一项；缺了就由脚本从仓库夹具补种一份。
 - **夹具里的手写块必须带全 `path`/`openAt`**。手写行与托管行一样按 id 整体替换 config：缺了 `path: ":memory:"`，检索就从内存库翻到真实文件——面板没坏，是块本身写得不完整，这正是「重述」要解决的事的另一面。
@@ -204,7 +217,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:chat-history
 
 十六条断言，全部打[测试栈](#测试栈)（`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，验的是页面自带实例：功能 9 不调用任何 harness 服务，没有需要打桩的破坏性动作。
 
-历史断言的 oracle 是脚本自己对导航列与消息流的独立读取（fiber 里的轮次条目 + loaded 锚点行的气泡全文）——被测会话的提问全部先于插件存在，不从插件侧取任何期望值。导航的期望值取自被测会话的真实提问，不写死。
+历史断言的 oracle 是脚本自己对导航列与消息流的独立读取（fiber 里的轮次条目 + loaded 锚点行的气泡全文）——被测会话的提问全部先于插件存在，不从插件侧取任何期望值。导航的期望值取自被测会话的真实提问，不写死。oracle 与插件按同一契约收尾：**气泡读不到全文且 `prompt` 预览也为空的轮次不计**（那种轮次没有可插入的内容，插件本来就丢弃；上游导航列自己会显示成「第 N 轮」占位）——过滤规则是 oracle 独立实现的数据层判据，不是抄被测代码。不这样收口，一条空提问的轮次就会把「条数一致」与「逐条文本一致」两条一起打红，而那与功能对错无关（0.1.7 轮实测如此）。
 
 覆盖：句柄与 snapshot、历史条数与导航列条目一致、历史文本与独立读取一致、↑ 从最新回翻、连续 ↑、按满停在最早一条、↓ 返程、↓ 越界清空并退出、有未提交内容且光标在文中不接管、多行且光标在非文档开头不接管、**单条提问的会话**（上游导航列对 <2 轮不渲染，脚本用「user 行气泡恰一条且导航列读空」找真实单轮会话）↑ 从消息流兜底调出提问且再按不越界、切会话后历史换成那个会话的、不写 localStorage、dispose 后不再接管、刷新后长出新实例。
 

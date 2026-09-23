@@ -1,13 +1,17 @@
 /**
  * 功能 4：会话页逐行开始时间戳。
  *
- * 数据源是 React fiber 而不是会话快照。每个节点行的外层由上游
- * `ui-conversation` 的 `ChatNodeSeat` 统一渲染成
- * `div[data-chat-flow-key][data-chat-flow-kind]`，而它内部第 7 层 fiber 的
- * `memoizedProps.node` 就是整个节点（`kind` / `key` / `data` / `location`）。这条
- * 路径不占 slot、不注册组件，与本插件其余三项功能同构。
+ * 数据源是 React fiber 而不是会话快照。每个节点行由上游的 `ChatNodeSeat` 统一渲染成
+ * `div[data-chat-flow-key][data-chat-node-key][data-chat-flow-kind]`。
+ * `data-chat-node-key` 恒等于节点的 `key`；`data-chat-flow-key` 在被分组切块的行上是
+ * `JSON.stringify([nodeKey, part])`（同一步骤的 reasoning / response 分段各自成行），
+ * 所以反查认 node-key。分组壳（`ChatGroupSeat`）只有 flow-key（也是 JSON 数组）没有
+ * node-key——它聚合多个节点，一个时间戳代表不了，跳过。
  *
- * **反查是自校验的**：只接受 `node.key` 与行上 `data-chat-flow-key` 逐字相等的那
+ * 第 7 层 fiber 的 `memoizedProps.node` 就是整个节点（`kind` / `key` / `data` /
+ * `location`）。这条路径不占 slot、不注册组件，与本插件其余功能同构。
+ *
+ * **反查是自校验的**：只接受 `node.key` 与行上 `data-chat-node-key` 逐字相等的那
  * 一个。上游哪天改了层级或复用了节点，结果是这一行没有标签，而不是安上邻行的时
  * 间——错的时间戳比没有时间戳更糟。
  *
@@ -30,10 +34,11 @@ const LABEL_CLASS = 'dsh-oi-ts'
 const ROW_ATTR = 'data-dsh-oi-ts'
 
 /**
- * 不由插件贴标签的三类。它们的时间由上游自己渲染（还带 `Ran for` / `TTFT` /
- * `tok/s` 读数），插件再贴一枚就是两个时间并排。
+ * 不由插件贴标签的四类。前三类的时间由上游自己渲染（还带 `Ran for` / `TTFT` /
+ * `tok/s` 读数），插件再贴一枚就是两个时间并排。`turn-process` 同理：折叠起来
+ * 的那行「已完成工作 · 用时 …」尾端本来就带着开始时刻。
  */
-const UPSTREAM_TIME_KINDS = new Set(['user', 'steering', 'turn-tail'])
+const UPSTREAM_TIME_KINDS = new Set(['user', 'steering', 'turn-tail', 'turn-process'])
 
 /** fiber 向下搜索的深度上限；实测目标恒在第 7 层，留一倍余量。 */
 const FIBER_MAX_DEPTH = 12
@@ -101,9 +106,11 @@ export function installTimestamps(options) {
   function rebuild() {
     // 读相位：只量不写。think 的去重判据要读矩形，而写标签会让下一次读强制回流，
     // 读写交替就是一行一次布局抖动；先把整页量完再统一写。
+    // 只认 `[data-chat-node-key]`：带 node-key 的行才对应一个可反查的节点；
+    // 分组壳（ChatGroupSeat）没有 node-key，聚合多个节点的时间也无法归属。
     /** @type {Array<{ row: HTMLElement, text: string|null, thinks: Array<{ think: HTMLElement, host: HTMLElement }> }>} */
     const plan = []
-    for (const row of document.querySelectorAll('[data-chat-flow-key]')) {
+    for (const row of document.querySelectorAll('[data-chat-node-key]')) {
       if (!(row instanceof HTMLElement)) continue
       const text = textFor(row, now())
       if (text === null) {
@@ -209,7 +216,8 @@ export function installTimestamps(options) {
         thinks += entry.thinks.size
         labels.push({
           kind: row.getAttribute('data-chat-flow-kind'),
-          key: row.getAttribute('data-chat-flow-key'),
+          key: row.getAttribute('data-chat-node-key'),
+          flowKey: row.getAttribute('data-chat-flow-key'),
           text: entry.label.textContent ?? '',
         })
       }
@@ -276,14 +284,14 @@ function fiberOf(el) {
  * 反查一行对应的 chat 节点。
  *
  * 从行元素的 fiber 向下走 child / sibling，取第一个 `memoizedProps.node` 且
- * **`key` 与行上 `data-chat-flow-key` 相等**的。key 这道校验不能省：没有它，上游
+ * **`key` 与行上 `data-chat-node-key` 相等**的。key 这道校验不能省：没有它，上游
  * 一旦改了层级，反查会安静地拿到邻近节点，整页时间戳全部错位而不报错。
  *
  * @param {HTMLElement} row
  * @returns {any|null} 反查不到返回 `null`，调用方当作「这一行没有时间」跳过
  */
 function chatNodeOf(row) {
-  const wanted = row.getAttribute('data-chat-flow-key')
+  const wanted = row.getAttribute('data-chat-node-key')
   if (wanted === null) return null
   const root = fiberOf(row)
   if (root === null || root === undefined) return null
@@ -367,7 +375,8 @@ function resolveTime(node) {
  *      都是 1px，读起来归属下一行——那正是这一版要消掉的毛病。宽度取 80px：过午夜
  *      再测长会话时标签带 `M/D ` 前缀，实测 67–74px，56px 的留白会把标签右端顶进
  *      通栏正文（`verify:timestamps` 的「不压正文」断言实测抓到）。跨年会话的
- *      `Y/M/D ` 前缀仍会超出 80px，是已知限制。
+ *      `Y/M/D ` 前缀仍会超出 80px，是已知限制。留白挂 `[data-chat-node-key]` 而不是
+ *      flow-key：分组壳内的分段行各自是节点行，两层都加就成了双倍留白。
  *   2. **行标签对齐的是本行第一行，不是最后一行**。这是「开始时间」，而一个两千 px
  *      高的回复行，把它的起始时刻放在两千 px 之下没有意义。
  *   3. **思考标签是 flex 项，不是绝对定位**。折叠头那条行里摘要是
@@ -376,18 +385,14 @@ function resolveTime(node) {
  *      对齐，否则这一行会被标签撑高。
  *   4. **上游三类的常驻必须带 `!important`**。上游那条 `@media (hover: hover)` 下的
  *      `opacity: 0` 与这里特异度相同，胜负只取决于两张样式表在 `head` 里的先后，
- *      而上游样式表由构建产物插入，顺序不由插件掌控。
- *   5. **常驻规则认两个锚点**。`[data-time-hover-root]` 是 0.1.5 及更早那个包住时间
- *      的容器；0.1.6 起它消失了，且上游自己把 `_timeStart`/`_timeEnd` 改成常驻——
- *      这条规则在那边是行为等价的双保险。锚点换成行容器 `[data-chat-flow-key]`，
- *      上游哪天把 hover 藏时间改回来时它仍然压得住。旧锚点不能删：0.1.5 上没有
- *      新锚点包着时间的结构就不生效。
+ *      而上游样式表由构建产物插入，顺序不由插件掌控。常驻规则的行锚点与留白同源
+ *      （`[data-chat-node-key]`）。
  *
  * 标签一律 `pointer-events: none` + `user-select: none`：它落在正文的选区范围内，
  * 可选中就意味着复制一段回复会连时间戳一起带走。
  */
 export const TIMESTAMP_CSS = `
-[data-chat-flow-key] { padding-right: var(--dsh-oi-ts-gutter, 80px); }
+[data-chat-node-key] { padding-right: var(--dsh-oi-ts-gutter, 80px); }
 [${ROW_ATTR}] { position: relative; }
 .${LABEL_CLASS} {
   color: var(--dsw-alias-label-caption, #8b8b8b);
@@ -409,8 +414,6 @@ export const TIMESTAMP_CSS = `
   padding-left: 8px;
   line-height: 24px;
 }
-[data-time-hover-root] [class*='_timeStart'],
-[data-time-hover-root] [class*='_timeEnd'],
-[data-chat-flow-key] [class*='_timeStart'],
-[data-chat-flow-key] [class*='_timeEnd'] { opacity: 1 !important; }
+[data-chat-node-key] [class*='_timeStart'],
+[data-chat-node-key] [class*='_timeEnd'] { opacity: 1 !important; }
 `

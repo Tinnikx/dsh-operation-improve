@@ -35,4 +35,4 @@ pasteInto(snapshot) -> Promise<void>      // 读剪贴板 → 恢复选区 → �
 
 ## 验证
 
-跑法、16 条断言与七处坑见[验证 · 功能 6](./verify.md#功能-6-的验证)（`npm run verify:selection`）。
+跑法、20 条断言与八处坑见[验证 · 功能 6](./verify.md#功能-6-的验证)（`npm run verify:selection`）。

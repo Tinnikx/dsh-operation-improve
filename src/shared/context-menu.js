@@ -192,18 +192,18 @@ export const MENU_CSS = `
   z-index: 2147483000;
   display: flex;
   flex-direction: column;
-  min-width: 218px;
+  min-width: 144px;
   max-width: 360px;
-  padding: 4px;
-  /* 圆角跟上游 Menu 默认档：0.1.6 实测 20px（0.1.5 那份是 12px，差 8px 的观感
-     不影响任何动作，兼容表以实测版本为准）。verify(1/2) 的 metrics 断言当场比对。 */
-  border-radius: 20px;
-  /* 0.1.6 上游默认档没有描边（borderTopWidth 实测 0px），浮层边界由 box-shadow 撑。 */
+  padding: 3px;
+  /* 圆角跟上游 Menu 默认档（实测 16px）。观感差不影响任何动作，
+     兼容口径以实测版本为准——verify(1/2) 的 metrics 断言当场比对。 */
+  border-radius: 16px;
+  /* 上游默认档没有描边（borderTopWidth 实测 0px），浮层边界由 box-shadow 撑。 */
   /* 两层：主题色画在 background-image 上，垫在它下面的 background-color 是同族的另一个
      surface。主题真把 --dsw-specific-menu 定成半透明时，合成结果仍比页面底色实。 */
   background-color: var(--dsw-alias-bg-layer-1, #2c2c2e);
   background-image: linear-gradient(var(--dsw-oi-surface), var(--dsw-oi-surface));
-  /* 0.1.6 上游默认档：border 归零，边界感来自 elevation-prominent 里那条
+  /* 上游默认档：border 归零，边界感来自 elevation-prominent 里那条
      0.5px 描边阴影——描边色由 elevation-stroke-color 指定，两条要一起抄。 */
   --dsw-elevation-stroke-color: var(--dsw-alias-border-l1, rgba(128,128,128,0.3));
   box-shadow: var(--dsw-elevation-prominent, 0 8px 24px rgba(0, 0, 0, 0.28));
@@ -214,16 +214,16 @@ export const MENU_CSS = `
 .${ROOT_CLASS}__item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  min-height: 40px;
-  padding: 8px 10px;
+  min-height: 34px;
+  padding: 6px 8px;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--dsw-alias-label-primary, inherit);
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 13px;
+  line-height: 20px;
   text-align: left;
   cursor: pointer;
 }
@@ -234,12 +234,13 @@ export const MENU_CSS = `
 .${ROOT_CLASS}__icon {
   display: inline-flex;
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   align-items: center;
   justify-content: center;
   color: var(--dsw-alias-label-tertiary, inherit);
 }
+.${ROOT_CLASS}__icon svg { width: 14px; height: 14px; }
 .${ROOT_CLASS}__item[data-danger] .${ROOT_CLASS}__icon { color: var(--dsw-alias-state-error-primary, #e5484d); }
 .${ROOT_CLASS}__label {
   flex: 1;
