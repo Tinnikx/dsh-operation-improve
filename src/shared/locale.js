@@ -10,8 +10,8 @@
  * 「复制」借 harness 的 **common** 词典（`copy`）。同理：消息气泡上那枚复制按钮用的
  * 就是这一条，自己再写一遍就是第二个说法。
  *
- * 批量项、批量确认与「粘贴」在上游没有对应词条（上游没有多选，common 里也没有
- * `paste`），这部分自注册一个本插件独占的 namespace。两份词典是 harness 发的全部
+ * 批量项、批量确认、「粘贴」与查找条那几处在上游没有对应词条（上游没有多选，common 里
+ * 也没有 `paste`），这部分自注册一个本插件独占的 namespace。两份词典是 harness 发的全部
  * locale（`LOCALE_IDS`），少一份不会报错，只会让那个语言下静默落回英文。
  *
  * 批量文案里的 `{n}` 恒 `>= 2`：批量分支的判据是 `targets.length > 1`，所以英文写死
@@ -32,6 +32,12 @@ const zh = {
   'batch.deleteWorkspaces': '删除 {n} 个工作区',
   'confirm.deleteWorkspaces': '删除 {n} 个工作区？其会话将显示在“{group}”下。',
   'selection.paste': '粘贴',
+  'find.placeholder': '在页面中查找',
+  'find.noResults': '无结果',
+  'find.count': '{index} / {total}',
+  'find.prev': '上一个匹配项',
+  'find.next': '下一个匹配项',
+  'find.close': '关闭查找',
   'settings.title': 'Harness 高级配置',
   'settings.subtitle': '检索分页、工具预算等只能手改配置文件的项目',
   'settings.loading': '正在读取当前配置…',
@@ -62,6 +68,12 @@ const en = {
   'batch.deleteWorkspaces': 'Delete {n} workspaces',
   'confirm.deleteWorkspaces': 'Delete {n} workspaces? Their sessions will appear under {group}.',
   'selection.paste': 'Paste',
+  'find.placeholder': 'Find in page',
+  'find.noResults': 'No results',
+  'find.count': '{index} of {total}',
+  'find.prev': 'Previous match',
+  'find.next': 'Next match',
+  'find.close': 'Close find bar',
   'settings.title': 'Harness advanced configuration',
   'settings.subtitle': 'Search paging, tool budgets — settings that otherwise need a hand-edited config file',
   'settings.loading': 'Reading the current configuration…',

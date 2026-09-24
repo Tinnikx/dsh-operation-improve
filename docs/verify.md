@@ -52,6 +52,8 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 
 其中 [patch-file.test.mjs](../tests/patch-file.test.mjs) 的六条断言全部对**字节**，输入是 [fixtures/web-cordis.patch.yml](../tests/fixtures/web-cordis.patch.yml)——真实 web profile 用户 patch 层的逐字副本（含中文行内注释、`file-reference-local`、`agent-teams`、手写的 `session-query-sqlite`）。覆盖：加区段后区段外逐字节不变、改一个字段只有区段内那一个数变、清掉最后一个字段后文件逐字节回到原文、区段清空后补裸 `[]`、落盘换掉整个 inode、有开标记没闭标记时拒绝改写。**判据不能是「解析出来一样」**：那样写的话，把别人行尾的注释吞掉的实现也照样通过。
 
+[find-matches.test.mjs](../tests/find-matches.test.mjs) 兜的是功能 11 的偏移与游标语义：不重叠计数、`ordinal` 按行归组、到上限截断并报 `truncated`、`Enter` 到端点环绕、重算后按 `(key, ordinal)` 重锚（该条没了取文档序其后第一条，后面全没有再往前）。其中**小写会改变长度的那条**（U+0130「İ」降成两个 code unit）是这条测试存在的头号理由：偏移一旦来自 lowercase 串就不再是原文下标，拿去 `Range.setStart` 直接抛 `IndexSizeError`，而这条在真实会话页上造不出来，只有脱离 DOM 才测得到。
+
 [catalog.test.mjs](../tests/catalog.test.mjs) 兜的是精选清单**抄下来之后自不自洽**：每条跨字段规则引用的键必须在同一张卡里、拿全部字段的清单默认值合成一份 config 不许触发任何规则、每个数值字段的默认值必须过自己的 `min`/`max`、`atMost` 与 `lessThan` 的等号语义不许互换、只改一个键时另一个键要按清单默认值参与规则。它证明不了「抄得对」（上游 schema 不在这台机器的依赖里，见[功能 8 已知限制](./feature-8-harness-config.md#已知限制)），但能挡住抄错方向、边界写反、默认值自己打自己这三类。
 
 ## 端到端
@@ -248,3 +250,22 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:row-states
 - **时间提亮在第三方主题下可能验不到「变亮」**：测试栈副本把 `label-secondary` 与 `label-tertiary` 都解析成白色，断言因此降级为「挂上了正确的 token」；标准主题下两色不同，这条仍然区分得开。
 - 0.1.6 的 `prefers-reduced-motion` 经 `Emulation.setEmulatedMedia` 可用（功能 4 那条「Chrome 只认它支持的那几个 `prefers-*`」的坑在这里是反例：这个特性受支持，`(hover: none)` 才是不受支持的那个）。
 - 不覆盖：真实运行中会话的整列观感（错峰相位在真实列表里的兄弟序号与探针容器不同，只验「互不相同」的语义）；壁纸主题下的实际对比度（同功能 5 的限制）。
+
+## 功能 11 的验证
+
+```
+PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:find
+```
+
+19 条断言，全部打[测试栈](#测试栈)。与功能 9 同构：**不注入 bundle**，验的是页面自带实例——本功能不调用任何 harness 服务，也没有需要打桩的破坏性动作。断言本体与判据在 [feature-11-find.md](./feature-11-find.md#实测读数)。
+
+命中数的 oracle 是脚本自己的一份 `TreeWalker`（[lib/find-page.mjs](../scripts/lib/find-page.mjs)），两种口径：`visible` 与插件逐条对齐（跳过项、可见性、折叠），`raw` 只保留「跳过本插件自己的东西」。两者之差就是「在 DOM 里但用户看不见」的那部分文本——折叠判据靠它才有可比性，不是拿被测代码自证。
+
+- **查询词不写死，从页面真实文本里挑**：取出现 ≥3 次、不含换行的 4 字窗口。挑会话同理不能按名字（副本随真实 home 漂移），逐行点开等「已渲染文本 ≥400 字且两次读数一致」，**运行中的会话直接跳过**——流式追加会让插件的命中数与 oracle 抢时序。
+- **换查询词要先整段选中输入框**（`el.select()` 再 CDP `Input.insertText`）。`insertText` 替换的是选区，不选就是往后追加：实测「改成前三字」变成了 `" age ag"`，那条断言报的是查询词不对，不是功能不对。
+- **`Ctrl` + `F` 是否被接管只能自己装探针**：`defaultPrevented` 在 CDP 侧读不到，脚本在 window 捕获上再挂一个 `keydown` 监听记录它。这条探针**必须后注册**——同相位下注册序决定调用序，后注册才跑在插件之后，读到的才是插件处理的结果。
+- **`Esc` 让位那条要真实右键**（`Input.dispatchMouseEvent`），并且分两次按：第一次期望 `{menu:false, bar:true}`，第二次期望 `{bar:false}`。只断言「条最终关了」会放过一个更糟的实现——菜单和条一起被一次按键收掉。
+- **折叠判据的 fixture 是「已完成工作」这类整组折叠的过程块**，不是收起的思考行。实测思考行全都长在 `[hidden]` 的组里（`content-visibility: hidden`，元素仍有 layout 盒），而组标题本身也在同一个隐藏容器里——点不到，「展开后命中出现」在这份页面上做不出来。因此第 15 条只验「不可见正文不计入命中」（`raw>0` 且 `visible===0` 且插件 0 条），重算改由**切会话**来验（第 16 条）：条开着时换会话，判据是每条 Range 的 `startContainer.isConnected` 为真——悬空 Range 的 `size` 照样对得上，只比数字会放过它。
+- **取词一律从不可见正文的中后段取**：折叠时组标题会显示一段摘要预览，取开头的词会同时命中摘要，`visible===0` 的前提就没了。
+- **token 定义在 `document.body` 上，不在 `:root`**：`getComputedStyle(document.documentElement)` 读回来全是空串，这条断言因此读 `document.body`。写错的 token 不报错，只会静默落到 `var()` 的兜底值上。
+- 不覆盖：shell 层 accelerator 抢键（CDP 的按键派发不经 `before-input-event`）、macOS 的 `cmd` + `F`、真桌面客户端的观感与流式时的抢滚动。

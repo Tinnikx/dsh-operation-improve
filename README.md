@@ -1,6 +1,6 @@
 # @Tinnikx/dsh-operation-improve
 
-DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加九项行为——功能 1、2、10 在侧边栏，功能 4、7、9 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页：
+DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加十项行为——功能 1、2、10 在侧边栏，功能 4、7、9 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页，功能 11 是整页的查找条：
 
 | | 一句话 | 设计与实测 |
 | --- | --- | --- |
@@ -13,11 +13,12 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | **功能 8** | 设置页「通用设置」里的「Harness 高级配置」一行。展开后是一个精选清单面板，把只有 cordis entry config、没有 settings 命名空间、且在当前部署上真有活消费者的那类配置（会话检索分页、Bash 工具预算、请求配额……）搬进界面，写回当前 profile 的 `cordis.patch.yml` 里一个托管区段；每张卡标注改完之后值什么时候被用上。改完离开输入框即自动保存，没有保存按钮。 | [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md) |
 | **功能 9** | 对话历史导航。输入框为空时按上下键翻阅本会话的历史提问——读右侧轮次导航列（不足 2 轮时上游没有导航列，退到消息流 user 行兜底），装上插件之前的提问也在，不做本地记录。 | [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md) |
 | **功能 10** | 侧边栏会话行的状态可视化。当前打开的会话加青色竖条与填充底（上游的选中与 hover 同色）；有任务在跑的行加一圈沿轮廓扫动的彗尾边框与静默底边。纯样式，不加监听。 | [docs/feature-10-row-states.md](docs/feature-10-row-states.md) |
+| **功能 11** | `Ctrl`/`cmd` + `F` 页内查找。弹出浏览器那样的查找条，在**当前页面已渲染的文本**里搜关键词：全部命中按词高亮，`Enter` / `Shift+Enter` 跳下一个 / 上一个（到端点环绕），`Esc` 关闭。高亮走 CSS Custom Highlight API，一条 DOM 都不改。 | [docs/feature-11-find.md](docs/feature-11-find.md) |
 
-功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)。
+功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)，功能 11 的在 [src/find/matches.js](src/find/matches.js)（判据与实测读数在 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 当前兼容版本
-- 0.1.7-rc.1（当前锚定版本，七套 live 验证全绿；功能 8 清单在这一轮收进第 14 张卡「插件安装与 pnpm 预算」）
+- 0.1.7-rc.1（当前锚定版本，八套 live 验证全绿；功能 8 清单在这一轮收进第 14 张卡「插件安装与 pnpm 预算」）
 
 本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。0.1.7-alpha.2 轮起，
 菜单样式档与图标（功能 2、6）与活跃标记覆盖（功能 5）跟随新版视觉，回到旧 harness 上不再保证逐项对齐。
@@ -60,6 +61,9 @@ src/
     nav-rail.js                 功能 9 的导航列读取层（fiber 条目 + 气泡全文）
     composer.js                 功能 9 的输入框原语（Lexical contenteditable 的读写与光标门控）
     index.js                    功能 9（会话跟踪、键盘导航、写入队列）
+  find/
+    matches.js                  功能 11 的纯函数层（命中偏移、命中列表、跳转游标、重锚）
+    index.js                    功能 11（查找条、命中域扫描、两层高亮、重算与跳转，带自己的 CSS）
   harness-config/              功能 8 的 host 半边
     catalog-entries.js         精选清单的收录口径与拼装点（三组条目按序拼成 `CATALOG`）
     catalog-tools.js           条目本体第一组：工具与执行预算
@@ -87,19 +91,22 @@ scripts/
   verify-selection-menu-live.mjs 同上，功能 6；走真实鼠标手势与真实剪贴板
   verify-settings-live.mjs     同上，功能 8；驱动真面板、读真 patch 文件字节、真卸载一次
   verify-row-states-live.mjs   同上，功能 10；现搭探针行与上游规则做真实的特异性竞争
-  lib/cdp.mjs                  七个验证脚本共用的 CDP 连接与断言框架
+  verify-find-live.mjs         同上，功能 11；真实按键与右键手势，命中数由独立 oracle 判
+  lib/cdp.mjs                  八个验证脚本共用的 CDP 连接与断言框架
   lib/ts-page.mjs              功能 4 断言的页面侧公用片段（在被测页面里求值的源码字符串）
   lib/ts-checks.mjs            功能 4 的十条断言本体
+  lib/find-page.mjs            功能 11 断言的页面侧片段（oracle 两口径、两个探针）
 tests/
   selection-store.test.mjs     选择状态的单元测试
   format-clock.test.mjs        时钟格式化的单元测试（跨天 / 跨年分支）
+  find-matches.test.mjs        功能 11 纯函数层的单元测试（大小写 / 不重叠 / 截断 / 环绕 / 重锚）
   patch-file.test.mjs          托管区段写入器的字节级测试
   fixtures/web-cordis.patch.yml 真实 web profile 用户 patch 层的逐字副本，上一条的输入
 docs/                          各功能的设计判据、实测读数与已知限制；验证见 verify.md
 lib/                           构建产物，client bundle 是 __ModuleLoader__ 注册体
 ```
 
-插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余八项一个 slot 都不占——第五、第七、第十三项连监听都没有，另外五项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
+插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余九项一个 slot 都不占——功能 5、7、10 连监听都没有，另外六项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
 
 - 功能 1、2 在侧边栏挂**捕获阶段**监听（要抢在 React 合成事件之前拦下 `ctrl` 点击与右键），菜单直接挂 `document.body`（`z-index: 2147483000`），高亮走 `[data-dsh-oi-selected]` 属性——不复用行自己的 `_selected` 类，那是「当前会话」的语义。
 - 功能 4 只读会话页的 DOM 与 React fiber，标签作为节点行自己的子节点插入，由观察 `document.body` 的 `MutationObserver` 驱动。
@@ -109,6 +116,7 @@ lib/                           构建产物，client bundle 是 __ModuleLoader__
 - 功能 10 同样一行 JS 都不跑：选中态读 `aria-selected`，运行中读行内 `svg[data-state='ongoing']`，竖条与彗尾走伪元素并给上游拖拽指示器让位（见 [docs/feature-10-row-states.md](docs/feature-10-row-states.md)）。
 - 功能 8 是唯一有 host 半边的功能：client 侧只往 `settings.general.item` 注册一个组件，读写都打 host 挂在 harness 自己那个回环 HTTP 上的一条路由（见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md)）。
 - 功能 9 的当前会话来自 `ctx.sessions` 的订阅（应用没有 URL 路由，地址栏恒为 `/`）；历史只读右侧轮次导航列的 fiber 条目，且只在开始导航时读一次（纯内存、不阻塞）；输入框是 Lexical contenteditable，写入走 `execCommand` + 合成按键的队列。不占 slot、不调 harness 服务、不写 localStorage。
+- 功能 11 的 `keydown` 挂在 **`window` 捕获**（要抢在共享右键菜单的 `Esc` 之前，同相位下注册序决定调用序），命中域是 `document.body` 的文本节点，高亮走 `CSS.highlights` 两个注册名 + 两条 `::highlight()`——**一条 DOM 都不改**，`verify:find` 数的是 `childList` mutation 计数为 0（见 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 构建
 
@@ -162,7 +170,7 @@ dsh plugin --profile web add <本目录>                                # 从本
 
 | 命令 | 验什么 |
 | --- | --- |
-| `npm test` | 单元测试：选择状态、时钟格式化、托管区段写入器（字节级） |
+| `npm test` | 单元测试：选择状态、时钟格式化、托管区段写入器（字节级）、页内查找的纯函数层 |
 | `npm run stack:up` / `stack:status` / `stack:down` / `stack:restart` | 隔离测试栈：`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334；`restart` 是跑完 `verify:settings` 之后的救活动作（见 [harness 热重挂缺陷](docs/harness-hmr-session-defect.md)） |
 | `npm run verify` | 功能 1、2 端到端 |
 | `npm run verify:timestamps` | 功能 4 |
@@ -171,8 +179,9 @@ dsh plugin --profile web add <本目录>                                # 从本
 | `npm run verify:settings` | 功能 8（会真的往 patch 文件写字节，收尾自动重启测试栈） |
 | `npm run verify:chat-history` | 功能 9（键盘导航、历史存储、dispose 回收） |
 | `npm run verify:row-states` | 功能 10（选中态强化与运行中扫光边框） |
+| `npm run verify:find` | 功能 11（页内查找：命中数、跳转、不动 DOM、`Esc` 让位、折叠与切会话重算） |
 
-七个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
+八个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
 
 **验证脚本一律打测试栈，不打日常在用的那个 harness**：端到端断言里有「批量删除工作区」，它会真的发出 click。
 
@@ -190,3 +199,4 @@ dsh plugin --profile web add <本目录>                                # 从本
 - [功能 7](docs/feature-7-think-scroll.md#已知限制)：类名片段、流式思考不自动跟到底（未实测）、上限只看视口（3 条）
 - [功能 8](docs/feature-8-harness-config.md#已知限制)：清单手抄、`default` 只作提示、区段必须在文件末尾、字段文案只有中文、要 `webServer`、不订阅文件变化、面板样式自写（7 条）
 - [功能 9](docs/feature-9-chat-history.md#已知限制)：长提问未挂载时退化为 50 字预览、合成按键依赖 Lexical 不看 isTrusted、选区同步 50ms 延迟、导航列或输入框缺失的会话页静默（4 条）
+- [功能 11](docs/feature-11-find.md#已知限制)：只搜已渲染文本、表单控件的值不进命中、序号不承诺连续、上限 1000、与上游「搜索轨迹」两套语义、折叠内容要先展开、依赖 Custom Highlight API、真桌面客户端未覆盖（8 条）

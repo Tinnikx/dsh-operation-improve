@@ -4,6 +4,7 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 014 | 功能 11：Ctrl+F 页内查找（查找条 + 词级高亮 + 上/下一个跳转） | 完成 | [014-find-in-page.md](docs/handoff/014-find-in-page.md) |
 | 013 | harness 0.1.7-rc.1 适配（含功能 8 第 14 卡与功能 4 口径订正） | 完成 | [013-harness-0.1.7-rc.1-adaptation.md](docs/handoff/013-harness-0.1.7-rc.1-adaptation.md) |
 | 012 | 右键菜单让位：摘掉单选与批量的归档动作 | 完成 | [012-context-menu-drop-archive.md](docs/handoff/012-context-menu-drop-archive.md) |
 | 011 | harness 0.1.7-alpha.2 检测与适配 + 向下兼容报告 | 完成 | [011-harness-0.1.7-alpha.2-adaptation.md](docs/handoff/011-harness-0.1.7-alpha.2-adaptation.md) |

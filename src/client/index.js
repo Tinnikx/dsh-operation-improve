@@ -1,10 +1,11 @@
 /**
  * `@Tinnikx/dsh-operation-improve` — client 入口。
  *
- * 六项 DOM 增强：侧边栏的 ctrl/cmd 多选（限同级）与右键菜单，页面任意选中文本上的
- * 右键菜单，会话页逐行的开始时间戳，以及对话历史导航（上下键翻阅历史问题）。前
- * 三项共享 `src/shared/` 下的选择状态 store、行 id 反查、通用菜单组件与词典；
- * 后三项成块，各自只读对话页的 DOM 与 fiber。
+ * DOM 增强：侧边栏的 ctrl/cmd 多选（限同级）与右键菜单，页面任意选中文本上的
+ * 右键菜单，会话页逐行的开始时间戳，对话历史导航（上下键翻阅历史问题），以及
+ * `Ctrl`/`cmd` + `F` 的页内查找条。多选、两处右键菜单与行 id 反查共享
+ * `src/shared/` 下的选择状态 store、通用菜单组件与词典；其余几项各自成块，只读
+ * 页面已有的 DOM 与 fiber。
  *
  * 不占任何 slot：功能只在既有 DOM 上加监听，视觉走自插的一张样式表；
  * 所有副作用都注册到 `ctx.effect`，插件卸载即回收。
@@ -13,7 +14,8 @@
  * `src/think-scroll/` 给展开后的思考正文一条高度上限与滚动条，`src/row-states/`
  * 强化侧边栏会话行的选中态并给运行中的行加扫光边框。三者都无监听也无
  * `dispose`——摘掉样式表就还原。ROW_STATES_CSS 必须排在 MENU_CSS 之前：多选蓝与
- * 选中青同特异度同 `!important`，叠加态归谁只由表内先后决定。
+ * 选中青同特异度同 `!important`，叠加态归谁只由表内先后决定。FIND_CSS 的约束在表内
+ * 自己那两行：两条 `::highlight()` 的先后就是叠放绘序，当前项要画在全部命中之上。
  *
  * 唯一占 slot 的是设置页「通用设置」里的「Harness 高级配置」一行（`src/client/settings/`，
  * 功能 8），它读写 host 半边挂的那条回环路由。
@@ -28,6 +30,7 @@ import { installTimestamps, TIMESTAMP_CSS } from '../timestamps/index.js'
 import { ACTIVE_DOT_CSS } from '../active-dot/index.js'
 import { THINK_SCROLL_CSS } from '../think-scroll/index.js'
 import { ROW_STATES_CSS } from '../row-states/index.js'
+import { installFind, FIND_CSS } from '../find/index.js'
 import { installHarnessConfigRow, SETTINGS_CSS } from './settings/index.jsx'
 import { installChatHistory } from '../chat-history/index.js'
 
@@ -41,7 +44,7 @@ export const selection = createSelectionStore()
  * 装上五项功能。
  *
  * 副作用全部注册到 `ctx.effect`，同时挂一份到 `window.__dshOperationImprove__`：
- * `{ instanceId, selection, timestamps, chatHistory, multiSelect, contextMenu,
+ * `{ instanceId, selection, timestamps, chatHistory, find, multiSelect, contextMenu,
  * selectionMenu, harnessConfig, locale, stylesheet, dispose }`。
  * 每个功能项都带幂等 `dispose()`，句柄自己的 `dispose()` 停掉整份实例并摘掉句柄。
  *
@@ -55,7 +58,7 @@ export function apply(ctx) {
 
   const style = document.createElement('style')
   style.dataset.plugin = name
-  style.textContent = [ROW_STATES_CSS, MENU_CSS, TIMESTAMP_CSS, ACTIVE_DOT_CSS, THINK_SCROLL_CSS, SETTINGS_CSS].join('\n')
+  style.textContent = [ROW_STATES_CSS, MENU_CSS, TIMESTAMP_CSS, ACTIVE_DOT_CSS, THINK_SCROLL_CSS, SETTINGS_CSS, FIND_CSS].join('\n')
   document.head.append(style)
   ctx.effect(() => () => style.remove(), '@Tinnikx/dsh-operation-improve: stylesheet')
 
@@ -99,10 +102,13 @@ export function apply(ctx) {
   const chatHistory = installChatHistory()
   ctx.effect(() => chatHistory.dispose, '@Tinnikx/dsh-operation-improve: chat history')
 
+  const find = installFind({ tOwn: locale.tOwn, owner: instanceId })
+  ctx.effect(() => find.dispose, '@Tinnikx/dsh-operation-improve: find in page')
+
   // 调试与验证入口：让外部（CDP / 控制台）观察选择集、也**停得掉这一份实例**，
   // 无需读私有闭包。
   //
-  // 六项功能全部列在这里、并给整份实例一条 `dispose()`，是验证脚本的硬需求：插件
+  // 每一项功能都列在这里、并给整份实例一条 `dispose()`，是验证脚本的硬需求：插件
   // 装进 profile 之后页面每次加载都自带一份实例，脚本再注入一份就是两份互不知情
   // 地抢同一批 DOM——**右键会弹出两个菜单，而 `querySelector` 拿到的是先注册的那
   // 个（native）**，脚本以为点的是自己的 spy，实际点在真服务上。只暴露一部分功能
@@ -116,6 +122,7 @@ export function apply(ctx) {
     timestamps,
     chatHistory,
     harnessConfig,
+    find,
     multiSelect: { dispose: disposeMultiSelect },
     contextMenu: { dispose: disposeContextMenu },
     selectionMenu: { dispose: disposeSelectionMenu },
@@ -126,6 +133,7 @@ export function apply(ctx) {
     locale: { t: locale.t, tCommon: locale.tCommon, tOwn: locale.tOwn, dispose: locale.dispose },
     stylesheet: { dispose: () => style.remove() },
     dispose: () => {
+      find.dispose()
       chatHistory.dispose()
       harnessConfig.dispose()
       timestamps.dispose()

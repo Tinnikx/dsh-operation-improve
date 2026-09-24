@@ -66,6 +66,7 @@ OWN_NS        // '@Tinnikx/dsh-operation-improve'
   selection,                        // 选择状态 store 本体
   timestamps,                       // { dispose, snapshot, refresh }
   chatHistory,                      // { dispose, snapshot }
+  find,                             // { dispose, open, close, snapshot }
   multiSelect:   { dispose() },
   contextMenu:   { dispose() },     // 摘监听器，并关掉可能开着的菜单
   selectionMenu: { dispose() },     // 同上，功能 6

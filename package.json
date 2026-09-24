@@ -23,7 +23,8 @@
     "verify:selection": "node scripts/verify-selection-menu-live.mjs",
     "verify:settings": "node scripts/verify-settings-live.mjs",
     "verify:chat-history": "node scripts/verify-chat-history-live.mjs",
-    "verify:row-states": "node scripts/verify-row-states-live.mjs"
+    "verify:row-states": "node scripts/verify-row-states-live.mjs",
+    "verify:find": "node scripts/verify-find-live.mjs"
   },
   "license": "MIT",
   "dsh": {
