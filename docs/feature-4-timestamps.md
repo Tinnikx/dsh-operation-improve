@@ -1,6 +1,6 @@
 # 功能 4：逐行开始时间戳
 
-会话页逐行开始时间戳。每条回复、工具调用、思考等节点行的右上角显示它的**开始**时刻（`HH:mm:ss`），user / steering / turn-tail / turn-process 四类改成常驻显示上游自己的时间标签。
+会话页逐行开始时间戳。每条回复、工具调用、思考等节点行的右上角显示它的**开始**时刻（`HH:mm:ss`），user / steering / turn-tail 三类改成常驻显示上游自己的时间标签；`turn-process` 那行不贴，理由见[上游三类改常驻](#上游三类改常驻)。
 
 `src/timestamps/index.js`
 
@@ -52,14 +52,14 @@ Think 折叠头那条 flex 行末尾插一枚标签，时间用**所属 assistan
 
 **落在所属 step 第一行水平带上的 Think 不单独贴标签**——行标签就在同一条水平带的右端，两枚一字不差的时间并排出现只是噪声。实测一个 73 行的真实会话里 7 个 Think 行全部落在这一带上，`snapshot().thinks` 因此是 0。判据要读矩形，所以 `rebuild()` 拆成读、写两相：读相位把整页量完再统一写，读写交替就是一行一次布局抖动。
 
-## 上游四类改常驻
+## 上游三类改常驻
 
 ```css
 [data-chat-node-key] [class*="_timeStart"],
 [data-chat-node-key] [class*="_timeEnd"] { opacity: 1 !important; }
 ```
 
-user / steering / turn-tail 三类上游自己就在渲染时间（还带 `Ran for` / `TTFT` / `tok/s` 读数），turn-process 折叠行尾端也带着开始时刻——插件对这四类不另贴，只保证时间**常驻**。上游的隐藏通道还在：`@media (hover: hover)` 下 `[data-actions-reveal=hover]` 的 actions 整条 `opacity: 0`（相邻两条同 kind 的行也会触发同款隐藏），当前实测页面走不到这条，插件规则是双保险——上游哪天把 hover 藏时间改回来，它仍然压得住。与上游规则特异度相同，胜负只取决于两张样式表在 `head` 里的先后，而上游样式表由构建产物插入，顺序不由插件掌控，所以必须带 `!important`。锚点与留白同源（node-key）：时间标签恒挂在节点行的 actions 里。
+user / steering / turn-tail 三类上游自己就在渲染时间（还带 `Ran for` / `TTFT` / `tok/s` 读数）——插件对这三类不另贴，只保证时间**常驻**。`turn-process` 也不贴，但理由不同：上游那一行渲染的是**时长**（「已完成工作 · 用时 3分58秒」），没有开始时刻，不贴是因为它是对整轮过程的折叠汇总，不对应单个节点动作。上游的隐藏通道还在：`@media (hover: hover)` 下 `[data-actions-reveal=hover]` 的 actions 整条 `opacity: 0`（相邻两条同 kind 的行也会触发同款隐藏），当前实测页面走不到这条，插件规则是双保险——上游哪天把 hover 藏时间改回来，它仍然压得住。与上游规则特异度相同，胜负只取决于两张样式表在 `head` 里的先后，而上游样式表由构建产物插入，顺序不由插件掌控，所以必须带 `!important`。锚点与留白同源（node-key）：时间标签恒挂在节点行的 actions 里。
 
 ## 自激环两道闸
 
