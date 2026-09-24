@@ -594,6 +594,37 @@ check('8c 清空之后那一行的输入框重新淡化、重新空着，标签�
     ? true
     : '清空之后没退回灰显'))
 
+// —— 11：新收的「插件安装与 pnpm 预算」卡 ——
+// 这张卡的五个键上游只在每次操作时现读（`this.idleTimeoutMs = config.idleTimeoutMs`
+// 在 apply 里，用在每一趟安装），清单因此按 'immediate' 标注。挑 idleTimeoutMs 实测
+// 写入与清除这一对：11a 证明面板写下的值真的进 loader（不是写了个没人读的键），
+// 11b 证明清除是摘掉这个键——host 路由的 `live` 是原始合成 config，不含上游 zod 的
+// 默认值，所以清掉之后它是 `undefined`，与 2a 对 snippetChars 的口径同一。
+const TEST_PM_IDLE = 45000
+await type('plugin-manager.idleTimeoutMs', String(TEST_PM_IDLE))
+await commit('plugin-manager.idleTimeoutMs')
+const livePm = await waitLive('plugin-manager', (c) => c?.idleTimeoutMs === TEST_PM_IDLE)
+const pmText = readPatch()
+
+check('11a 写 plugin-manager.idleTimeoutMs：区段点名这张卡，loader 读得到新值', {
+  ms: livePm.ms,
+  idleTimeoutMs: livePm.live?.idleTimeoutMs,
+  header: pmText.split('\n').find((l) => l.startsWith('# managed: ')) ?? null,
+}, (v) => (v.idleTimeoutMs === TEST_PM_IDLE && String(v.header).includes('plugin-manager')
+  ? true
+  : '面板写下的值没进 loader，或区段头没点名这张卡'))
+
+await clickClear('plugin-manager.idleTimeoutMs')
+const livePmCleared = await waitLive('plugin-manager', (c) => c?.idleTimeoutMs === undefined)
+
+check('11b 清除后这个键从 loader 里摘掉，文件回到基线', {
+  idleTimeoutMs: livePmCleared.live?.idleTimeoutMs ?? null,
+  sectionGone: !splitManaged(readPatch()).found,
+  bytesIdentical: readPatch() === baseline,
+}, (v) => (v.idleTimeoutMs === null && v.bytesIdentical
+  ? true
+  : '清除没把键摘掉，或没回到基线'))
+
 conn.ws.close()
 // 本脚本会真写托管区段里的 session-query-sqlite：harness 0.1.6-alpha.2 的热重挂缺陷
 // 会连带杀死会话服务且不可逆（docs/harness-hmr-session-defect.md），不重启 harness

@@ -1,7 +1,7 @@
 /**
  * 精选清单的拼装点与收录口径，校验与查询在 [catalog.js](catalog.js)，
- * 条目本体分两组：[catalog-tools.js](catalog-tools.js) 与 [catalog-model.js](catalog-model.js)，
- * 两组共用的数值边界在 [catalog-limits.js](catalog-limits.js)。
+ * 条目本体分三组：[catalog-tools.js](catalog-tools.js)、[catalog-model.js](catalog-model.js)
+ * 与 [catalog-operations.js](catalog-operations.js)，三组共用的数值边界在 [catalog-limits.js](catalog-limits.js)。
  *
  * 收录口径四条，缺一条就不收：
  *
@@ -45,7 +45,8 @@
  */
 
 import { MODEL_ENTRIES } from './catalog-model.js'
+import { OPERATION_ENTRIES } from './catalog-operations.js'
 import { TOOL_ENTRIES } from './catalog-tools.js'
 
 /** @type {readonly object[]} */
-export const CATALOG = [...TOOL_ENTRIES, ...MODEL_ENTRIES]
+export const CATALOG = [...TOOL_ENTRIES, ...MODEL_ENTRIES, ...OPERATION_ENTRIES]
