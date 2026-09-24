@@ -54,8 +54,6 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 
 [find-matches.test.mjs](../tests/find-matches.test.mjs) 兜的是功能 11 的偏移与游标语义：不重叠计数、`ordinal` 按行归组、到上限截断并报 `truncated`、`Enter` 到端点环绕、重算后按 `(key, ordinal)` 重锚（该条没了取文档序其后第一条，后面全没有再往前）。其中**小写会改变长度的那条**（U+0130「İ」降成两个 code unit）是这条测试存在的头号理由：偏移一旦来自 lowercase 串就不再是原文下标，拿去 `Range.setStart` 直接抛 `IndexSizeError`，而这条在真实会话页上造不出来，只有脱离 DOM 才测得到。
 
-[catalog.test.mjs](../tests/catalog.test.mjs) 兜的是精选清单**抄下来之后自不自洽**：每条跨字段规则引用的键必须在同一张卡里、拿全部字段的清单默认值合成一份 config 不许触发任何规则、每个数值字段的默认值必须过自己的 `min`/`max`、`atMost` 与 `lessThan` 的等号语义不许互换、只改一个键时另一个键要按清单默认值参与规则。它证明不了「抄得对」（上游 schema 不在这台机器的依赖里，见[功能 8 已知限制](./feature-8-harness-config.md#已知限制)），但能挡住抄错方向、边界写反、默认值自己打自己这三类。
-
 ## 端到端
 
 端到端验证走 CDP 注入——对着**运行中的真实页面**，把构建出的 `lib/client.js` 注入进去、用假 `__ModuleLoader__` 截下 registration 拿到 exports，再 apply 一个最小 ctx（`effect` 收集 disposer，`workspaces` 与 `sessions` 是「记账 Proxy + 少量真实形状的桩」——`workspaces.list.getSnapshot()` 的置顶与归档两个集合**都从页面真 UI 现推**（行上挂着「取消置顶」/「取消归档」按钮即该行处于该状态，id 走 fiber 反查），这样单选菜单的两处翻转项与上游逐项比对才不用写死状态；归档行默认被侧栏视图筛掉，推导结果随之为空，归档那一半由下一条断言自己开「显示已归档」再关回去；`slots` 用不记账的桩——功能 8 起 `apply()` 在 boot 期就会调一次 `ctx.slots.inject`，那一下不能混进「选择期间 0 次服务调用」的计数；产物顶层 require 的 `react` / `react/jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives` 走一张平台桩表，被测路径本该不触达它们，**桩被调到即抛**，「意外进入 React 渲染路径」因此是显式失败而不是静默崩溃）。走注入而不是直接点页面自带的那份，是因为断言里包含批量删除工作区：只有服务是 spy，断言才既打在真实 DOM 上、又不会真的动用户的会话与工作区。

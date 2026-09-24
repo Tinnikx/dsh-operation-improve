@@ -199,4 +199,5 @@ dsh plugin --profile web add <本目录>                                # 从本
 - [功能 7](docs/feature-7-think-scroll.md#已知限制)：类名片段、流式思考不自动跟到底（未实测）、上限只看视口（3 条）
 - [功能 8](docs/feature-8-harness-config.md#已知限制)：清单手抄、`default` 只作提示、区段必须在文件末尾、字段文案只有中文、要 `webServer`、不订阅文件变化、面板样式自写（7 条）
 - [功能 9](docs/feature-9-chat-history.md#已知限制)：长提问未挂载时退化为 50 字预览、合成按键依赖 Lexical 不看 isTrusted、选区同步 50ms 延迟、导航列或输入框缺失的会话页静默（4 条）
+- [功能 10](docs/feature-10-row-states.md#已知限制)：边框只跟 `statuses[0]` 的 ongoing、彗尾是重绘不是合成层、`aria-selected` / `data-state` 的结构假设、浅色两个透明度只验到 computed（4 条）
 - [功能 11](docs/feature-11-find.md#已知限制)：只搜已渲染文本、表单控件的值不进命中、序号不承诺连续、上限 1000、与上游「搜索轨迹」两套语义、折叠内容要先展开、依赖 Custom Highlight API、真桌面客户端未覆盖（8 条）
