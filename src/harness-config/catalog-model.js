@@ -7,6 +7,7 @@ import {
   FILE_REFRESH_MARGIN_SECONDS,
   IMAGE_OFFLOAD_BYTE_QUANTUM,
   INLINE_IMAGE_OFFLOAD_BYTE_QUANTUM,
+  MAX_CONFIG_INTEGER,
   MAX_TIMER_DELAY_MS,
   SQLITE_MAX_PAGE_LIMIT,
 } from './catalog-limits.js'
@@ -22,7 +23,9 @@ export const MODEL_ENTRIES = [
     notice: '本卡只作用于 DeepSeek 官方接入（deepseek-official）里的模型——手动加的模型若挂在这条连接的 models 列表里也归本卡兜底；但若是按 pi-ai 路由手配的 DeepSeek 兼容端点，本卡管不到，未声明窗口时走 pi-ai 自己的 256K 兜底（见顶部黄条）。',
     fields: [
       {
-        key: 'maxTokens', type: 'integer', default: 256000, min: 1, effect: 'nextRequest',
+        // 上游是 `z.number().int().min(1).max(2^53-1)`——那个 maximum 是真硬抛，写一个
+        // `2^53` 的整数能过 `Number.isInteger` 与 `min`，却把 llm-deepseek 的加载顶掉。
+        key: 'maxTokens', type: 'integer', default: 256000, min: 1, max: MAX_CONFIG_INTEGER, effect: 'nextRequest',
         label: '单次输出 token 上限', help: '模型目录没为某个模型单独声明时用它。',
       },
       {
@@ -30,7 +33,9 @@ export const MODEL_ENTRIES = [
         label: '默认上下文窗口（token）', help: '模型目录没声明窗口时用它，上下文占用统计也按它算。已开的会话沿用打开时的窗口。只兜 DeepSeek 官方接入里的模型；pi-ai 路由上手配的模型不读本卡（见顶部黄条）。',
       },
       {
-        key: 'streamIdleTimeoutMs', type: 'integer', default: 300000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'nextRequest',
+        // 上游是 `z.number().positive().max(2^31-1)`：接受正小数，`max` 是硬抛的界。
+        // `min: 1` 比上游的 `positive`（>0）更严，是面板防呆——亚毫秒空闲超时没有意义。
+        key: 'streamIdleTimeoutMs', type: 'number', default: 300000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'nextRequest',
         label: '流空闲超时（毫秒）', help: '两个数据块之间超过这么久就判定断流。',
       },
       {
@@ -59,7 +64,7 @@ export const MODEL_ENTRIES = [
         label: '图片转存字节步长（内联）', help: '内联那一路的同类步长。不能超过内联图片上限。',
       },
       {
-        key: 'filesApiTimeoutMs', type: 'integer', default: 60000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'nextRequest',
+        key: 'filesApiTimeoutMs', type: 'number', default: 60000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'nextRequest',
         label: '文件接口超时（毫秒）', help: '',
       },
       {
@@ -125,11 +130,11 @@ export const MODEL_ENTRIES = [
         label: '单次读取窗口上限', help: '',
       },
       {
-        key: 'persistedReadConcurrency', type: 'integer', default: 4, min: 1, effect: 'restart',
+        key: 'persistedReadConcurrency', type: 'integer', default: 4, min: 1, max: MAX_CONFIG_INTEGER, effect: 'restart',
         label: '落盘会话读取并发', help: '并行读历史会话的并发数；重启 harness 后按新值执行。',
       },
       {
-        key: 'preparedSessionCacheSize', type: 'integer', default: 5, min: 1, effect: 'restart',
+        key: 'preparedSessionCacheSize', type: 'integer', default: 5, min: 1, max: MAX_CONFIG_INTEGER, effect: 'restart',
         label: '预编译会话缓存条数', help: '重启 harness 后生效。',
       },
     ],

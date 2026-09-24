@@ -38,8 +38,15 @@
  * 上游改了默认，最坏是提示过时，行为不受影响。少数键（`session-title` 那几个、`spill-policy`
  * 的 `maxInlineTokens`）上游 schema 本来就没有默认值，此处填的是 bundle 层给的值。
  *
- * `min` / `max` / `crossRules` 镜像上游会**硬抛**的边界。镜像不是装饰——patch 是热的，
- * 写下去那一刻整棵树就起不来了。
+ * `min` / `max` 分两类：上游 schema 真带 `minimum` / `maximum` 的那些是**镜像上游会硬抛的
+ * 边界**（patch 是热的，写下去那一刻整棵树就起不来）；上游无界而这里加了的（各 `min: 1`、
+ * `graceMs` 的 `max`）是**面板防呆**，挡退化值，不是上游强制。`type` 与上游逐字一致（上游
+ * `z.number()` 的键这里就是 `'number'`，不擅自收窄成 `'integer'`）。`crossRules` 镜像上游的
+ * 跨字段硬抛。
+ *
+ * 这套「信息格式与上游一致」由 [scripts/check-catalog-schema.mjs](../../scripts/check-catalog-schema.mjs)
+ * 逐键比对上游 `--dump-config-schema` 把关（`npm run check:catalog`），**每换一次锚定版本必跑**；
+ * 判据与口径见 [docs/feature-8-harness-config.md](../../docs/feature-8-harness-config.md)。
  *
  * 数组顺序就是面板里卡片的顺序。
  */

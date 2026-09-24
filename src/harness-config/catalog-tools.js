@@ -15,9 +15,11 @@ export const TOOL_ENTRIES = [
     description: '工具结果按估算 token 给保留预算，超出的部分外溢为可恢复引用。',
     fields: [
       {
-        // 上游只拒绝负数与非整数，0 合法但必然出事：预算 0 意味着整条结果都外溢，
-        // 而外溢提示本身放不下时上游在**该工具结果落地那一刻**抛错，不是加载时。
-        key: 'maxInlineTokens', type: 'integer', default: 12500, min: 1, effect: 'immediate',
+        // 上游 schema 这一枚是 `z.number()`，无 `minimum`——连负数与小数都不拒（`npm run
+        // check:catalog` 对得上 dump）。这里的 `type: 'number'` 就是上游的类型；`min: 1`
+        // 是**面板防呆**而非上游硬抛：预算 0 意味着整条结果都外溢，而外溢提示本身放不下
+        // 时上游在该工具结果落地那一刻抛错（不是加载时），故面板把非正数挡在写盘之前。
+        key: 'maxInlineTokens', type: 'number', default: 12500, min: 1, effect: 'immediate',
         label: '内联上限（估算 token）', help: '超过就把超出部分外溢到存储，会话里留提示与可恢复引用；预算太小连那条提示都放不下，会在结果超预算时抛错。不写这个键＝不启用外溢。',
       },
     ],
@@ -35,7 +37,7 @@ export const TOOL_ENTRIES = [
         label: '提醒次数点', help: '递增的正整数，逗号分隔；在第几次重复时提醒。',
       },
       {
-        key: 'argumentsPreviewChars', type: 'integer', default: 500, min: 1, effect: 'session',
+        key: 'argumentsPreviewChars', type: 'number', default: 500, min: 1, effect: 'session',
         label: '参数预览长度（字符）', help: '',
       },
     ],
@@ -51,23 +53,23 @@ export const TOOL_ENTRIES = [
     description: '模型跑 shell 命令时的超时、输出与外溢预算。',
     fields: [
       {
-        key: 'timeoutMs', type: 'integer', default: 120000, min: 1, effect: 'immediate',
+        key: 'timeoutMs', type: 'number', default: 120000, min: 1, effect: 'immediate',
         label: '默认超时（毫秒）', help: '模型没指定超时时用它，且会被最大超时截断。',
       },
       {
-        key: 'maxTimeoutMs', type: 'integer', default: 600000, min: 1, effect: 'immediate',
+        key: 'maxTimeoutMs', type: 'number', default: 600000, min: 1, effect: 'immediate',
         label: '最大超时（毫秒）', help: '模型自己指定的超时也不会超过这个值。',
       },
       {
-        key: 'maxOutputBytes', type: 'integer', default: 64000, min: 1, effect: 'immediate',
+        key: 'maxOutputBytes', type: 'number', default: 64000, min: 1, effect: 'immediate',
         label: '输出上限（字节）', help: '超出的部分落到外溢文件里。',
       },
       {
-        key: 'maxSpillBytes', type: 'integer', default: 67108864, min: 1, effect: 'immediate',
+        key: 'maxSpillBytes', type: 'number', default: 67108864, min: 1, effect: 'immediate',
         label: '外溢文件上限（字节）', help: '',
       },
       {
-        key: 'graceMs', type: 'integer', default: 3000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'immediate',
+        key: 'graceMs', type: 'number', default: 3000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'immediate',
         label: 'SIGTERM 宽限（毫秒）', help: '超时后先发 SIGTERM，等这么久再 SIGKILL。已在跑的命令仍按旧值计时。',
       },
     ],
@@ -81,23 +83,23 @@ export const TOOL_ENTRIES = [
     description: '与 Bash 工具同构的一套预算，只在装了 PowerShell 的机器上用得上。',
     fields: [
       {
-        key: 'timeoutMs', type: 'integer', default: 120000, min: 1, effect: 'immediate',
+        key: 'timeoutMs', type: 'number', default: 120000, min: 1, effect: 'immediate',
         label: '默认超时（毫秒）', help: '模型没指定超时时用它，且会被最大超时截断。',
       },
       {
-        key: 'maxTimeoutMs', type: 'integer', default: 600000, min: 1, effect: 'immediate',
+        key: 'maxTimeoutMs', type: 'number', default: 600000, min: 1, effect: 'immediate',
         label: '最大超时（毫秒）', help: '模型自己指定的超时也不会超过这个值。',
       },
       {
-        key: 'maxOutputBytes', type: 'integer', default: 64000, min: 1, effect: 'immediate',
+        key: 'maxOutputBytes', type: 'number', default: 64000, min: 1, effect: 'immediate',
         label: '输出上限（字节）', help: '超出的部分落到外溢文件里。',
       },
       {
-        key: 'maxSpillBytes', type: 'integer', default: 67108864, min: 1, effect: 'immediate',
+        key: 'maxSpillBytes', type: 'number', default: 67108864, min: 1, effect: 'immediate',
         label: '外溢文件上限（字节）', help: '',
       },
       {
-        key: 'graceMs', type: 'integer', default: 3000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'immediate',
+        key: 'graceMs', type: 'number', default: 3000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'immediate',
         label: 'SIGTERM 宽限（毫秒）', help: '超时后先发 SIGTERM，等这么久再 SIGKILL。已在跑的命令仍按旧值计时。',
       },
     ],
@@ -111,7 +113,7 @@ export const TOOL_ENTRIES = [
     description: '技能目录扫描结果的缓存条数。',
     fields: [
       {
-        key: 'collectCacheMaxEntries', type: 'integer', default: 128, min: 1, effect: 'immediate',
+        key: 'collectCacheMaxEntries', type: 'number', default: 128, min: 1, effect: 'immediate',
         label: '扫描缓存条数上限', help: '',
       },
     ],

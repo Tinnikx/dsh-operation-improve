@@ -13,6 +13,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test tests/*.test.mjs",
+    "check:catalog": "node scripts/check-catalog-schema.mjs",
     "stack:up": "node scripts/test-stack.mjs up",
     "stack:down": "node scripts/test-stack.mjs down",
     "stack:restart": "node scripts/test-stack.mjs restart",

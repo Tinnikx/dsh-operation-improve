@@ -26,11 +26,11 @@
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { splitManaged } from '../src/harness-config/patch-file.js'
+import { resolveHarnessBin } from './lib/harness-bin.mjs'
 
 /** 日常在用的那个 harness 的端口——测试栈绝不能起在它上面。 */
 const RESERVED_PORT = 3080
@@ -281,28 +281,13 @@ function rescopeManifest() {
   writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
-/** harness 的入口。 */
+/** harness 的入口（解析顺序见 [lib/harness-bin.mjs](lib/harness-bin.mjs)，与 `check:catalog` 同源）。 */
 function harnessBin() {
-  // `DSH_TEST_BIN` 强制指定入口：向下兼容回跑要用旧版构建，不能让候选顺序说了算。
-  const forced = process.env.DSH_TEST_BIN
-  if (forced !== undefined && forced !== '') {
-    if (!existsSync(forced)) die(`DSH_TEST_BIN 指向的文件不存在：${forced}`)
-    return forced
+  try {
+    return resolveHarnessBin({ repo: REPO, realHome: REAL_HOME })
+  } catch (error) {
+    die(error.message)
   }
-  // 候选按「离用户实际跑的那份最近」排序：desktop dist 打包的 CLI 就是产品随
-  // 版本发布带出去的那份，且不受真 home 的 node_modules 指向 dev 工作区旧构建
-  // 的影响；解析不到（没装产品）才回落到真 home / 外层工作区的 npm 依赖。
-  const desktopBin = join(REPO, '../dsh-desktop/dist/desktop/dsh-linux-x64/resources/app/node_modules/@deepseek-ai/dsh/lib/bin.js')
-  if (existsSync(desktopBin)) return desktopBin
-  const candidates = [join(REAL_HOME, 'profiles/web/noop.js'), join(REPO, '../apps/shell/src/noop.js')]
-  for (const from of candidates) {
-    try {
-      return createRequire(from).resolve('@deepseek-ai/dsh/lib/bin.js')
-    } catch {
-      // MODULE_NOT_FOUND：这个起点够不着 CLI，试下一个。别的错误 require.resolve 不抛。
-    }
-  }
-  die(`解析不到 @deepseek-ai/dsh/lib/bin.js（desktop dist 不在，且试过 ${candidates.join('、')}）`)
 }
 
 /** 起 harness，等到首页答 200 且带插件名册。 */

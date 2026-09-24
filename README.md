@@ -18,9 +18,9 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)，功能 11 的在 [src/find/matches.js](src/find/matches.js)（判据与实测读数在 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 当前兼容版本
-- 0.1.7-rc.1（当前锚定版本，八套 live 验证全绿；功能 8 清单在这一轮收进第 14 张卡「插件安装与 pnpm 预算」）
+- 0.1.7-rc.1（当前锚定版本，八套 live 验证全绿；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，收进第 14 张卡「插件安装与 pnpm 预算」）
 
-本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。0.1.7-alpha.2 轮起，
+本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。**每换一次锚定版本，除八套 live 行为验证外必跑 `npm run check:catalog`**——功能 8 的清单是手抄的，这条把它声明的字段 `type`/`default`/边界逐键对上游 `--dump-config-schema`，新版本改了任一键就会红，逼你对上游重抄（判据见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检)）。0.1.7-alpha.2 轮起，
 菜单样式档与图标（功能 2、6）与活跃标记覆盖（功能 5）跟随新版视觉，回到旧 harness 上不再保证逐项对齐。
 历史验证记录：0.1.7-alpha.2、0.1.6-alpha.2、0.1.2-rc.1、0.1.1-rc.2（各轮细节见 `harness-v*-adaptation-report.md`）。
 
@@ -92,7 +92,9 @@ scripts/
   verify-settings-live.mjs     同上，功能 8；驱动真面板、读真 patch 文件字节、真卸载一次
   verify-row-states-live.mjs   同上，功能 10；现搭探针行与上游规则做真实的特异性竞争
   verify-find-live.mjs         同上，功能 11；真实按键与右键手势，命中数由独立 oracle 判
+  check-catalog-schema.mjs     功能 8 清单 ↔ 上游 config schema 逐键比对（升级必跑，见 docs/feature-8）
   lib/cdp.mjs                  八个验证脚本共用的 CDP 连接与断言框架
+  lib/harness-bin.mjs          权威 harness CLI 入口的解析（test-stack 与 check:catalog 共用）
   lib/ts-page.mjs              功能 4 断言的页面侧公用片段（在被测页面里求值的源码字符串）
   lib/ts-checks.mjs            功能 4 的十条断言本体
   lib/find-page.mjs            功能 11 断言的页面侧片段（oracle 两口径、两个探针）
@@ -180,8 +182,11 @@ dsh plugin --profile web add <本目录>                                # 从本
 | `npm run verify:chat-history` | 功能 9（键盘导航、历史存储、dispose 回收） |
 | `npm run verify:row-states` | 功能 10（选中态强化与运行中扫光边框） |
 | `npm run verify:find` | 功能 11（页内查找：命中数、跳转、不动 DOM、`Esc` 让位、折叠与切会话重算） |
+| `npm run check:catalog` | 功能 8 清单的**信息格式**逐键对上游 config schema（`type`/`default`/边界），漂移非零退出——**每次升级 harness 必跑**，见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检) |
 
 八个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
+
+`check:catalog` 不要求栈起着，但要用**产品自带的 node**（同前缀）跑一次 `--dump-config-schema`，比对对象是测试栈 home 那份（缺时回落真 home，只读）；它打的是权威 harness 的 schema，不是页面，所以与 `verify:*` 的 CDP 路径无关。
 
 **验证脚本一律打测试栈，不打日常在用的那个 harness**：端到端断言里有「批量删除工作区」，它会真的发出 click。
 
