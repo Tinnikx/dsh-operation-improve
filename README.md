@@ -17,11 +17,11 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)。
 
 ## 当前兼容版本
-- 0.1.7-alpha.2（当前锚定版本，七套 live 验证全绿）
+- 0.1.7-rc.1（当前锚定版本，七套 live 验证全绿；功能 8 清单在这一轮收进第 14 张卡「插件安装与 pnpm 预算」）
 
 本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。0.1.7-alpha.2 轮起，
 菜单样式档与图标（功能 2、6）与活跃标记覆盖（功能 5）跟随新版视觉，回到旧 harness 上不再保证逐项对齐。
-历史验证记录：0.1.6-alpha.2、0.1.2-rc.1、0.1.1-rc.2（各轮细节见 `harness-v*-adaptation-report.md`）。
+历史验证记录：0.1.7-alpha.2、0.1.6-alpha.2、0.1.2-rc.1、0.1.1-rc.2（各轮细节见 `harness-v*-adaptation-report.md`）。
 
 ## 截图
 
@@ -61,11 +61,12 @@ src/
     composer.js                 功能 9 的输入框原语（Lexical contenteditable 的读写与光标门控）
     index.js                    功能 9（会话跟踪、键盘导航、写入队列）
   harness-config/              功能 8 的 host 半边
-    catalog-entries.js         精选清单的收录口径与拼装点（两组条目按序拼成 `CATALOG`）
-    catalog-tools.js           条目本体上半：工具与执行预算
-    catalog-model.js           条目本体下半：模型请求与会话产物
-    catalog-limits.js          两组共用的数值边界，镜像上游硬抛的判据
-    catalog.js                 清单的查询与校验：单字段收窄 + 跨字段规则（两半共用）
+    catalog-entries.js         精选清单的收录口径与拼装点（三组条目按序拼成 `CATALOG`）
+    catalog-tools.js           条目本体第一组：工具与执行预算
+    catalog-model.js           条目本体第二组：模型请求与会话产物
+    catalog-operations.js      条目本体第三组：插件安装与 pnpm 预算
+    catalog-limits.js          三组共用的数值边界，镜像上游硬抛的判据
+    catalog.js                 清单的查询与校验：单字段收窄 + 跨字段规则（三组共用）
     patch-file.js              托管区段的切分/渲染、YAML 标量序列化、原子落盘
     profile.js                 读 profile 三层状态（bundle / 区段外 / 生效），并把改动写回
     route.js                   `GET`/`POST` 处理与注册

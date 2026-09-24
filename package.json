@@ -1,6 +1,6 @@
 {
   "name": "@Tinnikx/dsh-operation-improve",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DeepSeek Harness 侧边栏操作增强：ctrl/cmd 多选、右键菜单。",
   "private": true,
   "type": "module",
