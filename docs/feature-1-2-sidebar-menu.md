@@ -47,7 +47,7 @@
 
 **`paste` 那一枚是自绘的，没有上游原件，因此不受上面那条哨兵保护**。上游图标集里没有剪贴板/粘贴矢量，只能照着这一批的规格画：16×16 viewBox、`fill="none"` + `stroke-width="1"` + `stroke="currentColor"`，圆角外框加夹子。它唯一的判据是人眼——把它和 copy / edit / trash / unarchive 并排渲染在 16px 与 128px 两档上看描边粗细与圆角是否同族。相应地，`copy` 那一枚有真实哨兵：`verify:selection` 会去页面上找那枚真实的消息复制按钮（按 `aria-label` 定位，不按 `d` 反查——按 `d` 找就成了拿常量去证明常量），逐字比 `viewBox` 与全部 `path[d]`。
 
-尺寸抄的是 `Menu.module.css` 的**默认档**而不是 `.compactList`：卡片 `padding: 3px`、圆角 16px、`min-width: 144px`，行 `min-height: 34px`、字号 13/20、图标 14px——侧边栏那两处「...」菜单渲染 `Menu` 时既没传 `compact` 也没传 `dense`，抄紧凑档就和被对齐的目标差一整个尺寸级。同样由 `verify` 对两个菜单读 `getComputedStyle` 逐键比对，危险项（工作区删除）的配色单独比一份——它走的是另一套 token，和普通项一起比的话把 `danger` 规则整条写错也照样过。
+尺寸抄的是 `Menu.module.css` 的**默认档**而不是 `.compactList`：卡片 `padding: 4px`、圆角 16px（`--dsw-radius-lg`）、`min-width: 144px`，行 `min-height: 34px`、圆角 12px（`--dsw-radius-md`）、字号 13/20、图标 14px 且色走 `--dsw-alias-menu-icon`——侧边栏那两处「...」菜单渲染 `Menu` 时既没传 `compact` 也没传 `dense`，抄紧凑档就和被对齐的目标差一整个尺寸级。同样由 `verify` 对两个菜单读 `getComputedStyle` 逐键比对，危险项（工作区删除）的配色单独比一份——它走的是另一套 token，和普通项一起比的话把 `danger` 规则整条写错也照样过。
 
 ## 已知限制
 

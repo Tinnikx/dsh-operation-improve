@@ -194,8 +194,8 @@ export const MENU_CSS = `
   flex-direction: column;
   min-width: 144px;
   max-width: 360px;
-  padding: 3px;
-  /* 圆角跟上游 Menu 默认档（实测 16px）。观感差不影响任何动作，
+  padding: 4px;
+  /* 圆角跟上游 Menu 默认档（实测 16px，上游由 --dsw-radius-lg 给）。观感差不影响任何动作，
      兼容口径以实测版本为准——verify(1/2) 的 metrics 断言当场比对。 */
   border-radius: 16px;
   /* 上游默认档没有描边（borderTopWidth 实测 0px），浮层边界由 box-shadow 撑。 */
@@ -219,7 +219,7 @@ export const MENU_CSS = `
   min-height: 34px;
   padding: 6px 8px;
   border: none;
-  border-radius: 8px;
+  border-radius: 12px;
   background: transparent;
   color: var(--dsw-alias-label-primary, inherit);
   font-size: 13px;
@@ -238,7 +238,7 @@ export const MENU_CSS = `
   height: 14px;
   align-items: center;
   justify-content: center;
-  color: var(--dsw-alias-label-tertiary, inherit);
+  color: var(--dsw-alias-menu-icon, inherit);
 }
 .${ROOT_CLASS}__icon svg { width: 14px; height: 14px; }
 .${ROOT_CLASS}__item[data-danger] .${ROOT_CLASS}__icon { color: var(--dsw-alias-state-error-primary, #e5484d); }

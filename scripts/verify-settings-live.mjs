@@ -625,6 +625,64 @@ check('11b 清除后这个键从 loader 里摘掉，文件回到基线', {
   ? true
   : '清除没把键摘掉，或没回到基线'))
 
+// —— 12：harness 0.1.7-rc.2 新收的两张卡 ——
+// 卡「DeepSeek 模型接入（账号登录）」(`llm-deepseek-account`) 是上游把接入拆成两条 entry
+// 之后的账号那一路：它与 API key 那一路（`llm-deepseek`）的 13 枚数值键同一个 Config 对象、
+// 逐字同约束。这张卡要验的不是「能不能写」，而是**写下去落在哪一条**——两卡各写各的 entry，
+// 孪生卡要是误写到 api-key 那条，面板上两行会一起动，而用户的账号请求读不到任何东西。
+const TEST_ACCOUNT_MAX_TOKENS = 128000
+await type('llm-deepseek-account.maxTokens', String(TEST_ACCOUNT_MAX_TOKENS))
+await commit('llm-deepseek-account.maxTokens')
+const liveAccount = await waitLive('llm-deepseek-account', (c) => c?.maxTokens === TEST_ACCOUNT_MAX_TOKENS)
+const stateAfterAccount = (await state()).state
+
+check('12a 写 llm-deepseek-account.maxTokens：只落账号那条 entry，区段点名它', {
+  ms: liveAccount.ms,
+  account: stateAfterAccount['llm-deepseek-account']?.live?.maxTokens ?? null,
+  apiKey: stateAfterAccount['llm-deepseek']?.live?.maxTokens ?? null,
+  header: readPatch().split('\n').find((l) => l.startsWith('# managed: ')) ?? null,
+}, (v) => (v.account === TEST_ACCOUNT_MAX_TOKENS && v.apiKey !== TEST_ACCOUNT_MAX_TOKENS
+    && String(v.header).includes('llm-deepseek-account')
+  ? true
+  : `账号那路读到 ${v.account}，api-key 那路读到 ${v.apiKey}（两者不该同时是被写的 ${TEST_ACCOUNT_MAX_TOKENS}），区段头 ${JSON.stringify(v.header)}`))
+
+await clickClear('llm-deepseek-account.maxTokens')
+const liveAccountCleared = await waitLive('llm-deepseek-account', (c) => c?.maxTokens === undefined)
+
+check('12b 清除账号卡的这个键：loader 里摘掉，文件回到基线', {
+  maxTokens: liveAccountCleared.live?.maxTokens ?? null,
+  bytesIdentical: readPatch() === baseline,
+}, (v) => (v.maxTokens === null && v.bytesIdentical
+  ? true
+  : '清除没把键摘掉，或没回到基线'))
+
+// 卡「会话日志上传预算」(`session-log-deepseek`)：`maxBytes` 在 apply 里解构一次
+// （`const { maxBytes } = config`），用在每一趟会话日志上传，清单按 'immediate' 标注。
+// 这条 entry 在 rc.1 上根本没有 configRef，所以 12c 同时是「新 entry 的 id 在 host 路由里
+// 解析得到、写得进去、清得干净」的第一次取证。
+const TEST_LOG_MAX_BYTES = 262144
+await type('session-log-deepseek.maxBytes', String(TEST_LOG_MAX_BYTES))
+await commit('session-log-deepseek.maxBytes')
+const liveLog = await waitLive('session-log-deepseek', (c) => c?.maxBytes === TEST_LOG_MAX_BYTES)
+
+check('12c 写 session-log-deepseek.maxBytes：loader 读得到，区段点名这张卡', {
+  ms: liveLog.ms,
+  maxBytes: liveLog.live?.maxBytes ?? null,
+  header: readPatch().split('\n').find((l) => l.startsWith('# managed: ')) ?? null,
+}, (v) => (v.maxBytes === TEST_LOG_MAX_BYTES && String(v.header).includes('session-log-deepseek')
+  ? true
+  : `loader 读到 ${v.maxBytes}，区段头 ${JSON.stringify(v.header)}`))
+
+await clickClear('session-log-deepseek.maxBytes')
+const liveLogCleared = await waitLive('session-log-deepseek', (c) => c?.maxBytes === undefined)
+
+check('12d 清除这条键：loader 里摘掉，文件回到基线', {
+  maxBytes: liveLogCleared.live?.maxBytes ?? null,
+  bytesIdentical: readPatch() === baseline,
+}, (v) => (v.maxBytes === null && v.bytesIdentical
+  ? true
+  : '清除没把键摘掉，或没回到基线'))
+
 conn.ws.close()
 // 本脚本会真写托管区段里的 session-query-sqlite：harness 0.1.6-alpha.2 的热重挂缺陷
 // 会连带杀死会话服务且不可逆（docs/harness-hmr-session-defect.md），不重启 harness

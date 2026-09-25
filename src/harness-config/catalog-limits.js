@@ -19,7 +19,7 @@
  */
 export const MAX_TIMER_DELAY_MS = 2147483647
 
-/** `llm-deepseek` 的 `imageOffloadByteQuantum` 默认值（Files 引用那一路的转存步长）。 */
+/** DeepSeek 两条接入 entry（`llm-deepseek` 与 `llm-deepseek-account`）的 `imageOffloadByteQuantum` 默认值（Files 引用那一路的转存步长）——上游两卡是同一个 `Config` 对象，所以这一个数被两张卡共用。 */
 export const IMAGE_OFFLOAD_BYTE_QUANTUM = 67108864
 
 /** 同上，`inlineImageOffloadByteQuantum` 的默认值（内联那一路）。 */

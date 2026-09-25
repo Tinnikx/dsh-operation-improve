@@ -102,6 +102,96 @@ export const MODEL_ENTRIES = [
     ],
   },
   {
+    // 上游把 DeepSeek 接入拆成两条 entry：`llm-deepseek` 现在由 `dsh-llm-deepseek-api-key`
+    // 提供（API key 那一路），`llm-deepseek-account` 是账号登录那一路。两条在
+    // `dsh-base/cordis.patch.yml` 里同时挂着且都没有 config 块，两半边的 `Config` 都是
+    // 从 `@deepseek-ai/dsh-llm-deepseek` 原样 import 的同一个对象，13 枚数值键的
+    // `type`/`minimum`/`maximum`/`default` 逐字相同，读值也走同一个
+    // `resolveAdapterOptions(plainOptions(config))`——所以取值时机与本卡的上一张一致。
+    // 只写上一张卡的话，用账号登录的 profile 写下去落不到它正在用的那条 entry 上。
+    id: 'llm-deepseek-account',
+    title: 'DeepSeek 模型接入（账号登录）',
+    plugin: '@deepseek-ai/dsh-llm-deepseek-account',
+    effect: 'nextRequest',
+    description: '账号登录那一路请求侧的 token、超时与文件配额，字段含义与上一张「DeepSeek 模型接入」一致。',
+    notice: '本卡只作用于 `llm-deepseek-account` 这条 entry（DeepSeek 账号登录）。用 API key 接入时读的是上一张卡的 `llm-deepseek`，两卡各写各的，互不覆盖。',
+    fields: [
+      {
+        key: 'maxTokens', type: 'integer', default: 256000, min: 1, max: MAX_CONFIG_INTEGER, effect: 'nextRequest',
+        label: '单次输出 token 上限', help: '模型目录没为某个模型单独声明时用它。',
+      },
+      {
+        key: 'defaultContextWindow', type: 'integer', default: 1000000, min: 1, effect: 'session',
+        label: '默认上下文窗口（token）', help: '模型目录没声明窗口时用它，上下文占用统计也按它算。已开的会话沿用打开时的窗口。',
+      },
+      {
+        key: 'streamIdleTimeoutMs', type: 'number', default: 300000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'nextRequest',
+        label: '流空闲超时（毫秒）', help: '两个数据块之间超过这么久就判定断流。',
+      },
+      {
+        key: 'maxImagesPerRequest', type: 'integer', default: 600, min: 1, effect: 'nextRequest',
+        label: '单次请求图片数上限', help: '',
+      },
+      {
+        key: 'imageOffloadCountQuantum', type: 'integer', default: 20, min: 1, effect: 'nextRequest',
+        label: '图片转存张数步长', help: '图片张数超过上限时，要转存的量按这个步长向上取整（从最旧的几张起）。不能超过单次请求图片数上限。',
+      },
+      {
+        key: 'maxRequestFilesBytes', type: 'integer', default: 134217728, min: 1, effect: 'nextRequest',
+        label: '单次请求文件总上限（字节）',
+        help: '以 Files 引用形式带上去的图片总量。与下面的转存步长之间的约束由上游硬抛，面板按合成值拦。',
+      },
+      {
+        key: 'imageOffloadByteQuantum', type: 'integer', default: IMAGE_OFFLOAD_BYTE_QUANTUM, min: 1, effect: 'nextRequest',
+        label: '图片转存字节步长（Files 引用）', help: '请求图片总字节超过文件总上限时，要腾出的量按这个步长向上取整。不能超过单次请求文件总上限。',
+      },
+      {
+        key: 'maxInlineRequestImageBytes', type: 'integer', default: 20971520, min: 1, effect: 'nextRequest',
+        label: '内联图片上限（字节）', help: '直接内联（base64）带上去的图片总量。',
+      },
+      {
+        key: 'inlineImageOffloadByteQuantum', type: 'integer', default: INLINE_IMAGE_OFFLOAD_BYTE_QUANTUM, min: 1, effect: 'nextRequest',
+        label: '图片转存字节步长（内联）', help: '内联那一路的同类步长。不能超过内联图片上限。',
+      },
+      {
+        key: 'filesApiTimeoutMs', type: 'number', default: 60000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'nextRequest',
+        label: '文件接口超时（毫秒）', help: '',
+      },
+      {
+        key: 'fileExpiresAfterSeconds', type: 'integer', default: 604800,
+        min: 3600, max: 2592000, effect: 'session',
+        label: '上传文件保留时长（秒）',
+        help: '已上传的文件按各自上传时点套旧有效期；要全部用新时长，得重新上传。',
+      },
+      {
+        key: 'fileRefreshMarginSeconds', type: 'integer', default: FILE_REFRESH_MARGIN_SECONDS, min: 0, effect: 'nextRequest',
+        label: '文件续期余量（秒）', help: '距过期不足这么久就算快到期，用图片时会先重新上传。必须严格小于保留时长。',
+      },
+      {
+        key: 'fileQuotaCleanupBatch', type: 'integer', default: 100, min: 1, max: 1000, effect: 'nextRequest',
+        label: '配额清理批量（个）', help: '上传撞上 Files 配额时，一次删掉最旧的多少个本 harness 的文件再重试。',
+      },
+    ],
+    crossRules: [
+      {
+        kind: 'atMost', field: 'imageOffloadByteQuantum', than: 'maxRequestFilesBytes',
+        message: '图片转存字节步长（Files 引用）不能超过单次请求文件总上限，否则 llm-deepseek-account 加载失败。',
+      },
+      {
+        kind: 'atMost', field: 'inlineImageOffloadByteQuantum', than: 'maxInlineRequestImageBytes',
+        message: '图片转存字节步长（内联）不能超过内联图片上限，否则 llm-deepseek-account 加载失败。',
+      },
+      {
+        kind: 'atMost', field: 'imageOffloadCountQuantum', than: 'maxImagesPerRequest',
+        message: '图片转存张数步长不能超过单次请求图片数上限，否则 llm-deepseek-account 加载失败。',
+      },
+      {
+        kind: 'lessThan', field: 'fileRefreshMarginSeconds', than: 'fileExpiresAfterSeconds',
+        message: '文件续期余量必须严格小于上传文件保留时长，否则 llm-deepseek-account 加载失败。',
+      },
+    ],
+  },
+  {
     id: 'session-query-sqlite',
     title: '会话检索',
     plugin: '@deepseek-ai/dsh-session-query-sqlite',
@@ -307,6 +397,20 @@ export const MODEL_ENTRIES = [
       {
         key: 'includeRuntimeContext', type: 'boolean', default: true, effect: 'session',
         label: '包含运行时上下文段', help: '工作目录、平台、日期这些。',
+      },
+    ],
+    crossRules: [],
+  },
+  {
+    id: 'session-log-deepseek',
+    title: '会话日志上传预算',
+    plugin: '@deepseek-ai/dsh-session-log-deepseek',
+    effect: 'immediate',
+    description: '把会话轨迹当 `dsh_session_log` 字段附到 DeepSeek 请求上时的字节预算。日志没附上去、停在中间某条事件，都在这一卡调。',
+    fields: [
+      {
+        key: 'maxBytes', type: 'integer', default: 8388608, min: 1, effect: 'immediate',
+        label: '会话日志字节上限', help: '按事件累加，装不下的那一条起就不再附。上游拒绝小于 1 的值。调太小会让长会话的日志只剩开头一段——日志侧排查时先看这里。',
       },
     ],
     crossRules: [],

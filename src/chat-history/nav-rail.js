@@ -6,8 +6,9 @@
  * - `prompt` 是上游截断到 50 字的预览（长提问带省略号）；
  * - `anchor` 为 `{ kind: 'loaded', key }` 时，`key` 是消息流里那一行的
  *   `data-chat-flow-key`，行内气泡（`[class*="_bubble"]`）持有全文；
- * - `anchor.kind` 为其他值（如 `unloaded`）时该行不在 DOM——消息流会分页/虚拟化，
- *   全文取不到就退化为预览。
+ * - `anchor.kind` 为其他值（如 `unloaded`）时该行不在 DOM——消息流按 `hasMore` /
+ *   `loadOlder` **分页**（不是虚拟列表：`useVirtualizer` 虚拟的是这条导航列自己），
+ *   还没翻到的历史轮次全文取不到，就退化成预览。
  *
  * 读取全部是内存操作（fiber props + DOM 文本），只在开始导航时才读——无网络、无轮询。
  *

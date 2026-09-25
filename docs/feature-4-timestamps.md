@@ -61,6 +61,12 @@ Think 折叠头那条 flex 行末尾插一枚标签，时间用**所属 assistan
 
 user / steering / turn-tail 三类上游自己就在渲染时间（还带 `Ran for` / `TTFT` / `tok/s` 读数）——插件对这三类不另贴，只保证时间**常驻**。`turn-process` 也不贴，但理由不同：上游那一行渲染的是**时长**（「已完成工作 · 用时 3分58秒」），没有开始时刻，不贴是因为它是对整轮过程的折叠汇总，不对应单个节点动作。上游的隐藏通道还在：`@media (hover: hover)` 下 `[data-actions-reveal=hover]` 的 actions 整条 `opacity: 0`（相邻两条同 kind 的行也会触发同款隐藏），当前实测页面走不到这条，插件规则是双保险——上游哪天把 hover 藏时间改回来，它仍然压得住。与上游规则特异度相同，胜负只取决于两张样式表在 `head` 里的先后，而上游样式表由构建产物插入，顺序不由插件掌控，所以必须带 `!important`。锚点与留白同源（node-key）：时间标签恒挂在节点行的 actions 里。
 
+## harness 0.1.7-rc.2 起多出一类会出标签的行
+
+上游的可见性判据 `isVisibleChatNode` 在这一版把「带 `tool-addition` / `tool-removal` 块的 `context` 节点」从过滤名单里放了出来（判据里那句 `node.kind !== "context"` 换成 `node.kind !== "context" || node.data.content.some(block => block.type === "tool-addition" || block.type === "tool-removal")`）。这类行以前根本不出现在消息流里，现在会出，且不在 `UPSTREAM_TIME_KINDS` 的排除集内——插件按取值链第 6 条 `data?.time` 给它贴开始时刻，`contextMessage()` 构造的 `data` 里带着 `time: event.time`，取不到空值。
+
+**现场未验证**：测试栈这份 home 上的会话都不产生工具增删的 `context` 节点，实测页面上 `data-chat-flow-kind="context"` 的行计数为 0，所以只有一条静态判据，没有这类行贴完标签的读数。
+
 ## 自激环两道闸
 
 观察者盯的是 `document.body`（切会话会整片换掉滚动容器，收窄观察目标会连观察者一起变成游离节点），而标签也插在它盯的范围内，所以它一定看得到自己造成的记录，得用两道闸挡回去：
