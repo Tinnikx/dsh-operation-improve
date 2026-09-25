@@ -265,21 +265,30 @@ check('三行错峰相位 0 / -0.8s / -1.6s', delays,
 // 摘属性、读数、还原必须在**同一次 evaluate** 里做完：应用的主题控制器会在下一帧
 // 把 `data-ds-dark-theme` 写回 body，跨两次 evaluate 的窗口里属性已经回来了，
 // 读到的是深色值（实测第一轮就是这么假失败）。
+//
+// **还原只写回自己摘掉的那一样**：页面本来就有该属性才补回去。无条件 `setAttribute`
+// 会把一次浅色页（第三方背景插件被预检否决后回落到标准主题就是这种）抬成深色，
+// 后面降级态那条拿着浅色信号色比的断言就变成假失败。
 const lightRead = await evaluate(`(() => {
   const b = document.body
+  const wasDark = b.hasAttribute('data-ds-dark-theme')
   b.removeAttribute('data-ds-dark-theme')
   const rows = window.__dshOiRows__
-  const out = { selBg: rows.read('sel').bg, runShadow: rows.read('run').boxShadow }
-  b.setAttribute('data-ds-dark-theme', '')
+  const out = { selBg: rows.read('sel').bg, runShadow: rows.read('run').boxShadow, wasDark }
+  if (out.wasDark) b.setAttribute('data-ds-dark-theme', '')
   return out
 })()`)
 check(`浅色主题下选中底色换暗青 rgba(${LIGHT}, 0.1)`, lightRead.selBg,
   (v) => v === `rgba(${LIGHT}, 0.1)` || `期望 rgba(${LIGHT}, 0.1)，实测 ${v}`)
 check(`浅色主题下彗尾/底边颜色变量跟着换`, lightRead.runShadow,
   (v) => v.includes(`rgba(${LIGHT}, 0.15)`) || `期望含 rgba(${LIGHT}, 0.15)，实测 ${v}`)
-const backDark = await evaluate('window.__dshOiRows__.read("run")')
-check('主题还原后底色复位', backDark.bg,
-  (v) => v === `rgba(${DARK}, 0.1)` || `期望 rgba(${DARK}, 0.1)，实测 ${v}`)
+// 复位判据取「这一轮开始时的主题」，不是写死深色；且与 lightRead 同源核对，
+// 避免浅色页上「浅色测试没换出任何东西、复位测试又跟着错」。
+const backToSetup = await evaluate('window.__dshOiRows__.read("run").bg')
+const setupSignal = setup.dark ? DARK : LIGHT
+check(`主题还原后底色回到开局那一档（${setup.dark ? '深' : '浅'}色）`, [lightRead.wasDark === setup.dark, backToSetup],
+  ([same, bg]) => (same && bg === `rgba(${setupSignal}, 0.1)`)
+    || `期望 wasDark=${setup.dark} 且底色 rgba(${setupSignal}, 0.1)，实测 wasDark=${lightRead.wasDark} 底色 ${bg}`)
 
 // ---- 减少动态 ----
 await conn.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })

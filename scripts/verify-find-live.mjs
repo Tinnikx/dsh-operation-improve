@@ -176,20 +176,20 @@ if (picked === null) {
   abort('找不到「已渲染文本 ≥400 字且落定」的会话', '测试栈副本里需要一个内容够长的会话页；实测未发生。')
 }
 
-// 查询词：页面真实文本里出现 ≥3 次、不含换行的 4 字窗口（逐个字扫描，取第一个满足的）。
+// 查询词：**插件的命中域**（可见、可搜的文本）里出现 ≥2 次的 4 字窗口。
+// 按整页原始文本数重复次数不够——折叠起来的过程文本在原始串里重复，在页面上却不可见，
+// 挑出来的词只剩 1 条可见命中时，「跳下一条」根本没有第二条可跳，断言就自相矛盾。
 const query1 = await evaluate(`(() => {
+  const visibleCount = (${ORACLE_SOURCE})
   const text = __dshOiFindPageText().replace(/\\s+/g, ' ')
   for (let i = 0; i + 4 <= text.length; i += 1) {
     const gram = text.slice(i, i + 4)
     if (/^\\s+$/.test(gram)) continue
-    let n = 0
-    let at = text.indexOf(gram)
-    while (at !== -1) { n += 1; at = text.indexOf(gram, at + 1) }
-    if (n >= 3) return gram
+    if (visibleCount(gram, 'visible') >= 2) return gram
   }
   return null
 })()`)
-if (query1 === null) abort('页面文本里挑不出出现 ≥3 次的 4 字窗口', '命中数与跳转断言需要一个有重复的查询词。')
+if (query1 === null) abort('插件的可见命中域里挑不出重复 ≥2 次的 4 字窗口', '命中数、跳转与环绕断言需要一个在页面上真能跳第二条的查询词。')
 
 // ---- 2：真实 Ctrl+F 开条 ----
 
@@ -215,30 +215,34 @@ check('高亮集与命中同数，两个注册名都在', { snapshot: search1.sn
   (v) => v.all === v.snapshot.total && v.active === 1
     || `期望 all===total 且 active===1，实测 ${JSON.stringify(v)}`)
 
-// ---- 5-6：当前项就是那个词，且滚进了视口 ----
-
-const active1 = await evaluate(`(() => {
+// 当前项落点读数。只在**跳过一条之后**读：`open()` 与改词都不滚动页面，只有 `step()`
+// 调 `scrollIntoView`。把它读在按 Enter 之前，验的是「第一条命中恰好在视口里」这个
+// 与会话内容绑在一起的巧合，而不是本功能承诺的行为。
+const ACTIVE_RECT = `(() => {
   const set = CSS.highlights.get('dsh-oi-find-active')
   const range = set === undefined ? null : [...set][0]
   if (range === undefined || range === null) return { rect: null }
   const el = range.startContainer.parentElement
   const r = el.getBoundingClientRect()
   return { inViewport: r.top >= 0 && r.bottom <= window.innerHeight, height: Math.round(r.height) }
-})()`)
+})()`
+
+// ---- 5：当前项就是那个词 ----
+
 const snapActive1 = await snapshot()
 check('当前项唯一且文本与查询词只差大小写', { activeText: snapActive1?.activeText, query: query1 },
   (v) => (v.activeText ?? '').toLowerCase() === (v.query ?? '').toLowerCase()
     && (v.activeText ?? '').length === (v.query ?? '').length
     || `期望 activeText 与 query 同长、大小写折叠后相等，实测 ${JSON.stringify(v)}`)
-check('当前项滚进了视口', active1,
-  (v) => v.inViewport === true || `期望命中元素整块在视口内，实测 ${JSON.stringify(v)}`)
 
-// ---- 7-9：Enter / Shift+Enter / 环绕 ----
+// ---- 6-9：Enter / Shift+Enter / 环绕 ----
 
 await press('Enter', 'Enter', 13)
 const afterEnter = await snapshot()
 check('Enter 跳下一条', { index: afterEnter?.index, total: afterEnter?.total },
   (v) => v.index === 1 || `期望 index=1（共 ${v.total} 条），实测 ${JSON.stringify(v)}`)
+check('跳转后当前项滚进了视口', await evaluate(ACTIVE_RECT),
+  (v) => v.inViewport === true || `期望命中元素整块在视口内，实测 ${JSON.stringify(v)}`)
 
 await press('Enter', 'Enter', 13, SHIFT)
 const afterShift = await snapshot()

@@ -792,7 +792,11 @@ const archivedPair = await evaluate(`(async () => {
   // 归档行可见与否就是开关的读回值（视图偏好没有可读的 DOM 状态位，别猜 class）。
   // **收尾一律关**，不管这一轮是不是自己开的：上一轮中途失败会把它留在打开态，
   // 而后面每条断言取的都是「第一条会话行」，取到归档行会串台成别的失败。
+  //
+  // 归档视图是三态选择（隐藏 / 全部对话 / 仅显示已归档），**不是**一个可以反复点的开关：
+  // 点已经选中的那一项是空操作。所以两个方向各点各自的目标项，不能拿同一个 item 来回点。
   const setArchivedView = async (want) => {
+    const targetKey = want ? 'viewOptions.showArchived' : 'viewOptions.hideArchived'
     for (let i = 0; i < 3; i += 1) {
       if ((archivedRows().length > 0) === want) return true
       const view = [...document.querySelectorAll('[aria-label]')].find((el) =>
@@ -801,7 +805,7 @@ const archivedPair = await evaluate(`(async () => {
       view.click()
       await sleep(400)
       const item = [...document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]')].find((el) =>
-        (el.textContent ?? '').trim() === t('viewOptions.showArchived'))
+        (el.textContent ?? '').trim() === t(targetKey))
       if (item === undefined) {
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
         await sleep(200)
