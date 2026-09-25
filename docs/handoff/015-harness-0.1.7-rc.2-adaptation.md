@@ -45,9 +45,12 @@
 
 报告已落地：[harness-v0.1.7-rc.2-adaptation-report.md](../../harness-v0.1.7-rc.2-adaptation-report.md)，读数全部取自上面那次连跑与两条独立复算（34-1-1 键位变化、两张新卡在 rc.1 dump 里的存在性）。README 锚定段那句「16 卡 / 77 字段」与实测 `cards=16` / `fields=75`（77 减两枚走复选框的布尔）一致。
 
-## 待我确认
+## 验收方式
 
-四条收尾动作（补跑全量 / 写报告 / README 口径核对 / handoff 状态）都已做完，只剩把本行交我确认——确认前状态不动。确认时要一并看的仍是报告「未做」那五条：`context` 行的现场、`Ctrl/Cmd+Shift+F` 交集只登记、键帽与焦点环未验、client 树 config 流向未查实、真 Electron 桌面客户端未跑。
+- 功能回归：`PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH node scripts/test-stack.mjs up` 起在 rc.2 dist 上，再连跑八套（`verify` … `verify:find`），看每套末尾 `failed=0 skipped=0`，合计 163 条。
+- 清单对齐：`PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run check:catalog` → `dsh=0.1.7-rc.2`、`16 卡 / 77 字段`、`PASS`；`npm test` → `44 / pass 44 / fail 0`。
+- 镜像面漂移这一处单独复核：`verify` 的 metrics 断言当场点开真实「...」菜单逐项比 `getComputedStyle`，把 `src/shared/context-menu.js` 的 `padding` 改回 `3px` 就会红——不靠注释自证。
+- 结论与未做五条见 [harness-v0.1.7-rc.2-adaptation-report.md](../../harness-v0.1.7-rc.2-adaptation-report.md)；`context` 工具增删行的现场、`Ctrl/Cmd+Shift+F` 让位、上游键帽与焦点环观感、patch 层 config 流入 client 树、真 Electron 桌面客户端这五项本轮没做，接手时按报告的「未做」判范围。
 
 ## 决策与理由（本轮用户定的三条）
 
@@ -64,6 +67,8 @@
 - **改了 `src/` 必须重建再验**：`check:catalog` 与 `npm test` 直接 import `src/`，而面板读的是 `lib/client.js`。本轮加完两张卡后第一次跑 `verify:settings` 仍报 `fields=61`，就是因为没重跑 `npm run build`。构建要带 `DSH_ESBUILD_ROOT=/home/kaixiang/dev/co-creation-project/dsh-desktop`。
 - **第三方主题插件被预检否决会改变测试现场的默认值**：`dsh-any-background` 在 rc.2 起不再加载，页面回落到标准主题，浅/深色与 `--dsw-alias-*` 解析结果都跟着变。凡是断言里写死「浅色/深色」的读数，换版本时先确认这份 home 上主题到底是谁给的。
 
-## 工作树状态
+## 交付落点
 
-改动都**未提交**（`git status` 16 个改动文件 + 两份新增：本记录与 [harness-v0.1.7-rc.2-adaptation-report.md](../../harness-v0.1.7-rc.2-adaptation-report.md)）：`src/shared/context-menu.js`（镜像三值）、`src/harness-config/catalog-model.js`（两张新卡）与 `catalog-limits.js`（常量归属注释）、`src/chat-history/nav-rail.js`（注释订正）、`scripts/verify-live.mjs` / `verify-row-states-live.mjs` / `verify-find-live.mjs`（三条脚本缺陷）、`scripts/verify-settings-live.mjs`（12a–12d）、`docs/feature-1-2-sidebar-menu.md` / `feature-4-timestamps.md` / `feature-8-harness-config.md`、`README.md`、`package.json`（0.1.2→0.1.3）、`lib/`（构建产物）。测试栈已 `down`，`tmp/` 副本保留（下轮增量）。本轮的一次性探针在 `tmp/`（`preflight-check-rc2.mjs`、`probe-setarch.mjs`、`probe-viewmenu.mjs`、`probe-reduced.mjs`、`probe-context-rows.mjs`、`probe-panel-scale.mjs`、`run-suite-rc2.sh`），不在仓库；live 日志 `tmp/rc2m-*.log` 是同一次全量连跑的原始出处。
+本轮改动分三个提交落地：三套验证脚本自身缺陷、rc.2 适配本体（`MENU_CSS` 三值 + 功能 8 两张新卡 + 12a–12d 哨兵 + 注释/文档订正 + `lib/` 重建）、报告与 README 锚定与版本 0.1.3。工作树干净，未 push。
+
+一次性探针留在 gitignore 的 `tmp/`（`preflight-check-rc2.mjs`、`probe-setarch.mjs`、`probe-viewmenu.mjs`、`probe-reduced.mjs`、`probe-context-rows.mjs`、`probe-panel-scale.mjs`、`run-suite-rc2.sh`），不在仓库；八套全量连跑的原始日志是 `tmp/rc2m-*.log`，测试栈副本 `tmp/dsh-oi-test-home` 保留供下轮增量。
