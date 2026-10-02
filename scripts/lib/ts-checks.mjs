@@ -13,7 +13,7 @@ import { HELPERS } from './ts-page.mjs'
 
 /**
  * 前九条断言：装饰完整性、文本格式、标签等于上游 Started、跨 step 单调不减、
- * 落在本行第一行、不压正文、Think 行、上游三类改常驻、空闲无自激重建。
+ * 落在本行第一行、标签待在留白带里不遮字、不越出本行右缘、Think 行、上游三类改常驻、空闲无自激重建。
  *
  * @param {{ evaluate: (expr: string) => Promise<any>, check: (label: string, value: any, expect?: (v: any) => true|string) => void,
  *   baseline: { geo: any, upstream: any }, needRows: number, world: 'hover-root'|'upstream-always-on' }} deps
@@ -237,48 +237,49 @@ export async function runChecks({ evaluate, check, baseline, needRows, world }) 
     return true
   })
 
-  check('labels never overlap body text', await evaluate(`(() => {
+  // 不遮字是硬要求，正文由行的右侧留白带向左推开。这里验的几何不变式：标签整枚落在
+  // 内容盒右缘之外的留白带里（a.left >= 内容盒右缘）。正文满铺到内容盒右缘即止、不进
+  // 带，于是标签与正文必不相交——不必逐行抠正文矩形，也就不会被 nowrap 摘要的溢出矩形
+  // （父级 overflow:hidden 裁掉、元素矩形却仍是全文宽）判成假压字。留白带够不够宽由
+  // 「带宽 >= 标签宽」顺带守住。
+  check('row labels sit in the reserved band and never cover body text', await evaluate(`(() => {
     ${HELPERS}
     const EPS = 0.5;
-    const textRects = (el, label) => {
-      const out = [];
-      if (el === null || el === undefined) return out;
-      for (const node of el.querySelectorAll('*')) {
-        if (node.classList.contains(LABEL) || node.contains(label)) continue;
-        let hasText = false;
-        for (const c of node.childNodes) {
-          if (c.nodeType === 3 && (c.nodeValue ?? '').trim() !== '') { hasText = true; break }
-        }
-        if (!hasText) continue;
-        const r = node.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0) out.push(r);
-      }
-      return out;
-    };
-    const hits = [];
+    const intrude = [], tooNarrow = [], floatOut = [];
     let checked = 0;
-    for (const label of document.querySelectorAll('.' + LABEL)) {
-      const row = label.closest('[data-chat-node-key]');
-      if (row === null) continue;
-      // 折叠组里的隐藏行高度为 0，子元素矩形是残留布局——拿它们比邻是假阳性。
+    for (const label of document.querySelectorAll("." + LABEL + "[data-anchor='row']")) {
+      const row = label.parentElement;
       const rr = row.getBoundingClientRect();
+      // 折叠组里的隐藏行高度为 0，子元素矩形是残留布局——拿它们比邻是假阳性。
       if (rr.height < 2) continue;
       const a = label.getBoundingClientRect();
       if (a.width === 0 || a.height === 0) continue;
       checked += 1;
-      for (const b of [...textRects(row, label), ...textRects(row.nextElementSibling, label)]) {
-        if (a.left + EPS < b.right && a.right - EPS > b.left && a.top + EPS < b.bottom && a.bottom - EPS > b.top) {
-          hits.push({ anchor: label.dataset.anchor, kind: row.getAttribute('data-chat-flow-kind'),
-            label: [Math.round(a.left), Math.round(a.top), Math.round(a.right), Math.round(a.bottom)],
-            text: [Math.round(b.left), Math.round(b.top), Math.round(b.right), Math.round(b.bottom)] });
-          break;
-        }
+      const padR = parseFloat(getComputedStyle(row).paddingRight) || 0;
+      const contentRight = rr.right - padR;
+      if (a.right > rr.right + EPS) {
+        floatOut.push({ kind: row.getAttribute('data-chat-flow-kind'),
+          label: [Math.round(a.left), Math.round(a.right)], rowRight: Math.round(rr.right) });
+        continue;
+      }
+      if (padR + EPS < a.width) {
+        tooNarrow.push({ kind: row.getAttribute('data-chat-flow-kind'),
+          padR: Math.round(padR * 10) / 10, labelWidth: Math.round(a.width * 10) / 10 });
+        continue;
+      }
+      if (a.left + EPS < contentRight) {
+        intrude.push({ kind: row.getAttribute('data-chat-flow-kind'),
+          labelLeft: Math.round(a.left * 10) / 10, contentRight: Math.round(contentRight * 10) / 10 });
       }
     }
-    return { checked, hits: hits.slice(0, 5), hitCount: hits.length };
+    return { checked, floatOut: floatOut.slice(0, 5), floatOutCount: floatOut.length,
+      tooNarrow: tooNarrow.slice(0, 5), tooNarrowCount: tooNarrow.length,
+      intrude: intrude.slice(0, 5), intrudeCount: intrude.length };
   })()`), (v) => {
-    if (v.checked === 0) return '没有可测的标签矩形'
-    if (v.hitCount !== 0) return `${v.hitCount} 枚标签压在正文上：${JSON.stringify(v.hits)}`
+    if (v.checked === 0) return '没有可测的行标签'
+    if (v.floatOutCount !== 0) return `${v.floatOutCount} 枚行标签越出本行右缘（会话区外）：${JSON.stringify(v.floatOut)}`
+    if (v.tooNarrowCount !== 0) return `${v.tooNarrowCount} 条行的留白带装不下标签：${JSON.stringify(v.tooNarrow)}`
+    if (v.intrudeCount !== 0) return `${v.intrudeCount} 枚行标签侵入正文区（会压字）：${JSON.stringify(v.intrude)}`
     return true
   })
 
@@ -400,8 +401,9 @@ export async function runChecks({ evaluate, check, baseline, needRows, world }) 
 export async function checkDispose({ evaluate, check, baseline, assertSameContext, world }) {
   await assertSameContext('dispose 之前')
 
-  // dispose 之后几何必须回到基线。这条同时守着右侧留白：留白由本插件的样式表给出，
-  // 卸载没收回来的话，正文列就永远窄着一截。
+  // dispose 之后几何必须回到基线。右侧留白带是 decorate 写在行上的内联 padding，
+  // 高度随正文重排行数而变、宽度不随内缩而变，所以「逐行 top/height 与基线全等 +
+  // scrollHeight 全等」就是「留白带被收回」的判据：没收回来正文就多折一行、行整体下移。
   //
   // 摘掉样式表之后要等一拍再量 opacity：上游那枚时间标签带 opacity 过渡，
   // `getComputedStyle` 读的是过渡中的当前值，同步读回来的恒是过渡前的 `1`。

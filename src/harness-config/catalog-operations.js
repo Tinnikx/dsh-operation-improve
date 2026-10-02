@@ -11,6 +11,8 @@
  * config 会不会流进 client 树没有查实——口径 #2 要「真有活消费者」，证据不足就不收。
  */
 
+import { MAX_TIMER_DELAY_MS } from './catalog-limits.js'
+
 /** @type {readonly object[]} */
 export const OPERATION_ENTRIES = [
   {
@@ -39,6 +41,20 @@ export const OPERATION_ENTRIES = [
       {
         key: 'idleTimeoutMs', type: 'integer', default: 600000, min: 1000, effect: 'immediate',
         label: 'pnpm 静默判卡超时（毫秒）', help: '子进程连续这么久没有任何输出就判定卡死并终止，日志里留一行 printed nothing。网络慢时调太小会误杀正在跑的安装。',
+      },
+    ],
+    crossRules: [],
+  },
+  {
+    id: 'cordis-host-runner',
+    title: '插件检查超时',
+    plugin: '@deepseek-ai/dsh-cordis-host-runner',
+    effect: 'immediate',
+    description: '宿主检查插件内部状态（inspect）时的回应超时预算。查不动、误判无响应，都在这一卡调。',
+    fields: [
+      {
+        key: 'clientInspectTimeoutMs', type: 'integer', default: 10000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'immediate',
+        label: 'inspect 回应超时（毫秒）', help: '宿主探一次插件内部状态，等它回应的上限，超时算这次检查失败。上游拒绝超出 setTimeout 上限的值。',
       },
     ],
     crossRules: [],

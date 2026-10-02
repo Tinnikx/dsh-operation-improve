@@ -18,19 +18,24 @@
  * 时间取的是**开始**时刻，不是落地时刻——两者对工具调用和回复都可以差几十秒，
  * 推导逐条对齐上游轨迹页的 `startedAt`，见 {@link resolveTime}。
  *
- * 两处放置都做到不压正文，方式不同：
- *   - 行标签绝对定位到行自己的右上角，落在 `TIMESTAMP_CSS` 给每个节点行留出的
- *     右侧留白里，与本行第一行水平对齐。留白是有意付的宽度代价，理由见那里。
+ * 两处放置都做到不遮字，方式不同：
+ *   - 行标签绝对定位到行自己的右上角，落在 CSS 按标签档位给的右侧留白带里，与本行
+ *     第一行水平对齐。正文由那条 padding 向左让出一条容得下标签的窄带，文字满铺到
+ *     内容盒右缘即止、不进带，标签待在带里，两者不相交——不遮字，正文也只向左推了
+ *     该推的那一步。档位写在行标记属性上（见 {@link clockTier}），插件不写内联样式。
  *   - 思考标签作为末尾 flex 项插进 Think 折叠头那条 flex 行，摘要
  *     （`flex: 1 1 auto` + ellipsis）会自动让出宽度，不必量标签宽度。
  *
  * user / steering / turn-tail 三类不由这里贴标签：上游自己就在渲染时间，只是藏在
  * hover 后面，改成常驻由 `TIMESTAMP_CSS` 负责。
  */
-import { formatClockSeconds } from './format-clock.js'
+import { clockTier, formatClockSeconds } from './format-clock.js'
 
 const LABEL_CLASS = 'dsh-oi-ts'
-/** 行容器上的标记，同时是 CSS 里 `position: relative` 的挂钩。 */
+/**
+ * 行容器上的标记。**值是标签的宽度档位**（`hms` / `md` / `ymd`），CSS 按档位给这一行
+ * 的右侧留白带；同时是 `position: relative` 的挂钩。
+ */
 const ROW_ATTR = 'data-dsh-oi-ts'
 
 /**
@@ -92,17 +97,60 @@ export function installTimestamps(options) {
   /** 已装饰的行 → 它的行标签与思考标签。undecorate 与 snapshot 都读它。 */
   /** @type {Map<HTMLElement, { label: HTMLElement, thinks: Map<HTMLElement, HTMLElement> }>} */
   const decorated = new Map()
-  let rebuildQueued = false
+  /**
+   * 等会话视图「静下来」再做那一趟装饰。
+   *
+   * 为什么不在下一帧就做：切回对话页时上游虚拟列表要连续多帧量布局（实测切换窗口里
+   * `getBoundingClientRect` / `getAnimations` / `scrollMetrics` / `Virtualizer` 占掉
+   * 大头），插件那一趟写入正好挤进这个窗口，会把上游的读变成强制回流——内容稳定时间
+   * 从 147ms 被推到 278ms。等上游连续若干帧不再改 DOM，插件才动手，两趟写入就不互相
+   * 挤了。
+   *
+   * `SETTLE_MAX_MS` 是必需的兜底：流式输出时 mutation 永不停，只按静帧判的话时间戳
+   * 永远不出现。超时就先做一趟，代价是流式期间退化成「每 250ms 一趟」。
+   */
+  const SETTLE_QUIET_FRAMES = 4
+  const SETTLE_MAX_MS = 250
+
+  let dirty = false
+  let dirtySince = 0
+  let quietFrames = 0
+  /** 上一次 tick 之后有没有收到过非自伤的 mutation 批次。 */
+  let mutationBatch = 0
+  let scheduled = false
   let disposed = false
 
-  /** 一帧最多重建一次：一次 React 渲染会打出很多条 mutation。 */
-  const queueRebuild = () => {
-    if (rebuildQueued || disposed) return
-    rebuildQueued = true
-    requestAnimationFrame(() => {
-      rebuildQueued = false
-      if (!disposed) rebuild()
-    })
+  const markDirty = () => {
+    if (disposed) return
+    if (!dirty) {
+      dirty = true
+      dirtySince = performance.now()
+      quietFrames = 0
+    }
+    if (!scheduled) {
+      scheduled = true
+      requestAnimationFrame(tick)
+    }
+  }
+
+  function tick() {
+    if (disposed) {
+      scheduled = false
+      return
+    }
+    if (mutationBatch > 0) {
+      mutationBatch = 0
+      quietFrames = 0
+    } else {
+      quietFrames += 1
+    }
+    if (quietFrames >= SETTLE_QUIET_FRAMES || performance.now() - dirtySince >= SETTLE_MAX_MS) {
+      dirty = false
+      quietFrames = 0
+      rebuild()
+    }
+    if (dirty) requestAnimationFrame(tick)
+    else scheduled = false
   }
 
   function rebuild() {
@@ -122,24 +170,54 @@ export function installTimestamps(options) {
       plan.push({ row, text, thinks: thinkAnchors(row) })
     }
 
-    // 写相位。
-    const seen = new Set()
-    for (const { row, text, thinks } of plan) {
-      if (text === null) {
-        undecorate(row)
-        continue
+    // 写相位：整段在「不观察」保护下写。插件贴标签是 childList mutation，会回流到
+    // `document.body` 的观察者、再排队 rebuild——切页时 React 的真实节点增删与插件标签
+    // 混在同一批 mutation 里，`isSelfInflicted` 的 every 判据挡不住混批，自激成一次
+    // 切换几十次 rebuild。写入前摘观察者 + 写完 `takeRecords()` 丢掉自伤批次再重连，
+    // 从物理上断掉这条回路，与 React 并发写无关。
+    withoutObserving(() => {
+      const seen = new Set()
+      for (const { row, text, thinks } of plan) {
+        if (text === null) {
+          undecorate(row)
+          continue
+        }
+        decorate(row, text, thinks)
+        seen.add(row)
       }
-      decorate(row, text, thinks)
-      seen.add(row)
+      // 滚出窗口或被换掉的行：React 会把整个行元素摘走，Map 里的条目跟着失效。
+      for (const row of [...decorated.keys()]) {
+        if (!seen.has(row)) undecorate(row)
+      }
+    })
+  }
+
+  /**
+   * 在 `fn` 执行期间摘掉观察者，结束后丢弃累积记录再重连。
+   *
+   * 只包「写 DOM」那一段。`fn` 里不要有读布局（`offsetWidth` / `getBoundingClientRect`）
+   * 与写交替——那不是本保护要解决的问题，见 rebuild 的读写相位注释。
+   *
+   * @param {() => void} fn
+   */
+  function withoutObserving(fn) {
+    if (disposed) {
+      fn()
+      return
     }
-    // 滚出窗口或被换掉的行：React 会把整个行元素摘走，Map 里的条目跟着失效。
-    for (const row of [...decorated.keys()]) {
-      if (!seen.has(row)) undecorate(row)
+    observer.disconnect()
+    try {
+      fn()
+    } finally {
+      observer.takeRecords()
+      if (!disposed) observer.observe(document.body, { childList: true, subtree: true })
     }
   }
 
   /**
-   * 给一行装上（或原样保留）标签。
+   * 给一行装上（或原样保留）标签。**只做结构写入，不读布局、不写内联样式**——留白带
+   * 由 CSS 按行标记属性上的档位给（见 {@link TIMESTAMP_CSS}），逐行写 `padding-right`
+   * 会让每行一次文字重排，长会话上随行数线性放大成切页卡顿。
    *
    * 全程幂等——文本没变就不写 `textContent`，属性已在就不重设。稳态下一条
    * mutation 都不产生，这是自激环的第二道闸（第一道在观察者里）。
@@ -153,7 +231,8 @@ export function installTimestamps(options) {
       entry = { label: createLabel('row'), thinks: new Map() }
       decorated.set(row, entry)
     }
-    if (row.getAttribute(ROW_ATTR) !== 'row') row.setAttribute(ROW_ATTR, 'row')
+    const tier = clockTier(text)
+    if (row.getAttribute(ROW_ATTR) !== tier) row.setAttribute(ROW_ATTR, tier)
     if (entry.label.textContent !== text) entry.label.textContent = text
     if (entry.label.parentElement !== row) row.append(entry.label)
 
@@ -181,6 +260,7 @@ export function installTimestamps(options) {
     entry.label.remove()
     for (const label of entry.thinks.values()) label.remove()
     decorated.delete(row)
+    // 摘掉档位标记即收回留白带：带是 CSS 按这个属性给的，属性没了 padding 就没了。
     row.removeAttribute(ROW_ATTR)
   }
 
@@ -193,7 +273,8 @@ export function installTimestamps(options) {
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       if (isSelfInflicted(record)) continue
-      queueRebuild()
+      mutationBatch += 1
+      markDirty()
       return
     }
   })
@@ -370,15 +451,22 @@ function resolveTime(node) {
  * 时间戳样式表；由 client 入口与其余样式一起插入。
  *
  * 四条不能随手改的：
- *   1. **留白必须给到每一个节点行，不只是被贴了标签的那些**。挂 `[data-dsh-oi-ts]`
- *      只缩一部分行，剩下的（user / steering / turn-tail，以及取不到时间的行）保持
- *      原宽，右边缘就参差不齐。代价是正文列窄 `--dsh-oi-ts-gutter`，这是有意付的：
- *      标签放在行间距里做到过零位移，但 16px 的间距上下对称，标签离本行和离下一行
- *      都是 1px，读起来归属下一行——那正是这一版要消掉的毛病。宽度取 80px：过午夜
- *      再测长会话时标签带 `M/D ` 前缀，实测 67–74px，56px 的留白会把标签右端顶进
- *      通栏正文（`verify:timestamps` 的「不压正文」断言实测抓到）。跨年会话的
- *      `Y/M/D ` 前缀仍会超出 80px，是已知限制。留白挂 `[data-chat-node-key]` 而不是
- *      flow-key：分组壳内的分段行各自是节点行，两层都加就成了双倍留白。
+ *   1. **行标签待在「CSS 按档位给的右侧留白带」里，不叠正文、不遮字**。正文由
+ *      `padding-right` 整体向左让出一条容得下标签的窄带，文字满铺到内容盒右缘即止、
+ *      不进带，标签绝对定位到 `right:0` 待在带里，两者不相交。带分三档（`hms`/`md`/
+ *      `ymd`，即行标记属性的值），宽度取该档最宽标签的实测宽 + 6px 呼吸位。
+ *      三处踩过的坑，别再走回头路：
+ *        - **定宽 80px**：「时间把整条会话向左缩短」的毛病（推得比标签需要的多、标签
+ *          还浮在通栏正文外的空白里）。
+ *        - **`float:right` 让正文绕排**：无效且几何上不可能——正文套在
+ *          `display:contents` 之下的嵌套 flex/grid 格式化上下文里，float 影响不到
+ *          flex/grid 容器内的内容。
+ *        - **逐行量标签宽、写内联 `padding-right`**：每行一次文字重排，长会话上布局
+ *          次数随行数线性上升（117 行会话切回对话页实测 LayoutCount 从 9 抬到 203、
+ *          耗时 358ms→466ms，会话更长时到秒级）。改成档位枚举 + CSS 后插件一行内联
+ *          样式都不写，重排由浏览器一次批量做。
+ *      已知限制：档位取该档最宽标签，窄一点的标签右侧会多空几 px；跨年
+ *      `Y/M/D HH:mm:ss` 那档留白最宽，该步正文向左推得最多。
  *   2. **行标签对齐的是本行第一行，不是最后一行**。这是「开始时间」，而一个两千 px
  *      高的回复行，把它的起始时刻放在两千 px 之下没有意义。
  *   3. **思考标签是 flex 项，不是绝对定位**。折叠头那条行里摘要是
@@ -387,14 +475,13 @@ function resolveTime(node) {
  *      对齐，否则这一行会被标签撑高。
  *   4. **上游三类的常驻必须带 `!important`**。上游那条 `@media (hover: hover)` 下的
  *      `opacity: 0` 与这里特异度相同，胜负只取决于两张样式表在 `head` 里的先后，
- *      而上游样式表由构建产物插入，顺序不由插件掌控。常驻规则的行锚点与留白同源
+ *      而上游样式表由构建产物插入，顺序不由插件掌控。常驻规则的行锚点与标签同源
  *      （`[data-chat-node-key]`）。
  *
  * 标签一律 `pointer-events: none` + `user-select: none`：它落在正文的选区范围内，
  * 可选中就意味着复制一段回复会连时间戳一起带走。
  */
 export const TIMESTAMP_CSS = `
-[data-chat-node-key] { padding-right: var(--dsh-oi-ts-gutter, 80px); }
 [${ROW_ATTR}] { position: relative; }
 .${LABEL_CLASS} {
   color: var(--dsw-alias-label-caption, #8b8b8b);
@@ -409,7 +496,16 @@ export const TIMESTAMP_CSS = `
   top: 0;
   right: 0;
   line-height: 24px;
+  /* 标签绝对定位到行右上角，落在下面三档留白带里：正文由那条 padding-right 整体向左
+   * 让出一条容下标签的窄带，文字满铺到内容盒右缘即止、不进带，两者不相交（→ 不遮字）。
+   * 带按标签文本档位给，不给定宽：定宽要么把正文推得比标签需要的多，要么容不下宽标签。 */
 }
+/* 三档带宽 = 该档最宽标签的实测宽 + 6px 呼吸位（11px tabular-nums 下实测
+   HH:mm:ss 43px、M/D HH:mm:ss 最宽 73px、Y/M/D HH:mm:ss 最宽 101px）。
+   档位由行标记属性给，所以这里全是 CSS 规则，插件一行内联样式都不写。 */
+[${ROW_ATTR}='hms'] { padding-right: 49px; }
+[${ROW_ATTR}='md'] { padding-right: 79px; }
+[${ROW_ATTR}='ymd'] { padding-right: 107px; }
 .${LABEL_CLASS}[data-anchor='think'] {
   flex: 0 0 auto;
   margin-left: auto;

@@ -4,6 +4,8 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 017 | 功能 4 时间标签布局：不遮字 + 正文向左推（留白带） | 正在做 | [017-timestamps-no-overlap-band.md](docs/handoff/017-timestamps-no-overlap-band.md) |
+| 016 | harness 0.2.0-rc.2 适配（九镜像面零漂移 + 功能 8 收 1 张新卡） | 完成 | [016-harness-0.2.0-rc.2-adaptation.md](docs/handoff/016-harness-0.2.0-rc.2-adaptation.md) |
 | 015 | harness 0.1.7-rc.2 适配（菜单样式档漂移 + 功能 8 两张新卡） | 完成 | [015-harness-0.1.7-rc.2-adaptation.md](docs/handoff/015-harness-0.1.7-rc.2-adaptation.md) |
 | 014 | 功能 11：Ctrl+F 页内查找（查找条 + 词级高亮 + 上/下一个跳转） | 完成 | [014-find-in-page.md](docs/handoff/014-find-in-page.md) |
 | 013 | harness 0.1.7-rc.1 适配（含功能 8 第 14 卡与功能 4 口径订正） | 完成 | [013-harness-0.1.7-rc.1-adaptation.md](docs/handoff/013-harness-0.1.7-rc.1-adaptation.md) |

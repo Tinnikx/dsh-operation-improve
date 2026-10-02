@@ -50,3 +50,19 @@ export function formatClockSeconds(time, now = Date.now()) {
   const date = d.getFullYear() === n.getFullYear() ? md : `${d.getFullYear()}/${md}`
   return `${date} ${clock}`
 }
+
+/**
+ * 标签文本的宽度档位，决定 CSS 给这一行留多宽的右侧留白带。
+ *
+ * 三档对应 {@link formatClockSeconds} 的三种输出形状。**从文本判档位、不量 DOM**——
+ * 逐行量宽度就得逐行写内联 `padding-right`，长会话上每行一次文字重排，切回会话页的
+ * 布局次数随行数线性上升（117 行实测 LayoutCount 从 9 抬到 203）。
+ *
+ * @param {string} text {@link formatClockSeconds} 的产物
+ * @returns {'hms' | 'md' | 'ymd'} 同日时钟 / 前置月日 / 前置年月日
+ */
+export function clockTier(text) {
+  if (!text.includes(' ')) return 'hms'
+  // 日期段里第一个 `/` 的位置：`M/D` 最远在索引 2，`Y/M/D` 最早在索引 4。
+  return text.indexOf('/') >= 4 ? 'ymd' : 'md'
+}

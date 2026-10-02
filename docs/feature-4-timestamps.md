@@ -37,9 +37,11 @@ formatClockSeconds(time, now?) -> string | null   // 非有限数返回 null
 
 ## 标签的放置
 
-**每个 `[data-chat-node-key]` 留出 `--dsh-oi-ts-gutter`（80px）右侧留白**，行标签绝对定位到 `top: 0; right: 0`，落在这条留白里、与本行第一行水平对齐。锚点用 node-key 而不是 flow-key：分组壳也带 flow-key，两层都加留白就成了分段行的双倍内缩。
+**每条带标签的行留出一条右侧留白带，带宽由 CSS 按标签的日期档位给**（行标记属性 `data-dsh-oi-ts` 的值就是档位：`hms` / `md` / `ymd`），行标签绝对定位到 `top: 0; right: 0`，落在这条带里、与本行第一行水平对齐。正文由这条 padding 整体向左让出容得下标签的窄带，文字满铺到内容盒右缘即止、不进带，标签待在带里，两者不相交——**不遮字**，正文也只向左推了该推的那一步。锚点用 node-key 而不是 flow-key：分组壳也带 flow-key，两层都加留白就成了分段行的双倍内缩。
 
-- **留白必须给到每一个节点行，不只是被贴了标签的那些**。只缩一部分行，剩下的（user / steering / turn-tail / turn-process，以及取不到时间的行）保持原宽，右边缘就参差不齐。代价是正文列窄 80px——这是有意付的：标签放进 16px 的列间距里可以做到零布局位移，但那条间距上下对称，标签离本行和离下一行都是 1px，**读起来归属下一行**。80 这个数是量出来要容下带 `M/D ` 前缀的标签（过午夜再测长会话时标签带日期前缀，实测 67–74px；留白小了标签右端会顶进通栏正文，`verify:timestamps` 的「不压正文」断言实测抓到）。
+- **三档带宽 = 该档最宽标签的实测宽 + 6px 呼吸位**：`HH:mm:ss` 43px → 49px、`M/D HH:mm:ss` 最宽 73px → 79px、`Y/M/D HH:mm:ss` 最宽 101px → 107px（11px tabular-nums 下量得）。档位从标签文本判（`clockTier`），不量 DOM。定宽一档不可行：定 49px 容不下跨日前缀，定 107px 又把同日会话的正文白推 58px。
+- **带宽必须是 CSS 规则，不能逐行写内联 `padding-right`**。逐行量宽 + 逐行写 style 会让每行一次文字重排，长会话上布局次数随行数上升——实测 117 行会话切回对话页 `LayoutCount` 从 9 抬到 203、耗时 358ms→466ms，会话再长就进秒级。改成档位枚举后插件不写任何内联样式，重排由浏览器一次批量做：332 行 / 325 标签的会话上 `LayoutCount` 降到 24，插件的边际成本 +102ms（其中 90ms 是 fiber 反查与格式化的固有 JS 开销，不是布局抖动）。
+- **不遮字是硬要求**（用户明确「不要遮字，遮字就把文字向左推」）。曾试过 `float:right` 让正文绕排避让——无效且在本 DOM 下几何上不可能：正文套在 `display:contents` 之下的嵌套 flex/grid 格式化上下文里，float 影响不到 flex/grid 容器内的内容。也试过叠放 + 不透明底遮住首行右端——被「不要遮字」否掉。留白带是唯一既不遮字又不靠绕排的解法。
 - **对齐的是本行第一行，不是最后一行**。这是「开始时间」，而一个两千 px 高的回复行，把它的起始时刻放在两千 px 之下没有意义。
 - **不能把标签内联到首行末尾**。实测 tool-call 的命令行带 ellipsis 裁切、assistant-step 的代码块横向滚动，两类的首行右端可用宽度都是负数（分别 −257px、−1688px），内联必然压在正文上。
 - 标签一律 `pointer-events: none` + `user-select: none`：它落在正文的选区范围内，可选中就意味着复制一段回复会连时间戳一起带走。
@@ -76,13 +78,21 @@ user / steering / turn-tail 三类上游自己就在渲染时间（还带 `Ran f
 
 实测空闲 3 秒内新增标签节点 0 个、首枚标签仍是同一个对象。
 
+## 装饰时机：等会话视图静下来
+
+那一趟装饰不在「下一帧」就做，而是等上游**连续 4 帧**不再改 DOM 才做（`SETTLE_QUIET_FRAMES`），并带一个 **250ms 超时上限**（`SETTLE_MAX_MS`）。
+
+原因是切回对话页时上游虚拟列表要连续多帧量布局（实测切换窗口里 `getBoundingClientRect` 8.4%、`getAnimations` 4.4%、`scrollMetrics` 1.2%、`Virtualizer.getMaxScrollOffset` 0.7% 是主要成本），插件那一趟写入挤进同一个窗口就会把上游的读变成强制回流。等上游静下来再动手，两边不抢：同一份长会话切回对话页，**内容稳定时间从 278ms 降到 117ms，与关掉插件的 116ms 持平**，主线程阻塞 121ms → 34ms（关掉插件是 31ms）。代价是时间戳晚一点出现——在内容已经稳定之后约 100ms 补上。
+
+超时上限不能省：流式输出时 mutation 永不停，只按静帧判的话时间戳永远不出现，所以最多等 250ms 就必须做一趟，流式期间退化成「每 250ms 一趟」。
+
 ## 已知限制
 
 - 时间戳的日期部分不跟随 harness 语言：上游 zh 下写「8月27日」，这里写 `8/27`。`formatClockSeconds` 是个不带 ctx 的纯函数，接词典要把 `conversation` 词典的 `clock.md` / `clock.ymd` 传进去。右键菜单不在此列，它的文案[全部取自词典](./feature-1-2-sidebar-menu.md#菜单项与服务映射)。
 - 16 类 kind 里，真实页面上只跑到过 `assistant-step` / `tool-call` / `context` / `compaction` / `model-retry` / `turn-tail` / `user` 七类。另外九类（`steering`、`manual-compaction`、`command`、`command-input`、`turn-error`、`turn-max-tokens`、`workflow-run`、`agent-teams`、`unknown`）**从未在真实页面上被验证过**，它们走的是 `resolveTime` 的通用兜底；取不到时间的表现是这一行没有标签，不报错。
 - **整页时间戳不是全局单调的**。同一个 step 内 `model-retry` 显示的重试时刻会晚于其后 `assistant-step` 显示的 step 起点——两者都对，只是读起来像倒退。
 - 常驻规则认的是 `_timeStart` / `_timeEnd` 两个类名片段与 `[data-chat-node-key]` 锚点。上游改类名片段，这四类行的时间退回藏起来，且不报错；改锚点则整条规则失效，`verify:timestamps` 的「基线里没有上游时间标签」前置检查会先撞上。锚点失效当下的表现只是「没人保证常驻」，肉眼看不出来。
-- 右侧留白默认 80px（`--dsh-oi-ts-gutter`）。它容得下 `M/D HH:mm:ss`（实测 74px 封顶），容不下跨年的 `Y/M/D HH:mm:ss`——那种宽度只在跨年后的老会话上出现，实测覆盖不到，容不下时表现是标签被挤出行的右边缘、极端情况压上正文（`verify:timestamps` 的「不压正文」断言只在当前世界的会话上跑）。
+- 留白带按**档位**给宽，每档取该档最宽标签，所以窄一点的标签右侧会多空几 px（同日标签 43px 落在 49px 带里）。跨年的 `Y/M/D HH:mm:ss` 那档带最宽（107px），该步正文向左推得最多。`verify:timestamps` 的「标签待在留白带里不遮字」断言（`floatOut` / `tooNarrow` / `intrude` 三项）跑的是当前世界看得见的档位，跨年档实测覆盖不到——只有单测覆盖 `clockTier` 与格式分支的对应。
 - fiber 反查与 `rowId` 依赖同一个 React 内部字段，React 版本变化同样会失效；表现是整页没有标签（`key` 自校验挡住了「安上邻行时间」这种更糟的失效方式）。
 
 ## 验证

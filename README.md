@@ -18,7 +18,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)，功能 11 的在 [src/find/matches.js](src/find/matches.js)（判据与实测读数在 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 当前兼容版本
-- 0.1.7-rc.2（当前锚定版本，八套 live 验证全绿；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，16 卡 / 77 字段）
+- 0.2.0-rc.2（当前锚定版本，八套 live 验证全绿；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，17 卡 / 78 字段）
 
 本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。**每换一次锚定版本，除八套 live 行为验证外必跑 `npm run check:catalog`**——功能 8 的清单是手抄的，这条把它声明的字段 `type`/`default`/边界逐键对上游 `--dump-config-schema`，新版本改了任一键就会红，逼你对上游重抄（判据见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检)）。0.1.7-alpha.2 轮起，
 菜单样式档与图标（功能 2、6）与活跃标记覆盖（功能 5）跟随新版视觉，回到旧 harness 上不再保证逐项对齐。
@@ -198,7 +198,7 @@ dsh plugin --profile web add <本目录>                                # 从本
 
 - [基础层](docs/shared-api.md#已知限制)：`rowId` 的 fiber 反查依赖 React 内部字段（1 条）
 - [功能 1、2](docs/feature-1-2-sidebar-menu.md#已知限制)：借上游词典键、图标与尺寸是拷贝、高亮延迟（4 条）
-- [功能 4](docs/feature-4-timestamps.md#已知限制)：日期不跟随语言、九类 kind 未验证、非全局单调、类名片段、80px 留白、fiber（6 条）
+- [功能 4](docs/feature-4-timestamps.md#已知限制)：日期不跟随语言、九类 kind 未验证、非全局单调、类名片段、档位留白、fiber（6 条）
 - [功能 5](docs/feature-5-active-dot.md#已知限制)：结构假设、壁纸主题下管不到、色值写死（3 条）
 - [功能 6](docs/feature-6-selection-menu.md#已知限制)：剪贴板权限被拒即静默失效、contenteditable 分支未验证、paste 图标自绘、落点判定的引擎回落（4 条）
 - [功能 7](docs/feature-7-think-scroll.md#已知限制)：类名片段、流式思考不自动跟到底（未实测）、上限只看视口（3 条）
