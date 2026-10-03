@@ -5,7 +5,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | | 一句话 | 设计与实测 |
 | --- | --- | --- |
 | **功能 1** | `ctrl`/`cmd` + 点击多选工作区行或会话行，限制同级（会话与工作区不能混选）。 | [docs/feature-1-2-sidebar-menu.md](docs/feature-1-2-sidebar-menu.md) |
-| **功能 2** | 侧边栏行的右键菜单。单选逐项对齐该行原有「...」菜单（项、顺序、文案、图标、样式、动作都一样），多选只保留批量破坏性操作。 | 同上 |
+| **功能 2** | 侧边栏行的右键菜单。单选逐项对齐该行原有「...」菜单（项、顺序、文案、图标、样式、动作都一样），工作区行另加一项「新会话」（对齐的是行 hover 时那枚按钮，不在「...」里），多选只保留批量破坏性操作。 | 同上 |
 | **功能 4** | 会话页逐行开始时间戳。每条回复、工具调用、思考等节点行的右上角显示它的**开始**时刻（`HH:mm:ss`），user / steering / turn-tail 三类改成常驻显示上游自己的时间标签。 | [docs/feature-4-timestamps.md](docs/feature-4-timestamps.md) |
 | **功能 5** | 活跃标记（`StateDot state="ongoing"`）的配色覆盖。把上游那 8 格追逐动画的基线不透明度从 `.15` 抬到 `.6` 并换成青色，深浅主题各一个值。纯样式，不加监听。 | [docs/feature-5-active-dot.md](docs/feature-5-active-dot.md) |
 | **功能 6** | 选中文本的右键菜单。页面任意位置选中一段文本后在选区上右键，弹出与功能 2 同一套外观的菜单，给「复制」；落点可输入时再给「粘贴」（可输入的空控件——含 0.1.6 起的 Lexical composer——即使没有选中文本也弹，只给「粘贴」）。两项都没有时不吃掉事件，原生菜单照常。 | [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md) |

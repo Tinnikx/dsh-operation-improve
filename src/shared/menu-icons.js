@@ -1,7 +1,7 @@
 /**
  * 右键菜单用的 glyph。除 `paste` 外全部逐字拷自 `@deepseek-ai/dsh-client-ui-primitives`
- * 的 Regular 档图标（`IconEditOutlineRegular`、`IconBranchOutlineRegular`、
- * `IconUnarchiveOutlineRegular`、`IconTrashOutlineRegular`、
+ * 的 Regular 档图标（`IconNewChatOutlineRegular`、`IconEditOutlineRegular`、
+ * `IconBranchOutlineRegular`、`IconUnarchiveOutlineRegular`、`IconTrashOutlineRegular`、
  * `IconCopyOutlineRegular`、`IconPinOutlineRegular`、`IconPinFillRegular`）。
  *
  * **为什么是拷贝而不是引用**：`ui-primitives` 只导出 React 组件，而本插件的菜单是纯
@@ -14,6 +14,7 @@
  *
  * Regular 档是描边制：svg 根带 `fill="none"` 与 `stroke-width="1"`，子元素按各自声明
  * 落 `stroke="currentColor"` 或 `fill="currentColor"`（混合是上游画法，逐字保留）。
+ * `stroke-width` 在上游是 `strokeWidth` prop 落到 svg 根上的属性，落地后同名。
  *
  * **`paste` 是自绘的，没有上游哨兵**：上游图标集里没有剪贴板/粘贴矢量，所以这一枚
  * 拿不到可比对的原件，上面那套漂移断言对它不成立。它按同一批的描边制画：viewBox 16、
@@ -22,6 +23,9 @@
  * 渲染尺寸由 `context-menu.js` 的 `__icon` 规则统一压到 14px（上游 `.itemIcon svg`
  * 同值）；SVG 属性上的 size 是各组件的默认值，与上游 DOM 逐项相等。
  */
+
+/** 上游 `IconNewChatOutlineRegular` —— 工作区行的「新建会话」。 */
+const NEW_CHAT = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.37091 11.2501C1.58745 9.89288 1.32067 8.29835 1.61969 6.76006C1.91872 5.22177 2.76342 3.8433 3.99826 2.87846C5.2331 1.91362 6.77494 1.42737 8.33988 1.50925C9.90482 1.59113 11.3875 2.23562 12.5149 3.32406C13.6425 4.41269 14.3387 5.87206 14.4754 7.4334C14.612 8.99474 14.18 10.5529 13.2587 11.8209C12.3375 13.0888 10.9891 13.9813 9.46194 14.3337C8.18691 14.628 6.85895 14.5294 5.64989 14.0605C5.1712 13.8748 4.76962 13.4932 4.26534 13.3967C3.67413 13.2835 2.95257 13.5598 2.03794 14.3337" stroke="currentColor"/><path d="M8 5V11" stroke="currentColor"/><path d="M5 8H11" stroke="currentColor"/></svg>'
 
 /** 上游 `IconEditOutlineRegular` —— 会话/工作区的「重命名」。 */
 const EDIT = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M8.85596 2.69971H4.19971C3.37141 2.69971 2.69992 3.37146 2.69971 4.19971V11.8003C2.69992 12.6285 3.37141 13.3003 4.19971 13.3003H11.8003C12.6283 13.2999 13.3001 12.6283 13.3003 11.8003V7.89893H14.3003V11.8003C14.3001 13.1806 13.1806 14.2999 11.8003 14.3003H4.19971C2.81913 14.3003 1.69992 13.1808 1.69971 11.8003V4.19971C1.69992 2.81918 2.81913 1.69971 4.19971 1.69971H8.85596V2.69971Z" fill="currentColor"/><path d="M7.7849 8.23878L13.888 2.13574" stroke="currentColor"/></svg>'
@@ -60,6 +64,7 @@ const PASTE = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" strok
  * glyph 自己的名字，避免「删除工作区」和「归档会话」共用一个动作 id 时对不上。
  */
 export const MENU_ICONS = {
+  newChat: NEW_CHAT,
   edit: EDIT,
   branch: BRANCH,
   unarchive: UNARCHIVE,

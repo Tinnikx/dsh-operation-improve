@@ -3,7 +3,7 @@
 `src/multi-select/index.js`（功能 1）、`src/context-menu-feature/index.js`（功能 2）。菜单本体、选择状态、行识别、词典都来自[基础层](./shared-api.md)。
 
 - 功能 1：`ctrl`/`cmd` + 点击多选工作区行或会话行，限制同级（会话与工作区不能混选）。
-- 功能 2：侧边栏行的右键菜单。单选逐项对齐该行原有「...」菜单（含按行状态翻转的那两项），**归档这一项除外**；多选只有工作区给批量删除，会话多选不给任何动作。
+- 功能 2：侧边栏行的右键菜单。单选逐项对齐该行原有「...」菜单（含按行状态翻转的那两项），**归档这一项除外**；工作区单选另加一项「新会话」（对齐的是行 hover 时那枚按钮，不在「...」里）；多选只有工作区给批量删除，会话多选不给任何动作。
 
 两者都在侧边栏挂**捕获阶段**监听（要抢在 React 合成事件之前拦下 `ctrl` 点击与右键），菜单直接挂 `document.body`（`z-index: 2147483000`），高亮走 `[data-dsh-oi-selected]` 属性——不复用行自己的 `_selected` 类，那是「当前会话」的语义。
 
@@ -13,13 +13,15 @@
 
 | 场景 | 文案键 | 词典 | 调用 |
 | --- | --- | --- | --- |
-| 单选 workspace | `rename` / `delete.workspace` | 上游 `workspace` | `workspaces.rename` / `workspaces.delete` |
+| 单选 workspace | `actions.newSession`（排第一）+ `rename` / `delete.workspace` | 上游 `workspace` | `uiWorkspace.startSession(workspaceId)` / `workspaces.rename` / `workspaces.delete` |
 | 单选 session（未归档） | `menu.pinSession` / `menu.unpinSession`（按置顶态翻转，排第一）+ `rename` / `menu.fork` | 上游 `workspace` | `workspaces.pinSession` / `workspaces.unpinSession` / `sessions.binding(id).session.rename` / `sessions.fork` |
 | 单选 session（已归档） | `rename` / `menu.fork` / `menu.unarchiveSession`（置顶项与归档项都缺席，末项是取消归档） | 上游 `workspace` | 同上，末项走 `workspaces.unarchiveSession` |
 | 多选 workspace | `batch.deleteWorkspaces` | 本插件 | `workspaces.delete` 逐个 |
 | 多选 session | **无**——本插件不弹菜单，也不拦默认行为（上游行上没有右键菜单，结果是浏览器默认，通常什么都不弹） | — | — |
 | 选中文本（功能 6） | `copy` | 上游 `common` | `writeClipboard(text)` |
 | 可输入落点（功能 6） | `selection.paste` | 本插件 | `readText()` + 派发 `ClipboardEvent('paste')` |
+
+**工作区单选多出的「新会话」不是漂移，是补齐**。上游把新建会话放在行 hover 时那枚与「...」并列的 icon button 上（同一个 `rowActions` 槽，文案 `actions.newSession`、图标 `IconNewChatOutlineRegular`），它根本不在「...」菜单里，逐项对齐「...」对齐不到它。点它走 `UiWorkspaceService.startSession(workspaceId)`（`ctx.get('uiWorkspace')`），与上游按钮同一条路径：复用一个空白会话而不是每次 `sessions.create`，并在同工作区已有会话时展开该组。本插件的展开靠点行本身（行 `onClick` 就是 `onToggle`），只在 `aria-expanded === 'false'` 时点——已展开再点一次会把它收起来。两处缺席是同一件事：「未分组」那一行反查不到 `workspaceId`（上游给的是 `undefined`），压根不接管那次右键；`uiWorkspace` 服务还没注册时整项不出现，免得给一个点下去没有回应的入口。
 
 **功能 6 一个 harness 服务都不调**，两项都只落在浏览器的剪贴板与编辑管线上，所以它没有二次确认、也没有可打桩的破坏性动作（验证脚本因此不注入 ctx，见[验证 · 功能 6](./verify.md#功能-6-的验证)）。「复制」借 harness **common** 词典的 `copy`——消息气泡上那枚复制按钮用的就是这一条，自己再写一遍就是给同一个动作起第二个名字；common 里没有 `paste`，所以「粘贴」和批量那两项一样自注册在本插件的 namespace 下。
 

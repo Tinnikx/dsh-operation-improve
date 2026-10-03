@@ -72,6 +72,11 @@ export function apply(ctx) {
     store: selection,
     workspaces: ctx.workspaces,
     sessions: ctx.sessions,
+    // 上游 `UiWorkspaceService`——工作区行「新会话」那一项走的 `startSession`，与行
+    // hover 时那枚按钮同一个服务。**不列进 `inject`**：那个名字由上游的
+    // `super(ctx, "uiWorkspace")` 定，不在本插件的类型面上；`ctx.get` 对未列进 inject
+    // 的名字照样返回（见 cordis `ReflectService.get`），拿不到也只是那一项缺席。
+    getUiWorkspace: () => ctx.get('uiWorkspace'),
     t: locale.t,
     tOwn: locale.tOwn,
     owner: instanceId,

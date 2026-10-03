@@ -9,6 +9,16 @@
  * 菜单是点按钮开的，上游在侧边栏行上没有任何 `contextmenu` 监听，插件弹的是自己按
  * `buildItems` 现搭的 DOM；上游新增一类行状态或改某一项的翻转口径，这一份都要跟着改。
  *
+ * **单选工作区行多一项「新会话」，这不是漂移而是补齐**：上游把新会话放在行 hover
+ * 时的第二个 icon button 上（与「...」并列，同一个 `rowActions` 槽），不在那个「...」
+ * 菜单里，所以插件逐项对齐「...」对齐不到它、只能在这一份里补上。走的服务是同一个
+ * `UiWorkspaceService.startSession(workspaceId)`（`ctx.get('uiWorkspace')`），与点那枚
+ * hover 按钮逐字同一条路径：展开该组、连上工作区、复用或新建空白会话并切到它。
+ * 上游 hover 按钮另带 tooltip 文案 `actions.newSession` 与 aria `actions.newSession.aria`，
+ * 前者是本项文案（借上游词典），后者绑在真实按钮上、不需要抄。「未分组」那一行的上游
+ * 按钮是个空操作（那组没有 workspaceId，`onCreate` 里直接 return），而本插件的反查在
+ * 那一行取不到 workspaceId、压根不接管这次右键——两边都等于这一行给不出这一项。
+ *
  * **归档这一项是例外，故意不给**（单选与批量都不给）：上游那一项不是「调一次服务」——
  * 会话有进行中的工作时第一次 `archiveSession` 被 host 拒（`workspace/session-active`），
  * 上游捕获后弹「停止并归档此会话？」列出将被停的回合 / 子代理 / 后台任务 / 定时提醒，
@@ -43,17 +53,30 @@ import { MENU_ICONS } from '../shared/menu-icons.js'
  *   store: ReturnType<import('../shared/selection-store.js').createSelectionStore>,
  *   workspaces: any,
  *   sessions: any,
+ *   getUiWorkspace?: () => ({ startSession: (workspaceId: string) => void } | undefined),
  *   t: (key: string, params?: Record<string, unknown>) => string,
  *   tOwn: (key: string, params?: Record<string, unknown>) => string,
  *   confirm?: (message: string) => boolean,
  *   prompt?: (message: string, initial: string) => (string|null),
  *   owner?: string,
  * }} deps `t` 查上游 `workspace` 词典，`tOwn` 查本插件自己的，两者都必需。
+ *   `getUiWorkspace` 取上游 `UiWorkspaceService`，只在「新建会话」那一项上用；返回
+ *   `undefined`（或这个依赖本身缺省）时那一项整个不出现。
  *   `owner` 原样传给 `openContextMenu`，标在菜单元素上供调用方确认归属。
  * @returns {() => void} 幂等 disposer
  */
 export function installContextMenu(deps) {
   const { store, workspaces, sessions, owner, t, tOwn } = deps
+  /**
+   * **每次现取，不缓存**：插件 apply 与 ui-workspace 那个 Service 的注册没有先后保证，
+   * apply 时取到 `undefined` 就等于这一项永久缺席；每次现取则两种加载顺序都能工作。
+   *
+   * @returns {{ startSession: (workspaceId: string) => void } | undefined}
+   */
+  const resolveUiWorkspace = () => {
+    const service = deps.getUiWorkspace?.()
+    return typeof service?.startSession === 'function' ? service : undefined
+  }
   const ask = deps.confirm ?? ((m) => window.confirm(m))
   const askText = deps.prompt ?? ((m, v) => window.prompt(m, v))
 
@@ -97,10 +120,22 @@ export function installContextMenu(deps) {
       if (many) {
         return [{ id: 'delete', label: tOwn('batch.deleteWorkspaces', { n: targets.length }), icon: MENU_ICONS.trash, danger: true }]
       }
-      return [
-        { id: 'rename', label: t('rename'), icon: MENU_ICONS.edit },
-        { id: 'delete', label: t('delete.workspace'), icon: MENU_ICONS.trash, danger: true },
-      ]
+      const items = []
+      // 「新建会话」摆在首位：它对应的是行 hover 时那枚与「...」并列的按钮，不是「...」
+      // 里的项，所以逐项对齐「...」对齐不到它，只能在这里补（头注释）。上游那一枚是
+      // hover 才出现的，本插件给它一个常驻位置——右键菜单本来就是常驻的，不存在收起。
+      //
+      // **未分组那一行没有这一项**：`targets[0]` 是本插件从 fiber 反查出来的 workspaceId，
+      // 那一行反查不到（上游那组的 `workspaceId` 是 `undefined`，不是字符串），走不到这里
+      // ——它压根不接管那次右键，而不是给一个点了没反应的新建入口。
+      //
+      // 服务缺席时同样不给那一项：宁可少一项，也不要一个点下去没有回应的入口。
+      if (resolveUiWorkspace() !== undefined) {
+        items.push({ id: 'newSession', label: t('actions.newSession'), icon: MENU_ICONS.newChat })
+      }
+      items.push({ id: 'rename', label: t('rename'), icon: MENU_ICONS.edit })
+      items.push({ id: 'delete', label: t('delete.workspace'), icon: MENU_ICONS.trash, danger: true })
+      return items
     }
     // 会话多选不给任何项：批量归档让位给上游（理由见头注释），而 `sessions` 契约上没有
     // delete，这里无事可做。调用方拿到空列表就不接管这次右键。
@@ -154,6 +189,16 @@ export function installContextMenu(deps) {
    */
   async function run(actionId, kind, targets, rowElement) {
     const current = rowTitle(rowElement, kind)
+    if (actionId === 'newSession') {
+      // 上游那枚 hover 按钮是两步：先 `setGroupExpanded(group.key, true)` 再
+      // `startSession(group.workspaceId)`。展开那一步不补的话，这一行仍是折叠的，用户
+      // 看不到自己刚开的会话。展开就是点行本身（行的 `onClick` 就是 `onToggle`），已展开
+      // 时不再点——那会把它收起来。开新会话本身完全交给服务：复用空白会话还是新建、
+      // 失败如何 warn，都在它里面，这一层不碰会话数据。
+      if (rowElement.getAttribute('aria-expanded') === 'false') rowElement.click()
+      resolveUiWorkspace().startSession(targets[0])
+      return
+    }
     if (actionId === 'rename') {
       // prompt 只有一行字，取的是上游那个对话框的标题而不是输入框的 aria label。
       const title = kind === 'session' ? t('rename.session.title') : t('rename.workspace.title')
