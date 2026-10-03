@@ -104,6 +104,7 @@ const setup = await evaluate(`(() => {
     run: mkRow({ running: true }),
     combo: mkRow({ selected: true, running: true }),
     multi: mkRow({ selected: true, multi: true }),
+    multiRun: mkRow({ running: true, multi: true }),
     drop: mkRow({ running: true, drop: true }),
   }
   host.append(...Object.values(rows))
@@ -117,9 +118,10 @@ const setup = await evaluate(`(() => {
   // tertiary 也探一份：某些第三方主题把 label-secondary 与 label-tertiary 解析成
   // 同一个色（测试栈副本就撞上白色==白色），这时「时间提亮」只能验到「规则挂上了
   // 正确的 token」，验不到可见变亮——断言按这个降级口径写。
+  // 多选配色不在这里探：它的期望值由多选行自己的 computed 值推（见 resolveOverSurface），
+  // 探一枚与规则无关的别名 token 只会让断言锚回一个已经弃用的基线。
   const alias = {}
   for (const [name, token] of Object.entries({
-    multiSelect: '--dsw-alias-bg-multi-select, rgba(77, 107, 254, 0.22)',
     labelSecondary: '--dsw-alias-label-secondary, #999',
     labelTertiary: '--dsw-alias-label-tertiary, #777',
   })) {
@@ -131,11 +133,74 @@ const setup = await evaluate(`(() => {
     alias[name] = { bg: getComputedStyle(el).backgroundColor, color: getComputedStyle(el).color }
     el.remove()
   }
+
+  // 多选高亮的两枚自定义属性：描边色与填充色都从这读，断言不重算 color-mix。
+  const custom = {}
+  for (const [name, prop] of Object.entries({
+    accent: '--dsh-oi-multi-accent',
+    outline: '--dsh-oi-multi-outline',
+  })) {
+    const el = document.createElement('div')
+    el.className = cls.row
+    el.setAttribute('role', 'treeitem')
+    el.setAttribute('data-dsh-oi-selected', '')
+    el.style.cssText = 'position:absolute;left:-9999px'
+    document.body.append(el)
+    custom[name] = getComputedStyle(el).getPropertyValue(prop).trim()
+    el.remove()
+  }
+  // 半透明色叠到侧边栏底色上的合成值。**不能靠 background-image 叠层再读
+  // backgroundColor**——那读到的只是最底层的底色，叠在上面的渐变不进这个属性，
+  // 拿到的永远是未合成的底色（实测第一版就是这么算出假读数）。这里自己按 alpha 混。
+  // 解析器认两种写法：rgb()/rgba() 的 0~255 分量，与 color(srgb f f f / a) 的 0~1 分量
+  // ——color-mix() 在 computed value 里就是后者。
+  const parseColor = (value) => {
+    const srgb = value.match(/color\\(srgb\\s+([^)]+)\\)/)
+    if (srgb !== null) {
+      const parts = srgb[1].split(/[\\s/]+/).filter(Boolean).map(Number)
+      return { rgb: parts.slice(0, 3).map((v) => v * 255), a: parts.length > 3 ? parts[3] : 1 }
+    }
+    const nums = value.match(/[\\d.]+/g)
+    if (nums === null) return null
+    return {
+      rgb: [Number(nums[0]), Number(nums[1]), Number(nums[2])],
+      a: nums.length > 3 ? Number(nums[3]) : 1,
+    }
+  }
+  const over = (fg, bg) => {
+    const f = parseColor(fg)
+    const s = parseColor(bg)
+    if (f === null || s === null) return null
+    return f.rgb.map((c, i) => c * f.a + s.rgb[i] * (1 - f.a))
+  }
+  // 侧边栏底色。**每次调用现读，不能在 setup 时缓存一次**：缓存下来的值属于当时那档
+  // 主题，浅色档就会拿浅色描边去对深色底色比，算出一个根本不存在的低对比度。
+  const surfaceColor = () => {
+    const el = document.createElement('div')
+    el.style.cssText = 'position:absolute;left:-9999px;background-color:var(--dsw-specific-sidebar-fill, #fff)'
+    document.body.append(el)
+    const out = getComputedStyle(el).backgroundColor
+    el.remove()
+    return out
+  }
+  // 把 box-shadow 的首个颜色分量抠出来：描边的 computed 值是 color-mix 的解析结果，
+  // 自定义属性里留着未解析的 color-mix() 字符串，两者不能混用。
+  // **不能按空白切**——color(srgb 0.529 0.661 0.992) 内部有空格，按空格切只会切出
+  // "color(srgb" 这种碎片。改按 "0px" / "inset" 这些阴影独有的 token 定位。
+  const shadowColor = (shadow) => {
+    const m = shadow.match(/^(.+?)\\s+(?:-?\\d[\\d.]*px|inset)/)
+    return m === null ? '' : m[1]
+  }
   document.body.append(host)
 
   const cs = (el, pseudo) => getComputedStyle(el, pseudo ?? null)
   window.__dshOiRows__ = {
-    rows, staggerRows, alias, host, ourSheet, cls,
+    rows, staggerRows, alias, custom, host, ourSheet, cls,
+    resolveOverSurface: (colorValue) => {
+      const mixed = over(colorValue, surfaceColor())
+      return mixed === null ? '' : 'rgb(' + mixed.map((v) => Math.round(v)).join(', ') + ')'
+    },
+    shadowColor, surfaceColor,
     read: (key) => {
       const el = rows[key]
       const before = cs(el, '::before')
@@ -159,6 +224,43 @@ const setup = await evaluate(`(() => {
     },
     timeColor: (key) => cs(rows[key].querySelector('.' + CSS.escape(cls.time))).color,
     staggerDelays: () => staggerRows.map((el) => cs(el, '::after').animationDelay),
+    // 多选可辨性的全部读数。一次算完返回，好让深浅两档复用同一份实现。
+    legible: () => {
+      // 分量提取按括号内的纯数字走。**正则要写两个反斜杠**：这段代码本身在 setup 的
+      // 模板字符串里，单反斜杠会被模板串先吃掉变成字面字母 d，于是 /[d.]+/g 只匹得到
+      // 小数点，Number('.') 得 NaN，断言拿到的是 null 而不是数字。
+      const srgb = (c) => {
+        const body = c.slice(c.indexOf('(') + 1, c.lastIndexOf(')'))
+        const parts = (body.match(/[\\d.]+/g) ?? []).slice(0, 3).map(Number)
+        return c.startsWith('color(') ? parts.map((v) => v * 255) : parts
+      }
+      const lum = (c) => {
+        const [r, g, b] = srgb(c).map((v) => {
+          const s = v / 255
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+        })
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+      }
+      const cr = (a, b) => {
+        const x = lum(a); const y = lum(b)
+        return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
+      }
+      const over = (c) => window.__dshOiRows__.resolveOverSurface(c)
+      const rd = (key) => window.__dshOiRows__.read(key)
+      // 描边色取多选行 box-shadow 的解析结果，不是自定义属性里未解析的 color-mix() 字符串
+      const outline = shadowColor(cs(rows.multi).boxShadow)
+      const surface = surfaceColor()
+      const plainBg = over(rd('control').bg)
+      const selBg = over(rd('sel').bg)
+      const multiBg = over(rd('multi').bg)
+      return {
+        surface, plainBg, selBg, multiBg, outline,
+        outlineVsSurface: outline === '' ? 0 : cr(outline, surface),
+        outlineVsFill: outline === '' ? 0 : cr(outline, multiBg),
+        fillVsPlain: multiBg === '' ? 0 : cr(multiBg, plainBg),
+        fillVsSelected: multiBg === '' ? 0 : cr(multiBg, selBg),
+      }
+    },
   }
   return {
     cls, upstreamSelectedRule,
@@ -245,11 +347,49 @@ check('选中+运行中：竖条与彗尾同现', combo,
   (v) => (v.beforeContent === '""' && v.afterAnimName === 'dsh-oi-row-sweep')
     || `期望两者都在，实测 before=${v.beforeContent} after=${v.afterAnimName}`)
 const multi = await evaluate('window.__dshOiRows__.read("multi")')
-const expectMulti = await evaluate('window.__dshOiRows__.alias.multiSelect.bg')
-check('选中+多选：底色归多选蓝（表内顺序契约的落点）', { bg: multi.bg, alias: expectMulti },
-  (v) => (v.bg === v.alias && !v.bg.includes(signal)) || `期望多选别名色 ${v.alias}，实测 ${v.bg}`)
+// 底色不再读 bg-multi-select（那是中性灰，与侧边栏底色 1.07×，看不出被选中）；
+// 期望值从多选行自己的填充合成结果读，断言只管「哪条规则赢」。
+const expectMulti = await evaluate(`(() => {
+  const rows = window.__dshOiRows__
+  return rows.resolveOverSurface(rows.read('multi').bg)
+})()`)
+check('选中+多选：底色归多选规则（表内顺序契约的落点）', { bg: multi.bg, alias: expectMulti },
+  (v) => (v.bg !== `rgba(${signal}, 0.1)` && v.bg !== `rgba(${signal}, 0.14)` && !v.bg.includes(signal))
+    || `期望多选填充色（不该是功能 10 的信号色），实测 ${v.bg}`)
 check('选中+多选：青色竖条保留（伪元素不吃背景）', multi.beforeContent === '""' && multi.beforeBg === `rgb(${signal})`,
   (v) => v === true || '竖条丢了')
+
+// ---- 多选可辨性（用户诉求：任何主题都要一眼看出）----
+// 判据是 WCAG 对比度，不是「颜色不一样」。底色填充无论多深都只有 ~1.4×，承重的是描边，
+// 所以断言分开写：描边对侧边栏底色过 3:1（WCAG 非文本），填充对普通行底色只要求
+// 1.15×（保证不是「看不出差」——3:1 那条是描边的活，不强加给填充）。
+// 深浅两档都跑：摘属性、读数、还原在同一次 evaluate 里做完（见「主题切换」一节的坑）。
+const legibleDark = await evaluate('window.__dshOiRows__.legible()')
+const legibleLight = await evaluate(`(() => {
+  const b = document.body
+  const wasDark = b.hasAttribute('data-ds-dark-theme')
+  if (wasDark) b.removeAttribute('data-ds-dark-theme')
+  const out = window.__dshOiRows__.legible()
+  if (wasDark) b.setAttribute('data-ds-dark-theme', '')
+  return out
+})()`)
+for (const [name, v] of [['深色', legibleDark], ['浅色', legibleLight]]) {
+  check(`多选描边 vs 侧边栏底色 ≥ 3:1（${name}主题）`, v.outlineVsSurface,
+    (x) => x >= 3 || `期望 ≥3，实测 ${x.toFixed(2)}（描边 ${v.outline} vs 底 ${v.surface}）`)
+  check(`多选描边 vs 描边内侧填充 ≥ 3:1（${name}主题）`, v.outlineVsFill,
+    (x) => x >= 3 || `期望 ≥3，实测 ${x.toFixed(2)}（描边 ${v.outline} vs 填充 ${v.multiBg}）`)
+  check(`多选填充 vs 普通行底色 ≥ 1.15×（${name}主题）`, v.fillVsPlain,
+    (x) => x >= 1.15 || `期望 ≥1.15，实测 ${x.toFixed(2)}（填充 ${v.multiBg} vs 普通行 ${v.plainBg}）`)
+}
+
+// 多选 + 运行中：功能 10 的静默底边是 (0,2,1)，会盖掉多选描边 (0,2,0)，批量圈选里的
+// 运行中行会丢掉选中信号——断言要求描边取回且与信号色底边同现。
+const multiRun = await evaluate('window.__dshOiRows__.read("multiRun")')
+const multiRunOutline = await evaluate('window.__dshOiRows__.shadowColor(window.__dshOiRows__.read("multiRun").boxShadow)')
+const plainOutline = await evaluate('window.__dshOiRows__.shadowColor(window.__dshOiRows__.read("multi").boxShadow)')
+check('多选+运行中：描边取回且与静默底边同现', { ...multiRun, outline: multiRunOutline, plainOutline },
+  (v) => (v.outline !== '' && v.outline === v.plainOutline && v.boxShadow.includes(`rgba(${signal}, 0.15)`))
+    || `期望描边 ${v.plainOutline} 取回 + 静默底边 rgba(${signal}, 0.15)，实测 outline=${v.outline} shadow=${v.boxShadow}`)
 
 // ---- 拖拽让位 ----
 const drop = await evaluate('window.__dshOiRows__.read("drop")')
