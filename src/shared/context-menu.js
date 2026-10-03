@@ -50,6 +50,9 @@ export function openContextMenu(options) {
   const root = document.createElement('div')
   root.className = ROOT_CLASS
   root.setAttribute('role', 'menu')
+  // 菜单表面带这枚属性，主题的描边分档规则挂在它上面——缺了它，深色下那条覆盖规则
+  // 命中不了，描边色退回 l1，比上游浅一档。声明那半在 MENU_CSS 里，两档各靠一半。
+  root.setAttribute('data-menu-material', 'translucent')
   if (owner !== undefined) root.setAttribute(OWNER_ATTR, owner)
   root.style.left = '0px'
   root.style.top = '0px'
@@ -203,8 +206,10 @@ export const MENU_CSS = `
      surface。主题真把 --dsw-specific-menu 定成半透明时，合成结果仍比页面底色实。 */
   background-color: var(--dsw-alias-bg-layer-1, #2c2c2e);
   background-image: linear-gradient(var(--dsw-oi-surface), var(--dsw-oi-surface));
-  /* 上游默认档：border 归零，边界感来自 elevation-prominent 里那条
-     0.5px 描边阴影——描边色由 elevation-stroke-color 指定，两条要一起抄。 */
+  /* 上游默认档：border 归零，边界感来自 elevation-prominent 里那条 0.5px 描边阴影，
+     描边色与那条阴影要一起给。档位跟上游那条 _list 规则一致写 l1：浅色下主题只在 body
+     上发过这枚 token（值是 l4），没人给菜单重发，靠这份声明才回到 l1；深色下主题那条
+     body[data-ds-dark-theme] [data-menu-material] 覆盖特异度更高，把这份盖成 l3。 */
   --dsw-elevation-stroke-color: var(--dsw-alias-border-l1, rgba(128,128,128,0.3));
   box-shadow: var(--dsw-elevation-prominent, 0 8px 24px rgba(0, 0, 0, 0.28));
   color: var(--dsw-alias-label-primary, inherit);

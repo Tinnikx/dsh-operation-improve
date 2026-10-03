@@ -25,7 +25,23 @@
 
 `scripts/lib/ts-checks.mjs` 把原「labels never overlap body text」（用元素 rect 判交叠，nowrap 溢出假阳性）改成几何不变式 **「row labels sit in the reserved band and never cover body text」**：`contentRight = rr.right - parseFloat(getComputedStyle(row).paddingRight)`，守三条件 `floatOut`（`a.right > rr.right`，越出本行右缘=会话区外回归）、`tooNarrow`（`padR + 0.5 < a.width`，带宽装不下标签）、`intrude`（`a.left + 0.5 < contentRight`，标签侵入正文区=压字）。正文满铺到内容盒右缘即止不进带，标签待带里二者必不相交，故不逐行抠正文矩形、无假阳性。
 
-## 未完成项与下一步
+## 主题漂移：菜单浮层描边分档
+
+0.2.0-rc.2 起，`dsh-client-ui-theme` 在 `body[data-ds-dark-theme] [data-menu-material]` 作用域内发 `--dsw-elevation-stroke-color: var(--dsw-alias-border-l3)`——**只有深色这一档**；浅色下 `[data-menu-material]` 没有任何对应规则，能看到的只有 `body` 上那一档 l4。上游菜单自己的 `._list` 规则（`ui-primitives` 的 Menu，`dsh-web-frontend/dist/assets/index-*.css`）写死了 `--dsw-elevation-stroke-color: var(--dsw-alias-border-l1)`，加上 JSX 上的 `data-menu-material="translucent"`，两半合起来才是「浅色 l1 / 深色 l3」。本仓的浮层那份声明照抄了 l1、却没带那枚属性，于是深色下主题那条覆盖命中不了，描边色退回 l1：`list.boxShadow` 那 0.5px 描边本插件算得 `rgba(255,255,255,0.06)`、上游是 `0.16`（l3），只有深色主题看得出差，浅色两档同值。
+
+修法是**两半一起给**：菜单根元素补上 `data-menu-material="translucent"`，同时把 [src/shared/context-menu.js](../src/shared/context-menu.js) 里原有的 `--dsw-elevation-stroke-color: var(--dsw-alias-border-l1, …)` **留着**。两半缺一不可，且错的方向相反：只有属性不吃声明，浅色下主题只在 `body` 上发过这枚 token（值是 l4），没人给菜单重发，落到 l4，比上游深一档；只有声明不吃属性，深色下主题那条覆盖规则挂在 `[data-menu-material]` 选择器上、特异度 0,2,1，压不过也命中不了，退回 l1，比上游浅一档。两半都在时浅色靠自报那份、深色被主题盖成 l3，深浅两档 `boxShadow` 与上游逐字相等。
+
+**`src/find/index.js` 里功能 11 的查找条有同一行拷贝，没跟改**：那条横条不是菜单、上游没有对应物，它那层阴影是本仓自己选的，没有判据能验什么才是「对齐」。给它照搬菜单的 material 标记等于凭空声明它是一张菜单表面。
+
+判据分两处。`metrics()` 多取两样——`material: menu.getAttribute('data-menu-material')` 与 `stroke: l.getPropertyValue('--dsw-elevation-stroke-color').trim()`（**解析后的值，不是声明串**），`menu metrics match the primitives default tier` 那条在 `styleDiff` 之前先单比这两样；**都单列而不混进 metrics 里靠 boxShadow 反推**——boxShadow 那串里混着两档同值的层，只有深色主题露馅。
+
+但那一条只在**启动时那一档主题**下跑，而缺两半各在一档里露馅（见下），所以另立一条 `menu stroke colour matches upstream in both themes`：用 `withTheme()` 把 `data-ds-dark-theme` 摘掉又挂回，两档各读一遍两个菜单。除了逐档比，还要求**两档读出的值必须不同**——相同就说明其中一档没生效（属性没被主题接住，或声明把主题那份盖住了），这条 FAIL 而不是当作巧合放过。
+
+回归证法（变异测试）：把那行 `--dsw-elevation-stroke-color` 声明删掉重建重跑，`menu stroke colour matches upstream in both themes` FAIL（浅色档 l4 ≠ 上游 l1）而 `menu metrics match the primitives default tier` 仍 PASS——**后者单独留着就抓不到它**，这正是新增这条的理由。
+
+**中途走过一段错路，教训记在这里**：先只补了属性、把自报声明摘掉（当时认定「不自己报档，档位完全交给主题」），深色转绿、整套 29/29 全过，但**浅色从 l1 掉到 l4、比上游深一档——而当时的判据看不出来**，因为它只单比 `material`、剩下的交给 boxShadow，那正是浅色两档同值的情形；测试栈又只起深色那一档。是靠一条临时探针分别读本插件菜单与上游菜单在两档下的解析值才发现（探针已删，`tmp/` 被 `.gitignore` 忽略）。**「判据绿」不等于「改对了」：判据没覆盖的那一半要自己量，尤其当一个改动同时影响多个主题时，单主题的绿灯只能证明它覆盖的那一档。**
+
+## 未验证项与下一步
 
 - 跨年会话（`Y/M/D HH:mm:ss` 更宽标签）的带宽变宽只在理论上覆盖，`verify:timestamps` 只在当前世界会话跑。
 - 真桌面客户端手工项：跨年前缀标签的观感、流式输出时的布局抖动。
@@ -40,5 +56,5 @@
 - **修掉一个根因不等于修完**：观察者自激修好后 117 行会话已追平基线，但 473 行仍差 291ms——第二个根因（逐行写内联 style）只在更长的会话上才显形。**性能类改动必须在「用户描述的那个规模」上量**，短会话的绿灯不算数。
 - **CSS 模板字符串块内注释别用反引号**：CSS 里写 `` `decorate()` `` 这类反引号会截断模板串，esbuild 报 `Expected ";" but found "decorate"`（`src/timestamps/index.js:428`）。两次踩同一坑，注释里改用中文引号或不加引号。
 - **verify 的重叠断言别用元素矩形**：nowrap 的 think-summary（`lcKema_summaryText`，父 `overflow:hidden`）文字溢出自己的矩形，元素 rect 判交叠必假阳性。改判「标签待在留白带里」（`paddingRight` 反算 `contentRight`）才干净。
-- **全套 `npm run verify` 里的 `verify:settings`「menu metrics match the primitives default tier」是既有 flake**：`list.boxShadow` 本插件 `rgba(255,255,255,0.06)` vs 上游 `rgba(255,255,255,0.16)`，断言重复登记 total=27。`verify:settings` 单跑 26/26 稳定过，但全套稳定失败；stash 掉本轮改动的**基线全套 verify 同样失败**（passed=26 failed=1 total=27）→ 全套套件里的跨测试干扰/主题 token 时序，与 timestamps 改动正交，不在本任务范围。
+- **`menu metrics match the primitives default tier` 那条 FAIL 是 0.2.0-rc.2 的主题漂移，与 timestamps 无关，已在 018 之后按用户指示在本条里修掉**（见下节「主题漂移：菜单浮层描边分档」）。当时判成「全套套件里的跨测试干扰/主题 token 时序」是错的：`verify:settings` 单跑 26/26 不是干扰，是那条断言操作的是**会话行**菜单（`sessionPair`），而 017 的时间戳在会话正文侧，两者本来不相干。**判据先落回机制再落回归属**——先查那条断言读的是哪个元素的哪个属性，stash 基线只证明「不是本轮引入」，不证明「原因是什么」。
 - **诊断/验证脚本必须与 `test-stack.mjs up` 在同一 bash 调用里跑**：跨调用后台栈被回收 → `ECONNREFUSED 127.0.0.1:9334`。诊断前须 `reloadAndWait` + 展开工作区 + 点开 ≥20 行会话，否则 `[data-chat-node-key]` 为空。`evaluate()` 只接受字符串表达式；`createEvaluator({port,prefix})` 返回 `{connect,evaluate,conn}`，`reloadAndWait(conn)` 传 conn。

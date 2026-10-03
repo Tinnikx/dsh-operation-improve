@@ -51,6 +51,8 @@
 
 尺寸抄的是 `Menu.module.css` 的**默认档**而不是 `.compactList`：卡片 `padding: 4px`、圆角 16px（`--dsw-radius-lg`）、`min-width: 144px`，行 `min-height: 34px`、圆角 12px（`--dsw-radius-md`）、字号 13/20、图标 14px 且色走 `--dsw-alias-menu-icon`——侧边栏那两处「...」菜单渲染 `Menu` 时既没传 `compact` 也没传 `dense`，抄紧凑档就和被对齐的目标差一整个尺寸级。同样由 `verify` 对两个菜单读 `getComputedStyle` 逐键比对，危险项（工作区删除）的配色单独比一份——它走的是另一套 token，和普通项一起比的话把 `danger` 规则整条写错也照样过。
 
+浮层边界的描边色是 `--dsw-elevation-stroke-color` 给的，这枚 token 的档位要**两半凑齐**才和上游一致：菜单根元素照上游带 `data-menu-material="translucent"`，`MENU_CSS` 里再自报一份 `var(--dsw-alias-border-l1)`（和上游那条 `_list` 规则同档）。少属性，深色下主题那条覆盖规则挂在 `[data-menu-material]` 选择器上、命中不了，退回 l1，比上游浅一档；少声明，浅色下主题只在 `body` 上发过这枚 token（值是 l4），没人给菜单重发，落到 l4，比上游深一档。两半都在时浅色靠自报那份、深色靠主题覆盖盖掉，两档都与上游逐字相等。
+
 ## 已知限制
 
 - 右键菜单借的是上游 `workspace` 词典的键。上游改键名不会让页面崩，只会让菜单上出现一行 `menu.fork` 这样的键名本身，并在控制台 `console.warn` 一次；`verify` 里那两条「菜单项 === 上游词典给的文本」的断言会先撞上这种改动。

@@ -655,6 +655,15 @@ const ROWMENU = `
     return {
       list: { boxSizing: l.boxSizing, minWidth: l.minWidth, maxWidth: l.maxWidth, padding: l.padding,
         borderRadius: l.borderRadius, borderTopWidth: l.borderTopWidth, boxShadow: l.boxShadow },
+      // 主题给浮层描边色分档靠这个属性（作用域在 data-menu-material 选择器里，
+      // 那里发 --dsw-elevation-stroke-color）。少了它，描边落到 body 上那一档，只有深色
+      // 主题看得出差，所以单独取出来比，不混在 metrics 里靠 boxShadow 反推。
+      material: menu.getAttribute('data-menu-material'),
+      // 描边色取解析后的值。这枚 token 的档位由「那枚属性 + 本仓自报的一条 l1」两半合成，
+      // 缺任一半都错一档：只有属性不吃声明，浅色落到 body 档的 l4，比上游深；只有声明
+      // 不吃属性，深色压不过主题那条覆盖，仍是 l1，比上游浅。两半都缺时深浅都是 l1，
+      // 和 boxShadow 一样只有深色露馅——所以与 material 一并单列，别指望 styleDiff 顺带。
+      stroke: l.getPropertyValue('--dsw-elevation-stroke-color').trim(),
       item: i === null ? null : { minHeight: i.minHeight, padding: i.padding, columnGap: i.columnGap,
         borderRadius: i.borderRadius, fontSize: i.fontSize, lineHeight: i.lineHeight,
         fontFamily: i.fontFamily, fontWeight: i.fontWeight, textAlign: i.textAlign, color: i.color },
@@ -698,6 +707,20 @@ const ROWMENU = `
     await sleep(150)
     result.upstreamClosed = !document.body.contains(opened.menu)
     result.mineClosed = document.querySelector('.dsh-oi-menu') === null
+    return result
+  }
+  // 描边色分档在两档主题里是**两条不同的机制**，只测启动时那一档，另一档等于没测：
+  // 缺属性只有深色露馅（主题那条覆盖挂在 [data-menu-material] 选择器上），缺自报声明
+  // 只有浅色露馅（那档主题没重发这枚 token，吃 body 上的 l4）。所以两份菜单都在两档下读一遍。
+  const withTheme = async (dark, run) => {
+    const had = document.body.hasAttribute('data-ds-dark-theme')
+    if (dark) document.body.setAttribute('data-ds-dark-theme', '')
+    else document.body.removeAttribute('data-ds-dark-theme')
+    await sleep(350)
+    const result = await run()
+    if (had) document.body.setAttribute('data-ds-dark-theme', '')
+    else document.body.removeAttribute('data-ds-dark-theme')
+    await sleep(350)
     return result
   }
 `
@@ -761,10 +784,53 @@ check('session menu mirrors the row\'s own menu', sessionPair, (v) => {
 check('menu metrics match the primitives default tier', sessionPair, (v) => {
   if (v.why != null) return `没测到：${v.why}`
   if (v.myMetrics === null) return '本插件菜单没渲染出来'
+  // 缺这枚属性时 boxShadow 仍可能逐字相等（浅色主题下两档同值），所以先单列一条，
+  // 别指望 metrics 那条把它带出来。
+  if (v.myMetrics.material !== v.upstreamMetrics.material) {
+    return `浮层的 data-menu-material 本插件 ${JSON.stringify(v.myMetrics.material)} / 上游 ${JSON.stringify(v.upstreamMetrics.material)}——主题靠它给描边色分档`
+  }
+  // 单比解析后的描边色：boxShadow 那串里混着两档同值的层，只有深色主题露馅，这条不挑主题。
+  if (v.myMetrics.stroke !== v.upstreamMetrics.stroke) {
+    return `描边色本插件 ${v.myMetrics.stroke} / 上游 ${v.upstreamMetrics.stroke}——那枚 token 要属性与自报声明两半都在才解析得对`
+  }
   const diff = styleDiff(v.myMetrics, v.upstreamMetrics)
   if (diff !== null) return `计算样式不等 —— ${diff}`
   if (v.upstreamMetrics.list.minWidth === 'auto' || v.upstreamMetrics.item === null) {
     return `上游菜单的计算样式读成了 ${JSON.stringify(v.upstreamMetrics)}，这条等于没比`
+  }
+  return true
+})
+
+// 描边色在两档主题里各测一遍：深浅缺的机制不同，只测启动那一档会漏掉另一半。
+const strokePairs = await evaluate(`(async () => {
+  ${ROWMENU}
+  window.__dshOperationImprove__.selection.clear()
+  const findRow = () => [...document.querySelectorAll('[role="treeitem"]')].find((el) =>
+    String(el.className).includes('_sessionRow') && el.querySelector('[class*="rowActions"] button') !== null)
+  const out = {}
+  for (const [name, dark] of [['dark', true], ['light', false]]) {
+    const row = findRow()
+    if (!row) return { why: 'no session row carries the ... button' }
+    out[name] = await withTheme(dark, () => pair(row, 200, 200))
+  }
+  return out
+})()`)
+
+check('menu stroke colour matches upstream in both themes', strokePairs, (v) => {
+  if (v.why != null) return `没测到：${v.why}`
+  for (const name of ['dark', 'light']) {
+    const p = v[name]
+    if (p === undefined) return `${name} 档没测到结果`
+    if (p.why != null) return `${name} 档没测到：${p.why}`
+    if (p.myMetrics === null) return `${name} 档本插件菜单没渲染出来`
+    if (p.myMetrics.stroke !== p.upstreamMetrics.stroke) {
+      return `${name} 档描边色本插件 ${p.myMetrics.stroke} / 上游 ${p.upstreamMetrics.stroke}——那枚 token 要属性与自报声明两半都在才解析得对`
+    }
+    // 两档分开断言，两档的差异本身就是「分档真的在发生」的证据：两档读出同一个值，
+    // 说明其中一档没生效（属性没被主题规则接住，或声明把主题那份盖了）。
+    if (v.dark.myMetrics.stroke === v.light.myMetrics.stroke) {
+      return `两档读出同一个描边色 ${p.myMetrics.stroke}，主题的分档没生效，这条等于没测`
+    }
   }
   return true
 })
