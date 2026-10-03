@@ -110,7 +110,7 @@ lib/                           构建产物，client bundle 是 __ModuleLoader__
 
 插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余九项一个 slot 都不占——功能 5、7、10 连监听都没有，另外六项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
 
-- 功能 1、2 在侧边栏挂**捕获阶段**监听（要抢在 React 合成事件之前拦下 `ctrl` 点击与右键），菜单直接挂 `document.body`（`z-index: 2147483000`），高亮走 `[data-dsh-oi-selected]` 属性——不复用行自己的 `_selected` 类，那是「当前会话」的语义。
+- 功能 1、2 在侧边栏挂**捕获阶段**监听（要抢在 React 合成事件之前拦下 `ctrl` 点击与右键），菜单直接挂 `document.body`（`z-index: 2147483000`），高亮走 `[data-dsh-oi-selected]` 属性——不复用行自己的 `_selected` 类，那是「当前会话」的语义。高亮本身是**主题强调色实色描边 + 24% 淡填充**：描边是承重信号（对侧边栏底 6.5~7.5×），填充只做氛围（对普通行 1.3~1.4×），强调色取自主题 token，换主题换色相而可辨性不变（见 [docs/handoff/019-multiselect-highlight-outline.md](docs/handoff/019-multiselect-highlight-outline.md)）。
 - 功能 4 只读会话页的 DOM 与 React fiber，标签作为节点行自己的子节点插入，由观察 `document.body` 的 `MutationObserver` 驱动。
 - 功能 5 一行 JS 都不跑，只往那张样式表里追加几条规则；摘掉样式表即还原。
 - 功能 6 同样是 `document` 上的捕获阶段 `contextmenu`，与功能 2 各自判各自的地盘（见 [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md)），复用功能 2 那份菜单组件与样式，自己不带任何 CSS。

@@ -4,6 +4,7 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 019 | 多选高亮重做：描边 + 主题感知填充（深浅两档可辨） | 完成 | [019-multiselect-highlight-outline.md](docs/handoff/019-multiselect-highlight-outline.md) |
 | 018 | 工作区行右键菜单补上「新会话」（对齐上游 hover 那枚按钮） | 完成 | [018-workspace-new-session-item.md](docs/handoff/018-workspace-new-session-item.md) |
 | 017 | 功能 4 时间标签布局：不遮字 + 正文向左推（留白带） | 完成 | [017-timestamps-no-overlap-band.md](docs/handoff/017-timestamps-no-overlap-band.md) |
 | 016 | harness 0.2.0-rc.2 适配（九镜像面零漂移 + 功能 8 收 1 张新卡） | 完成 | [016-harness-0.2.0-rc.2-adaptation.md](docs/handoff/016-harness-0.2.0-rc.2-adaptation.md) |
