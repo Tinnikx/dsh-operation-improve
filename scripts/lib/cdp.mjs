@@ -78,6 +78,28 @@ export function abort(reason, detail) {
  */
 export async function createEvaluator({ port, prefix }) {
   /**
+   * 读一次 CDP 的 target 列表，网络层失败就重试。
+   *
+   * 每次重试都换一个 `Connection: close` 的请求头，让 undici 不复用池里那条连接——
+   * 否则重试只会再撞一次同一条死连接。
+   *
+   * @param {number} attempts 最多试几次
+   * @returns {Promise<object[]>} `/json/list` 的结果
+   */
+  async function fetchTargets(attempts) {
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/json/list`, { headers: { connection: 'close' } })
+        return await res.json()
+      } catch (error) {
+        if (i === attempts - 1) throw error
+        await new Promise((r) => setTimeout(r, 1000))
+      }
+    }
+    return []
+  }
+
+  /**
    * 开一条到当前页面 target 的 CDP 连接。
    *
    * **每次求值都新开一条，而不是全程共用一条长驻连接**：断言里会点击会话行，
@@ -86,7 +108,13 @@ export async function createEvaluator({ port, prefix }) {
    * 就此断掉。重开连接会重新解析 target 与执行上下文，因此切会话后照样能求值。
    */
   async function connect() {
-    const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
+    // 取 target 列表这一步要重试：undici 会把到 `127.0.0.1:<cdpPort>` 的连接放进池里，
+    // 而「重启测试栈」会连 Chrome 带 CDP 端口一起换掉，池里那条旧连接随即变成死连接。
+    // 下一个请求命中它就抛 `[TypeError: fetch failed] [cause] SocketError: other side
+    // closed / code: 'UND_ERR_SOCKET'`——看着像协议层故障，其实是**一条过期连接**。
+    // 连带被掀掉的还有 WebSocket 的握手：Chrome 刚起时 9334 上可能还没有 target，
+    // 那与「死连接」是两回事，分开重试。
+    const targets = await fetchTargets(5)
     const page = targets.find((t) => t.type === 'page' && t.url.startsWith(prefix))
     if (page === undefined) {
       abort(`CDP ${port} 上没有 ${prefix} 的页面 target`, '先起一个加载了该地址的 Chrome 实例，见 README「验证」。')

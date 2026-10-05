@@ -236,6 +236,25 @@ export const MODEL_ENTRIES = [
     ],
   },
   {
+    id: 'session-controller',
+    title: '会话列表扫描节奏',
+    plugin: '@deepseek-ai/dsh-api-session-controller',
+    effect: 'restart',
+    description: '侧边栏会话列表每次扫描让出事件循环的节奏。会话特别多时列表转圈的时长在这一卡调。',
+    notice: '本卡只调 `listWorkSliceMs`——会话服务那条 entry 上还有一枚 `nativeOpen`（是否走系统默认程序打开会话关联的文件），它是部署形态的开关、在 web 上没有意义，不收进面板。改这一条 entry 的 config 会触发 harness 的热重挂，而热重挂正是 [harness 0.1.6 那个把会话服务一起摘掉的缺陷](../docs/harness-hmr-session-defect.md)的近邻，因此整卡按「重启后生效」标注。',
+    fields: [
+      {
+        // 上游是 `z.natural().min(1)`：正整数，没有 default 字段以外的界（`default(16)` 在
+        // schema 里投影成 `default: 16`）。它只在构造时解析一次（`new ApiSessionList(ctx,
+        // resolved.listWorkSliceMs)`），会话列表每扫满这么久就 `await scheduler.yield()`
+        // 让出一次事件循环，让长列表的滚动与输入不被一帧扫描卡住。
+        key: 'listWorkSliceMs', type: 'integer', default: 16, min: 1, effect: 'restart',
+        label: '单次扫描时间片（毫秒）', help: '会话列表扫描每干满这么久让出一次事件循环。调大＝单次扫描更久但让出更少（列表点开更慢、界面更跟手），调小反之。上游拒绝小于 1 的值。重启 harness 后按新值执行。',
+      },
+    ],
+    crossRules: [],
+  },
+  {
     id: 'session-reference',
     title: '会话引用',
     plugin: '@deepseek-ai/dsh-session-reference',
@@ -379,6 +398,32 @@ export const MODEL_ENTRIES = [
       {
         key: 'imageCompressionConcurrency', type: 'integer', default: 2, min: 1, max: 8, effect: 'nextAttachment',
         label: '压缩并发数', help: '上游硬限 1–8。',
+      },
+    ],
+    crossRules: [],
+  },
+  {
+    id: 'schedule',
+    title: '定时任务投递历史',
+    plugin: '@deepseek-ai/dsh-schedule',
+    effect: 'immediate',
+    description: '定时任务（`schedule_create` 那一族工具）每次到期投递之后的回执留存：留多久、留多少条。',
+    notice: '投递回执只留在任务自己的存储里（每条任务各一份），不影响会话消息。留得越久越方便回查「上次到底投没投」，也占越多存储。',
+    fields: [
+      {
+        // 上游是 `z.number().step(1).min(1).max(3650)`——`.step(1)` 把值域收在整数上，
+        // schema dump 也投影成 `integer`，面板照它收窄。写下去的那一刻上游就校验（patch
+        // 是热的），所以 min/max 都是硬边界而非面板防呆。
+        // 0.2.0-rc.2 上这条 entry 只被 `dsh-experimental-schedule-bundle` 插进组合，本卡从
+        // 0.2.1-alpha.1 起才成立：那个 experimental bundle 已删除，`dsh-web-app/cordis.patch.yml`
+        // 改为把 `schedule` 直接挂进 web 组合（insert 且没有 disabled），`presets/cordis.patch.yml`
+        // 再挂 `tool-schedule` 与 schedule_create/delete/list/update 四个工具。
+        key: 'deliveryHistoryDays', type: 'integer', default: 30, min: 1, max: 3650, effect: 'immediate',
+        label: '回执保留天数', help: '每条任务的历史投递回执只留最近这么多天；调小会丢掉旧任务的「上次投递于何时」证据。上游拒绝 0 与超过 3650。',
+      },
+      {
+        key: 'deliveryHistoryRecords', type: 'integer', default: 200, min: 1, max: 10000, effect: 'immediate',
+        label: '回执保留条数', help: '每条任务最多留这么多条投递回执，超出丢最旧的。上游拒绝 0 与超过 10000。',
       },
     ],
     crossRules: [],

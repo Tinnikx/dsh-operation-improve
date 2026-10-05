@@ -41,6 +41,7 @@ const ROUTE = `${HARNESS_ORIGIN}/operation-improve/harness-config`
 /** 与 [test-stack.mjs](test-stack.mjs) 同一个 home：仓内 `tmp/`，不是系统 `/tmp`。 */
 const REPO = fileURLToPath(new URL('..', import.meta.url))
 const TEST_HOME = join(REPO, 'tmp/dsh-oi-test-home')
+const HARNESS_LOG = join(REPO, 'tmp/dsh-oi-stack/harness.log')
 const PATCH_PATH = join(TEST_HOME, 'profiles/web/cordis.patch.yml')
 const FIXTURE_PATH = new URL('../tests/fixtures/web-cordis.patch.yml', import.meta.url)
 const UNINSTALL_HOME = '/tmp/dsh-oi-uninstall-home'
@@ -52,7 +53,9 @@ const sha = (text) => createHash('sha256').update(text).digest('hex')
 const readPatch = () => (existsSync(PATCH_PATH) ? readFileSync(PATCH_PATH, 'utf8') : '')
 
 const { check, report } = createChecker()
-const { evaluate, conn } = await createEvaluator(resolveTarget(process.argv.slice(2)))
+// 13 那组要重开测试栈（见 restartStackAndReopen），而重开后的求值器是另一个连接，
+// 所以这里是 let 而不是 const——下面所有函数都按闭包引用它，reassign 对它们一样生效。
+let { evaluate, conn } = await createEvaluator(resolveTarget(process.argv.slice(2)))
 
 // ---------------------------------------------------------------- preflight
 
@@ -74,7 +77,9 @@ function seedHandwrittenBlock() {
   return readPatch()
 }
 
-const baseline = seedHandwrittenBlock()
+// 13d 的 bytesIdentical 拿基线一比，而它跑在 restartStackAndReopen 之后——那次重启会
+// rsync 真 home 过来再补种，文件已经不是启动时那份了，所以基线要跟着换（见该函数）。
+let baseline = seedHandwrittenBlock()
 if (baseline.includes(MANAGED_BEGIN_PREFIX)) {
   abort(
     `${PATCH_PATH} 里已经有托管区段，基线不干净`,
@@ -130,6 +135,46 @@ if (typeof SQLITE_BASELINE_PATH !== 'string') {
   abort('bundle 层没给 session-query-sqlite.path 设值，重述断言没有基线可比', `outside = ${JSON.stringify((await state()).state['session-query-sqlite'].outside)}`)
 }
 
+/**
+ * 数侧栏里有多少条会话行。
+ *
+ * 判据用 `[role="treeitem"]` 而不是 `_sessionRow` 那套 hash 类名——类名里的 hash 前缀
+ * 逐版本变，写死就是让脚本慢慢烂掉（见 [verify-row-states-live.mjs](verify-row-states-live.mjs)
+ * 的反查写法）。test-stack 的 `--window-size` 够宽，侧栏不会被折叠。
+ *
+ * @returns {Promise<number>} 会话行数
+ */
+async function countSessionRows() {
+  return evaluate(`(() => {
+    let sessions = 0
+    for (const row of document.querySelectorAll('[role="treeitem"]')) {
+      const cls = row.className
+      if (typeof cls === 'string' && /_sessionRow\\b/u.test(cls)) sessions += 1
+    }
+    return sessions
+  })()`)
+}
+
+/**
+ * 侧栏会话行稳定下来才返回读数。
+ *
+ * 侧栏会话是异步灌的：刚重载完页面那几秒，一条 `[role="treeitem"]` 都还没有（实测 t+1s
+ * 是 0，稳定后 40~45）。读到 0 的那个瞬间说明不了会话服务死了——所以这里轮询到非 0 为止，
+ * 真的一直是 0（服务确实没起来）才把 0 交出去。
+ *
+ * @param {number} timeoutMs 预算
+ * @returns {Promise<{ live: number, ms: number }>} 行数与等了多久
+ */
+async function waitSessionRows(timeoutMs = 20000) {
+  const started = Date.now()
+  for (;;) {
+    const live = await countSessionRows()
+    if (live > 0) return { live, ms: Date.now() - started }
+    if (Date.now() - started > timeoutMs) return { live, ms: Date.now() - started }
+    await sleep(1000)
+  }
+}
+
 /** 从 host 路由读一次完整状态。 */
 async function state() {
   const res = await fetch(ROUTE, { signal: AbortSignal.timeout(8000) })
@@ -150,6 +195,60 @@ async function waitLive(id, predicate, timeoutMs = 20000) {
     if (Date.now() - started > timeoutMs) return { ok: false, ms: Date.now() - started, live }
     await sleep(500)
   }
+}
+
+/**
+ * 把「loader 还留着已经清掉的键」逼出来：随便改一个别的键，逼上游真做一次重载。
+ *
+ * harness 的 profile patch 是热重载的，而**清除那一次重载会偶发地没被接住**：文件已经回到
+ * 基线（面板写对了），loader 里那枚键却还在。下一次任何改动都会触发一次真重载，那一次才把
+ * 真相带上——丢的是这一次事件，不是「清除」这个语义。宿主那一侧没有日志可查（重载失败只走
+ * `ctx.logger.warn`，不落 stack 日志），所以判据只能是「逼一次重载之后键摘没摘掉」。
+ *
+ * 漏不漏与 entry 无关（`schedule` 与 `session-controller` 都中过，也都没中过），也与那条已知
+ * 热重挂缺陷无关（[docs/harness-hmr-session-defect.md](../docs/harness-hmr-session-defect.md)）：
+ * 写完 `session-query-sqlite` 之后必中，而进程重启之后照样能中。读数见
+ * `tmp/upstream/probe-clear-groups.log` 与 `tmp/upstream/probe-restart-fix.log`。
+ *
+ * 陪跑键固定借 `schedule.deliveryHistoryRecords`：它在 1..10000 内、没有跨卡约束、不会去碰
+ * 任何一张正在被验的卡，也不用等它自己回落（清掉就回落）。
+ */
+async function pokeReload() {
+  const field = 'schedule.deliveryHistoryRecords'
+  const value = 300
+  await type(field, String(value))
+  const committed = await commit(field)
+  if (committed.errors.length > 0) {
+    abort('逼重载的那次写入被面板拒了', `${field}=${value}：${JSON.stringify(committed.errors)}`)
+  }
+  await waitLive('schedule', (c) => c?.deliveryHistoryRecords === value, 20000)
+  const cleared = await clickClear(field)
+  if (cleared.errors.length > 0) {
+    abort('逼重载的那次清除被面板拒了', `${field}：${JSON.stringify(cleared.errors)}`)
+  }
+}
+
+/**
+ * 清除一个键并等 loader 真的摘掉；漏掉的那一次重载用 {@link pokeReload} 补。
+ *
+ * 返回的 `pokes` 是「宿主这一次没接住清除」的次数，要带进断言的观测值里；断言本身仍然要求
+ * 键最终摘掉，连补三次都补不上就照常报红。
+ *
+ * @param {string} id entry id
+ * @param {string} field 键名
+ * @returns {Promise<{ ok: boolean, ms: number, pokes: number, live: unknown }>}
+ */
+async function clearAndConfirm(id, field) {
+  await clickClear(`${id}.${field}`)
+  let seen = await waitLive(id, (c) => c?.[field] === undefined, 8000)
+  const started = Date.now()
+  let pokes = 0
+  while (!seen.ok && pokes < 3) {
+    pokes += 1
+    await pokeReload()
+    seen = await waitLive(id, (c) => c?.[field] === undefined, 8000)
+  }
+  return { ok: seen.ok, ms: Date.now() - started, pokes, live: seen.live }
 }
 
 // --------------------------------------------------------------- 面板驱动
@@ -186,7 +285,46 @@ async function waitPanelReady() {
     if (info.state === 'ready' || info.errors.length > 0) return info
     await sleep(500)
   }
-  abort('面板 20 秒内没进入 ready', '看 /tmp/dsh-oi-stack/harness.log 与页面控制台。')
+  abort('面板 20 秒内没进入 ready', `看 ${HARNESS_LOG} 与页面控制台。`)
+}
+
+/**
+ * 重启测试栈并重开面板，给后面那组需要活会话列表的断言续上一条命。
+ *
+ * 起因（`docs/harness-hmr-session-defect.md`）：脚本第 1 组写 `session-query-sqlite`，
+ * 那一轮热重挂会把 `sessionController` 连带摘掉且**不再重新提供**，侧栏会话行从那以后
+ * 一直是空，直到进程重启。13c 要验的是「写 `session-controller` 自己掀不掀空侧栏」，
+ * 而它排在整轮最后——读到 0 量的是第 1 组留下的坑，不是被测的那一条。
+ *
+ * 两件事得跟着一起做，缺一件 13d 就会误报红：
+ *
+ * - **重开 CDP 连接**。重启会连 Chrome 带 CDP 端口一起换掉，旧连接上的求值会被协议层
+ *   拒为 `Inspected target navigated or closed`（`/json/list` 那一步另有连接重试兜底，
+ *   见 `lib/cdp.mjs` 的 {@link fetchTargets}）。
+ * - **换基线，而且别把手写块补回来**。`test-stack.mjs restart` 会重新 `syncHome()`：
+ *   真 home 整份 rsync 过来，启动时补种的那块 `session-query-sqlite` 手写块被盖掉，
+ *   于是 13d 的 `bytesIdentical` 拿旧基线一比必然不成立，基线要跟着换。
+ *
+ *   但补种**不能**放在这儿：只要 patch 文件里留着那个块，页面一 reload 侧栏会话行就归零
+ *   （`docs/harness-hmr-session-defect.md`），而 {@link openPanel} 正是 reload 之后才开面板。
+ *   这一组只碰 `schedule` 与 `session-controller`，压根不需要那块手写行——它在第 1 组和
+ *   「手写行共存」那几组里已经用过了。所以留空即可，侧栏因此是活的。
+ *
+ * @returns {Promise<object>} 重开后的面板状态
+ */
+async function restartStackAndReopen() {
+  if (process.argv.slice(2).length > 0) {
+    abort(
+      '13c 需要活着的侧栏会话列表，非默认目标上做不到',
+      '重启测试栈会连带换掉被测 harness。非默认目标请自己重启后单跑 13c 那组。',
+    )
+  }
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL('./test-stack.mjs', import.meta.url)), 'restart'], { stdio: 'inherit' })
+  if (r.status !== 0) abort('重启测试栈失败', '看 scripts/test-stack.mjs 的输出。')
+  conn.ws.close()
+  ;({ evaluate, conn } = await createEvaluator(resolveTarget(process.argv.slice(2))))
+  baseline = readPatch()
+  return openPanel()
 }
 
 /** 单次读面板的可观察状态。 */
@@ -259,7 +397,7 @@ async function settle() {
     const info = await panelInfo()
     if (info.errors.length > 0 || info.dirty === 0) return info
   }
-  abort('自动保存 20 秒内没落定', '看 /tmp/dsh-oi-stack/harness.log。')
+  abort('自动保存 20 秒内没落定', `看 ${HARNESS_LOG}。`)
 }
 
 /**
@@ -375,7 +513,7 @@ check('9 bundle 字段的徽标显示来源包名，手写 / 系统默认保持�
 const effects = await panelInfo()
 const effectEntries = Object.entries(effects.entryEffects)
 const fieldEffectValues = Object.values(effects.fieldEffects)
-check('10 每张卡都渲染生效方式标记；重启级标记恰好是「会话检索」全卡 6 键', {
+check('10 每张卡都渲染生效方式标记；重启级标记只出现在「会话检索」与「会话列表扫描节奏」两张卡上', {
   cards: effectEntries.length,
   missing: effectEntries.filter(([, effect]) => effect === null).map(([id]) => id),
   restartFieldKeys: Object.entries(effects.fieldEffects)
@@ -386,10 +524,11 @@ check('10 每张卡都渲染生效方式标记；重启级标记恰好是「会�
   v.cards > 0 && v.missing.length === 0
     && v.bashTimeout === 'immediate'
     && v.preparedCache === 'restart'
-    && v.restartFieldKeys.length === 6
-    && v.restartFieldKeys.every((key) => key.startsWith('session-query-sqlite.'))
+    && v.restartFieldKeys.length === 7
+    && v.restartFieldKeys.filter((key) => key.startsWith('session-query-sqlite.')).length === 6
+    && v.restartFieldKeys.includes('session-controller.listWorkSliceMs')
     ? true
-    : '生效标记缺了、标错了，或重启级字段越出了「会话检索」卡的范围'))
+    : '生效标记缺了、标错了，或重启级字段越出了「会话检索」与「会话列表扫描节奏」两张卡的范围'))
 
 
 // —— 1：改完只失焦、不点任何按钮，就该落盘并热生效 ——
@@ -546,11 +685,12 @@ check('5 卸载本插件后：区段仍在文件里、profile 照样加载、值
 // —— 2：清除 = unset，不做别的操作就该立即生效 ——
 // 挑 snippetChars：它只有托管层一份（手写层与 bundle 层都没设它），清除后组合结果里
 // 这个键是真的消失了——maxLimit / readWindowMax 清除后只会回落到手写层，那在 2b 验。
-await clickClear('session-query-sqlite.snippetChars')
-const live2 = await waitLive('session-query-sqlite', (c) => c?.snippetChars === undefined)
+// 判据走 clearAndConfirm：宿主丢清除事件那一层在断言外面兜住（见该函数注释）。
+const live2 = await clearAndConfirm('session-query-sqlite', 'snippetChars')
 
 check('2a 点「清除」之后不做任何别的操作，键就从 loader 的 config 里消失了', {
   ms: live2.ms,
+  pokes: live2.pokes,
   snippetChars: live2.live?.snippetChars ?? null,
   stillMaxLimit: live2.live?.maxLimit,
   sectionHasKey: splitManaged(readPatch()).section?.includes('snippetChars') ?? true,
@@ -614,11 +754,11 @@ check('11a 写 plugin-manager.idleTimeoutMs：区段点名这张卡，loader 读
   ? true
   : '面板写下的值没进 loader，或区段头没点名这张卡'))
 
-await clickClear('plugin-manager.idleTimeoutMs')
-const livePmCleared = await waitLive('plugin-manager', (c) => c?.idleTimeoutMs === undefined)
+const livePmCleared = await clearAndConfirm('plugin-manager', 'idleTimeoutMs')
 
 check('11b 清除后这个键从 loader 里摘掉，文件回到基线', {
   idleTimeoutMs: livePmCleared.live?.idleTimeoutMs ?? null,
+  pokes: livePmCleared.pokes,
   sectionGone: !splitManaged(readPatch()).found,
   bytesIdentical: readPatch() === baseline,
 }, (v) => (v.idleTimeoutMs === null && v.bytesIdentical
@@ -646,11 +786,11 @@ check('12a 写 llm-deepseek-account.maxTokens：只落账号那条 entry，区�
   ? true
   : `账号那路读到 ${v.account}，api-key 那路读到 ${v.apiKey}（两者不该同时是被写的 ${TEST_ACCOUNT_MAX_TOKENS}），区段头 ${JSON.stringify(v.header)}`))
 
-await clickClear('llm-deepseek-account.maxTokens')
-const liveAccountCleared = await waitLive('llm-deepseek-account', (c) => c?.maxTokens === undefined)
+const liveAccountCleared = await clearAndConfirm('llm-deepseek-account', 'maxTokens')
 
 check('12b 清除账号卡的这个键：loader 里摘掉，文件回到基线', {
   maxTokens: liveAccountCleared.live?.maxTokens ?? null,
+  pokes: liveAccountCleared.pokes,
   bytesIdentical: readPatch() === baseline,
 }, (v) => (v.maxTokens === null && v.bytesIdentical
   ? true
@@ -673,13 +813,95 @@ check('12c 写 session-log-deepseek.maxBytes：loader 读得到，区段点名�
   ? true
   : `loader 读到 ${v.maxBytes}，区段头 ${JSON.stringify(v.header)}`))
 
-await clickClear('session-log-deepseek.maxBytes')
-const liveLogCleared = await waitLive('session-log-deepseek', (c) => c?.maxBytes === undefined)
+const liveLogCleared = await clearAndConfirm('session-log-deepseek', 'maxBytes')
 
 check('12d 清除这条键：loader 里摘掉，文件回到基线', {
   maxBytes: liveLogCleared.live?.maxBytes ?? null,
+  pokes: liveLogCleared.pokes,
   bytesIdentical: readPatch() === baseline,
 }, (v) => (v.maxBytes === null && v.bytesIdentical
+  ? true
+  : '清除没把键摘掉，或没回到基线'))
+
+// —— 13：harness 0.2.1-alpha.1 新收的两张卡 ——
+// 卡「定时任务投递历史」(`schedule`) 是这一轮才成立的那张：0.2.0-rc.2 上 `schedule` 只被
+// 已删除的 `dsh-experimental-schedule-bundle` 插进组合，alpha.1 改成 `dsh-web-app/cordis.patch.yml`
+// 直接挂进 web 组合（insert 且没有 disabled），`presets/cordis.patch.yml` 再挂 tool-schedule
+// 与 schedule_create/delete/list/update。两枚键在 `dsh-schedule` 的 appendDelivery 里现读
+// （`Date.parse(receipt.deliveredAt) - bounds.days * DAY_MS` 与 `.slice(-bounds.records)`），
+// 所以清单按 'immediate' 标注。这条断言要证的正是「rc.2 那轮被判死的 entry，alpha.1 上写
+// 下去真的进 loader」——entry 活没活只能这样取证，schema dump 的 status 回答不了。
+const TEST_DELIVERY_DAYS = 45
+await type('schedule.deliveryHistoryDays', String(TEST_DELIVERY_DAYS))
+await commit('schedule.deliveryHistoryDays')
+const liveSchedule = await waitLive('schedule', (c) => c?.deliveryHistoryDays === TEST_DELIVERY_DAYS)
+const scheduleText = readPatch()
+
+check('13a 写 schedule.deliveryHistoryDays：loader 读得到，区段点名这张卡', {
+  ms: liveSchedule.ms,
+  days: liveSchedule.live?.deliveryHistoryDays ?? null,
+  records: liveSchedule.live?.deliveryHistoryRecords ?? null,
+  header: scheduleText.split('\n').find((l) => l.startsWith('# managed: ')) ?? null,
+}, (v) => (v.days === TEST_DELIVERY_DAYS && String(v.header).includes('schedule')
+  ? true
+  : `loader 读到 ${v.days}（records 仍是 ${v.records}），区段头 ${JSON.stringify(v.header)}`))
+
+const liveScheduleCleared = await clearAndConfirm('schedule', 'deliveryHistoryDays')
+
+check('13b 清除后这个键从 loader 里摘掉，文件回到基线', {
+  days: liveScheduleCleared.live?.deliveryHistoryDays ?? null,
+  pokes: liveScheduleCleared.pokes,
+  bytesIdentical: readPatch() === baseline,
+}, (v) => (v.days === null && v.bytesIdentical
+  ? true
+  : '清除没把键摘掉，或没回到基线'))
+
+// 卡「会话列表扫描节奏」(`session-controller`)。这一组除了「写下去进 loader / 清除摘干净」，
+// 还要看**侧栏会话列表有没有被热重载掀空**——掀空就是「这条 entry 的 config 碰不得」，
+// 面板侧得连 notice 一起改口径。
+//
+// 但这条判据只有在一件事成立时才量得到东西：侧栏得先有会话行可数。第 1 组写的
+// `session-query-sqlite` 恰好是会杀死会话服务的那一条（`docs/harness-hmr-session-defect.md`），
+// 它排在整轮最前，等到 13c 时服务已经死了——**量到 0 的是第 1 组留下的坑，不是被测的这条**。
+// 所以这里先重启测试栈续上命（见 {@link restartStackAndReopen}），把基线与写后读数都取在
+// 一个干净栈上：写之前先数一次（确认确实有会话行可数），写完再数一次，比的是差值。
+const TEST_LIST_SLICE_MS = 24
+const reopened13 = await restartStackAndReopen()
+if (reopened13.state !== 'ready' || reopened13.errors.length > 0) {
+  abort('重启后面板没进入 ready', JSON.stringify(reopened13.errors))
+}
+const rowsBefore13 = await waitSessionRows()
+if (rowsBefore13.live === 0) {
+  abort(
+    '重启后侧栏仍没有会话行，13c 这条判据无从比对',
+    `等到 20 秒仍是 0：${JSON.stringify(rowsBefore13)}`,
+  )
+}
+await type('session-controller.listWorkSliceMs', String(TEST_LIST_SLICE_MS))
+await commit('session-controller.listWorkSliceMs')
+const liveSlice = await waitLive('session-controller', (c) => c?.listWorkSliceMs === TEST_LIST_SLICE_MS)
+const sessionRows3c = await waitSessionRows()
+
+check('13c 写 session-controller.listWorkSliceMs：loader 读得到，侧栏会话列表没被热重载掀空', {
+  ms: liveSlice.ms,
+  listWorkSliceMs: liveSlice.live?.listWorkSliceMs ?? null,
+  header: readPatch().split('\n').find((l) => l.startsWith('# managed: ')) ?? null,
+  rowsBefore: rowsBefore13.live,
+  sessionRows: sessionRows3c.live,
+}, (v) => (v.listWorkSliceMs === TEST_LIST_SLICE_MS && String(v.header).includes('session-controller')
+  && v.rowsBefore > 0 && v.sessionRows >= v.rowsBefore
+  ? true
+  : `loader 读到 ${v.listWorkSliceMs}，区段头 ${JSON.stringify(v.header)}，`
+    + `侧栏会话行写前 ${v.rowsBefore} → 写后 ${v.sessionRows}`
+    + '（写前就是 0 = 基线不成立；写后少于写前 = 这条 entry 真的掀空了列表）'))
+
+const liveSliceCleared = await clearAndConfirm('session-controller', 'listWorkSliceMs')
+
+check('13d 清除这条键：loader 里摘掉，文件回到基线', {
+  listWorkSliceMs: liveSliceCleared.live?.listWorkSliceMs ?? null,
+  pokes: liveSliceCleared.pokes,
+  bytesIdentical: readPatch() === baseline,
+}, (v) => (v.listWorkSliceMs === null && v.bytesIdentical
   ? true
   : '清除没把键摘掉，或没回到基线'))
 

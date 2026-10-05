@@ -156,10 +156,44 @@ const probeFlow = () => evaluate(`(() => {
   return { rows: rows.length, chars: text.length, hasComposer: document.querySelector('div[contenteditable="true"][role="textbox"]') !== null }
 })()`)
 
+/**
+ * 挑一个「在 DOM 里、但可见口径 0 命中」的词，用第 15 条的折叠判据。
+ *
+ * 词直接从 oracle 的 raw/visible 差集里要：这是「在 DOM 里但用户看不见」的定义式取法，不
+ * 依赖某个具体的宿主选择器——上游把折叠面做成 disclosure（`aria-expanded="false"`）还是
+ * `hidden="until-found"`，差集口径自己就跟着走。
+ *
+ * 每一段文本都取**中段**开头的一个词：折叠时组标题会显示一段摘要预览，取开头的词会连摘要
+ * 一起命中。词还要在可见口径下 0 命中，否则「别处也有同样的词」会让判据失真。
+ *
+ * @returns {Promise<string|null>} 没有可用的词时返回 null——不是每条会话都带整组折叠的过程块
+ */
+const probeInvisibleQuery = () => evaluate(`(() => {
+  const visible = window.__dshOiFindTexts('visible').map((text) => text.toLowerCase())
+  const elsewhere = (needle) => {
+    let n = 0
+    for (const hay of visible) {
+      let at = hay.indexOf(needle)
+      while (at !== -1) { n += 1; at = hay.indexOf(needle, at + needle.length) }
+    }
+    return n
+  }
+  for (const text of window.__dshOiFindTexts('raw')) {
+    const m = /\\S[^\\n\\r]{11,}/u.exec(text.slice(Math.floor(text.length / 2)))
+    if (m === null) continue
+    const query = m[0].slice(0, 12)
+    if (elsewhere(query.toLowerCase()) > 0) continue
+    return query
+  }
+  return null
+})()`)
+
 let picked = null
 {
   const rows = await listSessionRows()
   console.log(`[session-pick] ${rows.length} 行会话`)
+  /** 满足长度判据的最后一条会话。一条都没挑到带折叠块的，回它。 */
+  let settledIndex = null
   for (let i = 0; i < Math.min(rows.length, 12) && picked === null; i += 1) {
     if ((await clickSessionRow(i)) === false) break
     let prevChars = null
@@ -167,9 +201,19 @@ let picked = null
       await sleep(400)
       const flow = await probeFlow()
       if (flow.chars < 400) continue
-      if (prevChars === flow.chars) { picked = flow; break }
-      prevChars = flow.chars
+      if (prevChars !== flow.chars) { prevChars = flow.chars; continue }
+      settledIndex = i
+      // 第 15 条的折叠判据只在带整组折叠过程块的会话上成立，而够长的会话里不带折叠块的
+      // 占多数（实测同栈 12 条够长的会话里只有 3 条能取到折叠词）。只按长度挑第一条，
+      // 等于把这条断言押在运气上——所以把「能取到折叠词」一并当入选条件往下挑。
+      if (await probeInvisibleQuery() !== null) picked = flow
+      break
     }
+  }
+  if (picked === null && settledIndex !== null) {
+    await clickSessionRow(settledIndex)
+    picked = await probeFlow()
+    console.log(`[session-pick] 前 12 条里没有会话带折叠过程块，回第 ${settledIndex} 条，第 15 条会据实报红`)
   }
 }
 if (picked === null) {
@@ -330,37 +374,13 @@ check('菜单开着时第一次 Esc 让位给菜单，第二次才收条', { men
 
 // ---- 15-16：折叠正文不计入命中，展开后出现 ----
 
-// 「已完成工作」这类整组折叠的过程块：上游把正文容器标成 `[hidden]`，而主题给它的不是
-// display:none 而是 `content-visibility: hidden`——元素仍有 layout 盒，光看矩形判不出来，
-// 靠的是 `checkVisibility({ checkVisibilityCSS: true })`。实测一条多轮会话上有 59 个这样
-// 的条目：组里的思考与工具文本全在 DOM 里，但一个字都画不出来，也不该被搜到。
-// 挑词时要求它在可见口径下 0 命中，否则「别处也有同样的词」会让判据失真。
-const invisibleQuery = await evaluate(`(() => {
-  const opts = { checkVisibilityCSS: true, visibilityProperty: true, contentVisibilityAuto: true }
-  const hosts = [...document.querySelectorAll('[data-chat-flow-key] [hidden], [data-chat-node-key] [hidden]')]
-    .filter((host) => !(host.checkVisibility(opts) && host.getClientRects().length > 0))
-  for (const host of hosts) {
-    const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT)
-    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-      const value = node.nodeValue ?? ''
-      // 从正文中后段取词：折叠时组标题会显示一段摘要预览，取开头的词会同时命中摘要。
-      const m = /\\S[^\\n\\r]{11,}/.exec(value.slice(Math.floor(value.length / 2)))
-      if (m === null) continue
-      const query = m[0].slice(0, 12)
-      const needle = query.toLowerCase()
-      let elsewhere = 0
-      for (const text of window.__dshOiFindTexts('visible')) {
-        const hay = text.toLowerCase()
-        let at = hay.indexOf(needle)
-        while (at !== -1) { elsewhere += 1; at = hay.indexOf(needle, at + needle.length) }
-      }
-      if (elsewhere > 0) continue
-      return query
-    }
-  }
-  return null
-})()`)
-if (invisibleQuery === null) abort('页面上没有「在 DOM 里但整组不可见」的正文', '折叠判据（第 15 条）实测未发生：需要一个带折叠过程块的会话。')
+// 「已完成工作」这类整组折叠的过程块：正文全在 DOM 里，但一个字都画不出来，也不该被搜到。
+// 挑会话时已经把这条当入选条件（见 probeInvisibleQuery），到这里只剩确认那枚词符合预期口径。
+// 判据分两把尺：raw>0（字确实在 DOM 里）与 visible===0（可见口径一个都不算），插件也要
+// 跟着算 0。插件 rowKeyFor() 与脚本 oracle 各自独立写一遍折叠契约
+// （[lib/find-page.mjs](lib/find-page.mjs)），对不上才是这条要报的失败。
+const invisibleQuery = await probeInvisibleQuery()
+if (invisibleQuery === null) abort('页面上没有「在 DOM 里但整组不可见」的正文', '折叠判据（第 15 条）实测未发生：前 12 条够长的会话里没有一条带整组折叠的过程块。')
 
 await press('f', 'KeyF', 70, CTRL)
 await setQuery(invisibleQuery)
