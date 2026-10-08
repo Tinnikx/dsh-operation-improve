@@ -1,50 +1,45 @@
 /**
  * 功能 2：侧边栏右键菜单。
  *
- * 单选（右键落在未被多选的行上）：菜单项逐项对齐该行「...」菜单——工作区
- * rename / delete，会话 pin / rename / fork，顺序、文案、图标、动作都一样，
- * 上游没有分隔线这里也不加。置顶项跟着行的置顶态翻转（pin ↔ unpin），归档行的末项是
- * 「取消归档」；归档行上游不渲染置顶项，这里同样不给。两个状态都在开菜单那一刻读
- * `workspaces.list.getSnapshot()`。**项的集合没有任何运行时通道**——被对齐的那份「...」
- * 菜单是点按钮开的，上游在侧边栏行上没有任何 `contextmenu` 监听，插件弹的是自己按
- * `buildItems` 现搭的 DOM；上游新增一类行状态或改某一项的翻转口径，这一份都要跟着改。
+ * **单选会话行的每一项都来自上游 slot，不是本地写的**：菜单项是
+ * `sidebar.workspaces.session.menu.item` 这个 list slot 里注册的条目（上游
+ * `ui-workspace/src/client/session-actions/`，注册点 `src/client/index.ts:285-290`，
+ * 顺序 pin 100 / rename 200 / fork 300 / archive 400）。本插件按上游渲染器的语义读出条目、
+ * 装好 props、渲染进 [../shared/slot-rows.jsx](../shared/slot-rows.jsx)，于是上游加一项
+ * 或改一项的文案与图标，本地这份菜单自动跟着变。这几个条目带来的东西也一并是上游的：
+ * 文案与快捷键提示（`workspace` 词典与 `ctx.shortcuts.catalog`）、置顶/归档态的翻转口径，
+ * 以及各自的动作回调——归档那一项的完整链路（活动中的会话要先确认「停止并归档此会话？」）
+ * 由上游 `shell.overlay` 里那个确认弹窗接手。
  *
- * **单选工作区行多一项「新会话」，这不是漂移而是补齐**：上游把新会话放在行 hover
- * 时的第二个 icon button 上（与「...」并列，同一个 `rowActions` 槽），不在那个「...」
- * 菜单里，所以插件逐项对齐「...」对齐不到它、只能在这一份里补上。走的服务是同一个
- * `UiWorkspaceService.startSession(workspaceId)`（`ctx.get('uiWorkspace')`），与点那枚
- * hover 按钮逐字同一条路径：展开该组、连上工作区、复用或新建空白会话并切到它。
- * 上游 hover 按钮另带 tooltip 文案 `actions.newSession` 与 aria `actions.newSession.aria`，
- * 前者是本项文案（借上游词典），后者绑在真实按钮上、不需要抄。「未分组」那一行的上游
- * 按钮是个空操作（那组没有 workspaceId，`onCreate` 里直接 return），而本插件的反查在
- * 那一行取不到 workspaceId、压根不接管这次右键——两边都等于这一行给不出这一项。
+ * 单选工作区行没有对应的上游 slot（上游那一份是 `ProjectRowItem` 里写死的 data `items`，
+ * 只有 rename / delete 两项），所以这一支仍然是本地 data 行，但**外壳换成了上游 `Menu`**，
+ * 图标取自上游 `ui-primitives` 导出的 React 图标（不再有内联 SVG 拷贝）。工作区单选多一项
+ * 「新会话」：上游把它放在行 hover 时那枚与「...」并列的按钮上，不在「...」菜单里，逐项
+ * 对齐「...」对齐不到它，只能在这里补（见 {@link workspaceItems}）。走的服务是同一个
+ * `UiWorkspaceService.startSession(workspaceId)`，与点那枚 hover 按钮同一条路径。
  *
- * **归档这一项是例外，故意不给**（单选与批量都不给）：上游那一项不是「调一次服务」——
- * 会话有进行中的工作时第一次 `archiveSession` 被 host 拒（`workspace/session-active`），
- * 上游捕获后弹「停止并归档此会话？」列出将被停的回合 / 子代理 / 后台任务 / 定时提醒，
- * 确认了才带 `{ stopActivity: true }` 重试。只抄前半句的结果是对有进行中的会话静默失效，
- * 所以这一项让位给行自己的「...」。**取消归档照给**：它不带 options、不会被拒，抄一半
- * 就是完整的。连带后果说清楚：会话多选没有任何批量动作了（`sessions` 契约上没有
- * delete），只剩选中、计数与高亮；右键落在多选会话行上时本插件不弹菜单，也**不拦**默认
- * 行为——注意上游行上本来就没有右键菜单（`dsh-client-ui-workspace` 里没有任何 `contextmenu`
- * 监听，桌面壳只给托盘设了原生菜单），落到的是浏览器默认，通常是"什么都不弹"。
- *
- * 多选：工作区给「删除 N 个工作区」。
+ * 多选：工作区给「删除 N 个工作区」。会话多选没有任何批量动作（`sessions` 契约上没有
+ * delete），右键落在多选会话行上时本插件不弹菜单也不拦默认行为——上游行上本来就没有右键
+ * 菜单（`ui-workspace` 里没有任何 `contextmenu` 监听），落到的是浏览器默认。
  *
  * 文案不落在这个文件里，全部经 `t` / `tOwn` 取自词典（来源与理由见
- * [../shared/locale.js](../shared/locale.js)）。**取值必须发生在打开菜单的那一刻**，
- * 那正是它跟随语言切换的机制：`t` 调用时才读 active locale，而 `buildItems` 与
- * `run` 都在事件回调里跑。
+ * [../shared/locale.js](../shared/locale.js)）。取值发生在打开菜单的那一刻，那正是它跟随
+ * 语言切换的机制：`t` 调用时才读 active locale，而 `workspaceItems` 与 `run` 都在事件
+ * 回调里跑。
  *
  * 二次确认也跟着上游走：删除工作区上游弹对话框，这里就 `confirm`，批量那一项一律问一次
- * （一次点掉多行没有撤销）；取消归档上游不问，这里也不问。
- *
- * 重命名的初值与删除确认里的 `{name}` 都取自
- * [rowTitle](../shared/row-probe.js)，即上游那两个对话框各自的初值字段。
+ * （一次点掉多行没有撤销）。重命名的初值取自 [rowTitle](../shared/row-probe.js)，即上游
+ * 那个对话框的初值字段。
  */
+import { createElement } from 'react'
+import {
+  IconEditOutlineRegular,
+  IconNewChatOutlineRegular,
+  IconTrashOutlineRegular,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { closestRow, rowId, rowTitle } from '../shared/row-probe.js'
-import { openContextMenu } from '../shared/context-menu.js'
-import { MENU_ICONS } from '../shared/menu-icons.js'
+import { closeContextMenu, openContextMenu } from '../shared/menu.jsx'
+import { SessionMenuRows, sessionMenuEntries } from '../shared/slot-rows.jsx'
 
 /**
  * 安装右键菜单。
@@ -52,7 +47,9 @@ import { MENU_ICONS } from '../shared/menu-icons.js'
  * @param {{
  *   store: ReturnType<import('../shared/selection-store.js').createSelectionStore>,
  *   workspaces: any,
- *   sessions: any,
+ *   slots: any,
+ *   shortcuts?: any,
+ *   locale: any,
  *   getUiWorkspace?: () => ({ startSession: (workspaceId: string) => void } | undefined),
  *   t: (key: string, params?: Record<string, unknown>) => string,
  *   tOwn: (key: string, params?: Record<string, unknown>) => string,
@@ -60,13 +57,16 @@ import { MENU_ICONS } from '../shared/menu-icons.js'
  *   prompt?: (message: string, initial: string) => (string|null),
  *   owner?: string,
  * }} deps `t` 查上游 `workspace` 词典，`tOwn` 查本插件自己的，两者都必需。
- *   `getUiWorkspace` 取上游 `UiWorkspaceService`，只在「新建会话」那一项上用；返回
+ *   `slots` / `shortcuts` / `locale` / `workspaces` 是渲染上游条目所必需的上下文：
+ *   `slots.entriesOfSlot` 读条目表，`shortcuts.catalog` 是 rename / fork / archive 三个
+ *   条目上那枚快捷键提示的来源（上游注册在 `ui-workspace/src/client/shortcuts.ts:96/101/115`），
+ *   `locale.bind` 给条目投影它声明的词典，`workspaces.list` 是置顶/归档态那个 observable 的源。
+ *   `getUiWorkspace` 取上游 `UiWorkspaceService`，只在「新会话」那一项上用；返回
  *   `undefined`（或这个依赖本身缺省）时那一项整个不出现。
- *   `owner` 原样传给 `openContextMenu`，标在菜单元素上供调用方确认归属。
  * @returns {() => void} 幂等 disposer
  */
 export function installContextMenu(deps) {
-  const { store, workspaces, sessions, owner, t, tOwn } = deps
+  const { store, workspaces, owner, t, tOwn } = deps
   /**
    * **每次现取，不缓存**：插件 apply 与 ui-workspace 那个 Service 的注册没有先后保证，
    * apply 时取到 `undefined` 就等于这一项永久缺席；每次现取则两种加载顺序都能工作。
@@ -89,185 +89,126 @@ export function installContextMenu(deps) {
 
     const batch = store.getKind() === row.kind && store.has(row.kind, id) && store.size() > 1
     const targets = batch ? store.getIds() : [id]
-    const items = buildItems(row.kind, targets)
-    // **没有项就整个不接管**：不 preventDefault 也不 stopPropagation。反过来先拦下默认
-    // 行为再返回，右键就成了「什么都不发生」——那比弹一个没用的菜单更糟。会话多选正是
-    // 这种情形：它唯一的批量动作（归档）已让位给上游的「...」（见头注释）。
-    if (items.length === 0) return
 
+    // 会话：单选走上游 slot 的全部条目，多选这一支无项可给。
+    if (row.kind === 'session') {
+      const children = batch ? [] : sessionRows(targets[0], row.element)
+      // **没有项就整个不接管**：不 preventDefault 也不 stopPropagation。反过来先拦下默认
+      // 行为再返回，右键就成了「什么都不发生」——那比弹一个没用的菜单更糟。
+      if (children.length === 0) return
+      event.preventDefault()
+      event.stopPropagation()
+      openContextMenu({ x: event.clientX, y: event.clientY, owner, children })
+      return
+    }
+
+    const items = batch ? batchWorkspaceItems(targets) : workspaceItems()
+    if (items.length === 0) return
     event.preventDefault()
     event.stopPropagation()
-
     openContextMenu({
       x: event.clientX,
       y: event.clientY,
       items,
       owner,
-      anchor: row.element,
-      onSelect: (actionId) => {
-        void run(actionId, row.kind, targets, row.element)
-      },
+      onSelect: (actionId) => { void run(actionId, targets, row.element) },
     })
   }
 
   /**
-   * @param {'session'|'workspace'} kind
-   * @param {string[]} targets
+   * 单选会话行的菜单行：上游 slot 的全部条目。
+   *
+   * 那一格 slot 在上游 `ctx.slots.inject('sidebar.workspaces', …)` 注册浏览器时才被声明
+   * （`ui-workspace/src/client/index.ts:268`，注释：「Declaring is claiming」），而那些条目
+   * 随声明到达后陆续注册。所以条目表**此刻**可能还是空的——真机上侧栏已经渲染出行了，
+   * 注册早已完成；尚未声明时读到的空表按「这一格没有条目」处理，与上游渲染器同一口径。
+   *
+   * @param {string} sessionId
+   * @param {HTMLElement} rowElement
+   * @returns {import('react').ReactNode[]}
    */
-  function buildItems(kind, targets) {
-    const many = targets.length > 1
-    if (kind === 'workspace') {
-      if (many) {
-        return [{ id: 'delete', label: tOwn('batch.deleteWorkspaces', { n: targets.length }), icon: MENU_ICONS.trash, danger: true }]
-      }
-      const items = []
-      // 「新建会话」摆在首位：它对应的是行 hover 时那枚与「...」并列的按钮，不是「...」
-      // 里的项，所以逐项对齐「...」对齐不到它，只能在这里补（头注释）。上游那一枚是
-      // hover 才出现的，本插件给它一个常驻位置——右键菜单本来就是常驻的，不存在收起。
-      //
-      // **未分组那一行没有这一项**：`targets[0]` 是本插件从 fiber 反查出来的 workspaceId，
-      // 那一行反查不到（上游那组的 `workspaceId` 是 `undefined`，不是字符串），走不到这里
-      // ——它压根不接管那次右键，而不是给一个点了没反应的新建入口。
-      //
-      // 服务缺席时同样不给那一项：宁可少一项，也不要一个点下去没有回应的入口。
-      if (resolveUiWorkspace() !== undefined) {
-        items.push({ id: 'newSession', label: t('actions.newSession'), icon: MENU_ICONS.newChat })
-      }
-      items.push({ id: 'rename', label: t('rename'), icon: MENU_ICONS.edit })
-      items.push({ id: 'delete', label: t('delete.workspace'), icon: MENU_ICONS.trash, danger: true })
-      return items
-    }
-    // 会话多选不给任何项：批量归档让位给上游（理由见头注释），而 `sessions` 契约上没有
-    // delete，这里无事可做。调用方拿到空列表就不接管这次右键。
-    if (many) return []
-    // 置顶项跟着上游走：排在最前（order 100），已置顶换成实心图 + 「取消置顶」，
-    // 归档行上游不渲染这一项（「...」里和 hover 按钮都是），这里同样不给。
-    const snapshot = workspaces.list.getSnapshot()
-    const pinned = snapshot.pinnedSessionIds.includes(targets[0])
-    const archived = snapshot.archivedSessionIds.includes(targets[0])
+  function sessionRows(sessionId, rowElement) {
+    const rows = sessionMenuEntries(deps.slots)
+    if (rows.length === 0) return []
+    return [createElement(SessionMenuRows, {
+      deps,
+      sessionId,
+      displayTitle: rowTitle(rowElement, 'session'),
+      // `MenuOpenState`（上游 `contract/slots.ts:83`）：条目靠它关菜单，而菜单的关闭归本
+      // 模块——上游那四项在行菜单里也是调 `setMenuOpen(false)`，同一个约定。
+      hookContext: [true, () => closeContextMenu()],
+    })]
+  }
+
+  /**
+   * 工作区单选的项：新会话 / rename / delete。
+   *
+   * @returns {import('react').ReactNode[]}
+   */
+  function workspaceItems() {
     const items = []
-    if (!archived) {
-      items.push({
-        id: pinned ? 'unpin' : 'pin',
-        label: t(pinned ? 'menu.unpinSession' : 'menu.pinSession'),
-        icon: pinned ? MENU_ICONS.pinFill : MENU_ICONS.pinOutline,
-      })
+    // 「新建会话」摆在首位：它对应的是行 hover 时那枚与「...」并列的按钮，不是「...」
+    // 里的项，所以逐项对齐「...」对齐不到它，只能在这里补（模块头）。上游那一枚是
+    // hover 才出现的，本插件给它一个常驻位置——右键菜单本来就是常驻的，不存在收起。
+    //
+    // **未分组那一行没有这一项**：那一行的 workspaceId 是 `undefined`，本插件从 fiber
+    // 反查不到、走不到这里——它压根不接管那次右键，而不是给一个点了没反应的新建入口。
+    //
+    // 服务缺席时同样不给那一项：宁可少一项，也不要一个点下去没有回应的入口。
+    if (resolveUiWorkspace() !== undefined) {
+      items.push({ id: 'newSession', label: t('actions.newSession'), icon: createElement(IconNewChatOutlineRegular) })
     }
-    items.push({ id: 'rename', label: t('rename'), icon: MENU_ICONS.edit })
-    items.push({ id: 'fork', label: t('menu.fork'), icon: MENU_ICONS.branch })
-    // 归档行给「取消归档」，未归档行**不给**「归档会话」：上游那一项在被 host 拒时还要
-    // 弹「停止并归档此会话？」并带 `stopActivity` 重试，这一份抄不起（头注释）。
-    // 取消归档不带 options、不会被拒，抄过来是完整的。上游这两项都没有 `danger`，跟着不标。
-    if (archived) {
-      items.push({ id: 'unarchive', label: t('menu.unarchiveSession'), icon: MENU_ICONS.unarchive })
-    }
+    items.push({ id: 'rename', label: t('rename'), icon: createElement(IconEditOutlineRegular) })
+    items.push({ id: 'delete', label: t('delete.workspace'), icon: createElement(IconTrashOutlineRegular), danger: true })
     return items
   }
 
   /**
-   * 重命名一个会话，走上游 `WorkspaceBrowser` 用的那条路径。
+   * 工作区多选只有删除一项。一次点掉多行没有撤销，所以一律问一次。
    *
-   * `binding()` 对「既没被列出也没被 scope」的会话返回 `undefined`；侧边栏里的行按定义
-   * 都在列表里，所以走到这里拿不到 binding 说明选中的 id 根本不是会话，**必须抛**而不是
-   * 当成「改名没生效」静默返回。`rename()` 自己不抛，失败包在 `RpcResult.ok` 里。
-   *
-   * @param {string} sessionId
-   * @param {string} title 已 trim 的新标题
+   * @param {string[]} targets
+   * @returns {import('react').ReactNode[]}
    */
-  async function renameSession(sessionId, title) {
-    const session = sessions.binding(sessionId)?.session
-    if (session === undefined) throw new Error(`unknown session "${sessionId}"`)
-    const result = await session.rename(title)
-    if (!result.ok) throw new Error(result.error.message)
+  function batchWorkspaceItems(targets) {
+    return [{
+      id: 'delete',
+      label: tOwn('batch.deleteWorkspaces', { n: targets.length }),
+      icon: createElement(IconTrashOutlineRegular),
+      danger: true,
+    }]
   }
 
   /**
    * @param {string} actionId
-   * @param {'session'|'workspace'} kind
    * @param {string[]} targets
    * @param {HTMLElement} rowElement
    */
-  async function run(actionId, kind, targets, rowElement) {
-    const current = rowTitle(rowElement, kind)
+  async function run(actionId, targets, rowElement) {
+    const current = rowTitle(rowElement, 'workspace')
     if (actionId === 'newSession') {
-      // 上游那枚 hover 按钮是两步：先 `setGroupExpanded(group.key, true)` 再
-      // `startSession(group.workspaceId)`。展开那一步不补的话，这一行仍是折叠的，用户
-      // 看不到自己刚开的会话。展开就是点行本身（行的 `onClick` 就是 `onToggle`），已展开
-      // 时不再点——那会把它收起来。开新会话本身完全交给服务：复用空白会话还是新建、
-      // 失败如何 warn，都在它里面，这一层不碰会话数据。
+      // 上游那枚 hover 按钮是两步：先展开分组再 `startSession(workspaceId)`。展开那一步
+      // 不补的话，这一行仍是折叠的，用户看不到自己刚开的会话。展开就是点行本身（行的
+      // `onClick` 就是 `onToggle`），已展开时不再点——那会把它收起来。开新会话本身完全交给
+      // 服务：复用空白会话还是新建、失败如何 warn，都在它里面，这一层不碰会话数据。
       if (rowElement.getAttribute('aria-expanded') === 'false') rowElement.click()
       resolveUiWorkspace().startSession(targets[0])
       return
     }
     if (actionId === 'rename') {
       // prompt 只有一行字，取的是上游那个对话框的标题而不是输入框的 aria label。
-      const title = kind === 'session' ? t('rename.session.title') : t('rename.workspace.title')
-      const next = askText(title, current)
+      const next = askText(t('rename.workspace.title'), current)
       if (next === null || next.trim() === '') return
-      if (kind === 'session') await renameSession(targets[0], next.trim())
-      else await workspaces.rename(targets[0], next.trim())
+      await workspaces.rename(targets[0], next.trim())
       return
     }
-    if (actionId === 'delete') {
-      // 单选走上游删除对话框的原文（标题 + 正文），`window.confirm` 只收一段文本，
-      // 两者之间补一个空行。批量上游没有对应说法，退到本插件自己的词条。
-      const message = targets.length > 1
-        ? tOwn('confirm.deleteWorkspaces', { n: targets.length, group: t('group.ungrouped') })
-        : `${t('delete.workspace')}\n\n${t('delete.desc', { name: current })}`
-      if (!ask(message)) return
-      for (const target of targets) await workspaces.delete(target)
-      store.clear()
-      return
-    }
-    if (actionId === 'fork') {
-      // 上游 fork 完会把子会话打开，标题也带序号，两处都跟上。
-      const childId = await sessions.fork({ sessionId: targets[0], increaseTitle: true })
-      await openSessionRow(childId)
-      return
-    }
-    if (actionId === 'pin') {
-      await workspaces.pinSession(targets[0])
-      return
-    }
-    if (actionId === 'unpin') {
-      await workspaces.unpinSession(targets[0])
-      return
-    }
-    if (actionId === 'unarchive') {
-      // 与上游一致：取消归档不是破坏性操作，不问，直接把行放回正常视图。
-      await workspaces.unarchiveSession(targets[0])
-    }
-  }
-
-  /**
-   * 在侧栏点开指定会话的行——0.1.6 起这是唯一的「打开」路径：`sessions.open` 已从
-   * `ISessions` 契约移除，`retain` 只建引用不动 UI，导航归 view 自己。
-   *
-   * fork 刚返回时子会话行进侧栏列表还是异步的，所以要等它出现而不是找一次。
-   * 超时找不到就放弃并出声：fork 本身已经成功，「没帮忙打开」不该伪装成动作失败，
-   * 但静默会让用户以为菜单项坏了。
-   *
-   * @param {string} sessionId
-   * @returns {Promise<void>}
-   */
-  async function openSessionRow(sessionId) {
-    const DEADLINE_MS = 3000
-    const INTERVAL_MS = 150
-    const deadline = Date.now() + DEADLINE_MS
-    for (;;) {
-      for (const row of document.querySelectorAll('[class*="_sessionRow"], [class*="_searchResultRow"]')) {
-        if (!(row instanceof HTMLElement)) continue
-        if (rowId(row, 'session') === sessionId) {
-          row.click()
-          return
-        }
-      }
-      if (Date.now() >= deadline) {
-        console.warn(`[@Tinnikx/dsh-operation-improve] fork 后没在侧栏找到子会话 ${sessionId} 的行，未自动打开（fork 已成功）`)
-        return
-      }
-      await new Promise((r) => setTimeout(r, INTERVAL_MS))
-    }
+    // 单选走上游删除对话框的原文（标题 + 正文），`window.confirm` 只收一段文本，
+    // 两者之间补一个空行。批量上游没有对应说法，退到本插件自己的词条。
+    const message = targets.length > 1
+      ? tOwn('confirm.deleteWorkspaces', { n: targets.length, group: t('group.ungrouped') })
+      : `${t('delete.workspace')}\n\n${t('delete.desc', { name: current })}`
+    if (!ask(message)) return
+    for (const target of targets) await workspaces.delete(target)
+    store.clear()
   }
 
   document.addEventListener('contextmenu', onContextMenu, true)

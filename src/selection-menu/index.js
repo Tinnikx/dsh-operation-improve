@@ -2,10 +2,10 @@
  * 功能 6：选中文本的右键菜单。
  *
  * 页面任意位置选中一段文本后在选区上右键，弹出与侧边栏那个菜单同一套外观的菜单
- * （复用 [openContextMenu](../shared/context-menu.js) 与同一份 `MENU_CSS`，本模块**不带
- * 任何样式**）。有选中文本给「复制」，落点可输入再给「粘贴」；可输入的空控件上即使
- * 没有选中文本也弹，只给「粘贴」。两项都没有时**不 `preventDefault`**，把原生菜单留给
- * 浏览器——空白处右键仍然是浏览器自己那套。
+ * （复用 [openContextMenu](../shared/menu.jsx) 的上游外壳，本模块**不带任何菜单样式**——
+ * 卡片由上游 `MenuSurface` 渲染，`data-menu-material` 与整套尺寸档位都是上游的）。有选中文本
+ * 给「复制」，落点可输入再给「粘贴」；可输入的空控件上即使没有选中文本也弹，只给「粘贴」。
+ * 两项都没有时**不 `preventDefault`**，把原生菜单留给浏览器——空白处右键仍然是浏览器自己那套。
  *
  * **选区判定分三条路径**：`window.getSelection()` 看不见 `<input>` / `<textarea>`
  * 内部的选区（Chrome 下那里恒为折叠），表单控件只能读 `selectionStart` / `selectionEnd`；
@@ -21,10 +21,28 @@
  * （来源与理由见 [../shared/locale.js](../shared/locale.js)）。取值发生在打开菜单那一刻，
  * 语言切换自动跟随。
  */
+import { createElement } from 'react'
+import { IconCopyOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { closestRow } from '../shared/row-probe.js'
-import { openContextMenu } from '../shared/context-menu.js'
-import { MENU_ICONS } from '../shared/menu-icons.js'
+import { openContextMenu } from '../shared/menu.jsx'
 import { copySelection, pasteInto } from './clipboard.js'
+
+/**
+ * 「粘贴」那枚图标是自绘的：上游 `ui-primitives` 的图标集里没有剪贴板矢量（全仓
+ * `Icon.*Paste|Icon.*Clipboard` 只命中 `ui-chat/.../MessageIconActions.tsx` 的复制图标）。
+ * 一张纸加顶部夹口，`viewBox` 给固定 16——上游 `.itemIcon svg` 会把图标压到 14px，
+ * 尺寸由那层管，所以这里不再自带尺寸。
+ */
+const PASTE_ICON = () => createElement('svg', {
+  width: 16,
+  height: 16,
+  viewBox: '0 0 16 16',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1,
+},
+createElement('rect', { key: 'sheet', x: 2.5, y: 3.5, width: 11, height: 10.5, rx: 2 }),
+createElement('path', { key: 'clip', d: 'M6 3.5V2.5A1 1 0 0 1 7 1.5H9A1 1 0 0 1 10 2.5V3.5' }))
 
 /**
  * 支持 `selectionStart` / `selectionEnd` 的 `<input>` type。其余（`checkbox`、`color`、
@@ -56,8 +74,8 @@ export function installSelectionMenu(deps) {
     if (hit === null) return
 
     const items = []
-    if (hit.text !== '') items.push({ id: 'copy', label: tCommon('copy'), icon: MENU_ICONS.copy })
-    if (hit.editable) items.push({ id: 'paste', label: tOwn('selection.paste'), icon: MENU_ICONS.paste })
+    if (hit.text !== '') items.push({ id: 'copy', label: tCommon('copy'), icon: createElement(IconCopyOutlineRegular) })
+    if (hit.editable) items.push({ id: 'paste', label: tOwn('selection.paste'), icon: createElement(PASTE_ICON) })
     if (items.length === 0) return
 
     event.preventDefault()
@@ -68,7 +86,6 @@ export function installSelectionMenu(deps) {
       y: event.clientY,
       items,
       owner,
-      anchor: hit.anchor,
       onSelect: (actionId) => {
         if (actionId === 'copy') void copySelection(hit.text)
         else if (actionId === 'paste') void pasteInto(hit.snapshot)

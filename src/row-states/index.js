@@ -32,9 +32,9 @@
  *
  * 层叠契约（改动前必读）：
  *   - 选中底色 `!important`：赢上游 `.sessionRow.selected` 的同特异度规则，理由见
- *     模块头。多选蓝（`MENU_CSS` 的 `[role="treeitem"][data-dsh-oi-selected]`）同为
- *     `!important` 且特异度 (0,2,0)，靠**本表插在 MENU_CSS 之前**让多选赢叠加态——
- *     批量圈选时当前会话显示蓝底（它在选集里）加青色竖条（伪元素不吃背景）。
+ *     模块头。多选蓝（同表的 `[role="treeitem"][data-dsh-oi-selected]`）同为 `!important`
+ *     且特异度 (0,2,0)，多选那条**写在后面**所以叠加时赢——批量圈选时当前会话显示蓝底
+ *     （它在选集里）加青色竖条（伪元素不吃背景）。
  *   - 运行中底色不加 `!important`：选择器带 `:has()` 后特异度 (0,2,1)，天然压过
  *     上游 hover/selected 的 (0,2,0)；选中+运行的叠加底色 (0,3,1) 才加 `!important`
  *     （要盖过选中那条的 `.10 !important`）。
@@ -135,5 +135,30 @@ body[data-ds-dark-theme] [class*="_sessionRow"] {
   [class*="_sessionRow"]:has(svg[data-state='ongoing']):not([class*="_drop"])::after {
     display: none;
   }
+}
+
+/* 多选态的承重信号是**描边**，底色只是氛围：底色无论调到多深，与相邻行的对比度都在
+   ~1.3× 量级（实测 1.07~1.41），承重的是那圈实色描边（4~5×）。
+   底色不再读 --dsw-alias-bg-multi-select：那枚 token 名字像「多选蓝」，值却是中性灰
+   （浅色 #f5f6f7、深色 #2c2c2e），与侧边栏底色几乎同色（对比度 1.07×）——看不出被选中
+   就是它造成的。强调色取主题的品牌色，实测解析值浅色 #4176e6、深色 #5686fe。
+   描边色向 --dsw-alias-label-primary 混 30%：主题换成浅强调色时（最坏 #d3e2ff）纯色
+   描边对侧边栏底色掉到 1.25×，混色后升到 2.42×，主流强调色全在 3.7× 以上。
+   圆角不再覆盖：上游 --dsw-radius-md（会话行 12px、搜索结果行 16px）本就正确。 */
+[role="treeitem"][data-dsh-oi-selected] {
+  --dsh-oi-multi-accent: var(--dsw-alias-brand-primary-new-colorprimary-new-color, #4176e6);
+  --dsh-oi-multi-outline: color-mix(in srgb, var(--dsh-oi-multi-accent) 70%, var(--dsw-alias-label-primary, #0f1115));
+  /* !important 赢上游 .sessionRow.selected 的同特异度 hover 规则；底色与上面那条
+     选中底色同为 (0,2,0) 同 !important，靠本条写在后面决定叠加态归属。 */
+  background: color-mix(in srgb, var(--dsh-oi-multi-accent) 24%, transparent) !important;
+  box-shadow: inset 0 0 0 1px var(--dsh-oi-multi-outline);
+}
+
+/* 多选 + 运行中：上面那条选中底边的伪元素背景会盖掉上面那圈描边，让批量圈选中的运行中
+   行丢掉选中信号——这是批量操作最可能命中的行型。抬到 (0,3,1) 取回描边，并把功能 10
+   的 1px 信号色退到第二层，两者同现。彗尾走 ::after，不受这里的 box-shadow 影响。 */
+[role="treeitem"][data-dsh-oi-selected]:has(svg[data-state="ongoing"]) {
+  box-shadow: inset 0 0 0 1px var(--dsh-oi-multi-outline),
+    inset 0 0 0 2px rgb(var(--dsh-oi-row-signal, 34 211 238) / .15);
 }
 `

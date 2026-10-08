@@ -19,16 +19,15 @@
  * `close()` 停），rAF 去抖，与功能 4 同构。重算后按 `(key, ordinal)` 把游标锚回同一条
  * 命中，见 [matches.js](./matches.js) 的 {@link reanchor}——绝对序号不承诺连续。
  *
- * 监听相位：本模块的 `keydown` 挂在 **`window` 捕获**。共享右键菜单的 `Esc` 也挂在
- * `window` 捕获，但那条是每次打开菜单时才注册，注册序在本模块之后——同相位下注册序
- * 决定调用序，所以本模块先看到事件，`document.querySelector('.dsh-oi-menu')` 这时还
- * 读得到那份尚未摘掉的菜单。
+ * 监听相位：本模块的 `keydown` 挂在 **`window` 捕获**。共享菜单的 `Esc` 是上游 `Menu`
+ * 挂在 `document` 冒泡阶段的，本模块挂在更早的 `window` 捕获上，所以 `Esc` 让位判据
+ * 仍然成立——本模块先看到事件，这时菜单卡片还在，`document.querySelector('.dsh-oi-menu')`
+ * 读得到它。
  */
-import { closeContextMenu, OWNER_ATTR } from '../shared/context-menu.js'
+import { closeContextMenu, OWNER_ATTR, ROOT_CLASS as MENU_CLASS } from '../shared/menu.jsx'
 import { buildMatchList, nextIndex, reanchor } from './matches.js'
 
 const ROOT_CLASS = 'dsh-oi-find'
-const MENU_CLASS = 'dsh-oi-menu'
 /** 功能 4 贴的时间戳标签：搜「12」不该命中它们。 */
 const LABEL_CLASS = 'dsh-oi-ts'
 
@@ -57,7 +56,7 @@ const COLLAPSED_SELECTOR = '[data-variant="think"]:not([data-expanded]), [aria-e
  *
  * @param {{ tOwn: (key: string, params?: Record<string, unknown>) => string, owner?: string }} deps
  *   `tOwn` 查本插件词典（查找条上全部文案）；`owner` 标在条上供脚本确认归属，与
- *   [context-menu.js](../shared/context-menu.js) 同一套判据。
+ *   [menu.jsx](../shared/menu.jsx) 的 `OWNER_ATTR` 同一套判据。
  * @returns {{ dispose: () => void, open: () => void, close: () => void,
  *   snapshot: () => { supported: boolean, open: boolean, query: string, total: number,
  *     truncated: boolean, index: number, key: string|null, activeText: string } }}
