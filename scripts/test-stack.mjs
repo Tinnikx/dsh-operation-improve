@@ -196,7 +196,47 @@ function syncHome() {
   if (res.status !== 0) die(`rsync 失败（退出码 ${res.status}）`)
   preparePatchBaseline()
   relinkPlugin()
+  stripCopyThemePlugins()
   console.log(`[test-stack] 副本已同步：${TEST_HOME}`)
+}
+
+/**
+ * 副本里**不装**第三方主题插件。
+ *
+ * 判据前提：`verify:row-states` 的多选可辨性验「深浅两档都看得清」，造浅色档的办法是摘掉
+ * `body[data-ds-dark-theme]`。第三方主题插件把侧栏底色与文字色钉成 `!important`，摘属性
+ * 只让上游那批 token 跟着换——于是量到的是「上游浅色强调色 + 插件的棕色底 + 插件的白
+ * 文字」这个页面从不渲染的组合（实测读数见
+ * [交接 022](../docs/handoff/022-multiselect-contrast-baseline.md)）。真 home 装什么不由
+ * 我们管；副本归置成标准主题，两档才各自是一个渲染得出来的状态。
+ *
+ * 要在第三方现场复跑（例如验那条 SKIP 守卫）显式带 `DSH_OI_KEEP_THEME_PLUGIN=1`。
+ */
+const COPY_THEME_PLUGINS = ['dsh-any-background']
+
+function stripCopyThemePlugins() {
+  if (process.env.DSH_OI_KEEP_THEME_PLUGIN === '1') {
+    console.log('[test-stack] 副本保留第三方主题插件（DSH_OI_KEEP_THEME_PLUGIN=1）')
+    return
+  }
+  const path = join(TEST_HOME, 'profiles/web/package.json')
+  if (!existsSync(path)) return
+  const pkg = JSON.parse(readFileSync(path, 'utf8'))
+  const dropped = []
+  for (const name of COPY_THEME_PLUGINS) {
+    if (pkg.dependencies !== undefined && pkg.dependencies[name] !== undefined) {
+      delete pkg.dependencies[name]
+      dropped.push(name)
+    }
+    const bundles = pkg.dsh?.profile?.bundles
+    if (Array.isArray(bundles) && bundles.includes(name)) {
+      pkg.dsh.profile.bundles = bundles.filter((b) => b !== name)
+      if (!dropped.includes(name)) dropped.push(name)
+    }
+  }
+  if (dropped.length === 0) return
+  writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8')
+  console.log(`[test-stack] 副本已剥除第三方主题插件：${dropped.join('、')}（真 home 未动）`)
 }
 
 /**

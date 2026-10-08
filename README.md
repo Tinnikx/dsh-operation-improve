@@ -18,7 +18,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)，功能 11 的在 [src/find/matches.js](src/find/matches.js)（判据与实测读数在 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 当前兼容版本
-- 0.2.1-alpha.1（当前锚定版本；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 81 字段。七套 live 全绿共 145 条，`verify:row-states` 为 27/31——四条红全是多选高亮的对比度判据，根因是测试栈副本上的第三方主题插件 `dsh-any-background@0.3.6` 在新 harness 上不再被兼容性预检否决、页面底色因此换成了它的半透明棕底，判据口径待订。读数与逐条根因见 [docs/handoff/021-context-menu-upstream-components.md](docs/handoff/021-context-menu-upstream-components.md)。）
+- 0.2.1-alpha.1（当前锚定版本；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 81 字段。八套 live 全绿共 180 条，含 `verify:row-states` 35/35。多选高亮的可辨性判据读的是**屏幕像素**，测试栈副本在 `syncHome()` 里恒被归置成标准主题（第三方主题插件 `dsh-any-background` 从副本名册剥掉，真 home 不动）；带 `DSH_OI_KEEP_THEME_PLUGIN=1` 复跑那份现场时，侧栏是模糊纹理底、「底色」不是一个颜色，可辨性那 9 条由平色守卫整组 SKIP。口径的来龙去脉与逐条根因见 [docs/handoff/022-multiselect-contrast-baseline.md](docs/handoff/022-multiselect-contrast-baseline.md)。）
 
 本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。**每换一次锚定版本，除八套 live 行为验证外必跑 `npm run check:catalog`**——功能 8 的清单是手抄的，这条把它声明的字段 `type`/`default`/边界逐键对上游 `--dump-config-schema`，新版本改了任一键就会红，逼你对上游重抄（判据见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检)）。0.1.7-alpha.2 轮起，
 菜单卡片（功能 2、6）直接用上游 `@deepseek-ai/dsh-client-ui-primitives` 的 `Menu` 组件、图标用上游组件本体，所以样式档与图标跟随新版视觉，回旧 harness 上不再逐项对齐（功能 5 的活跃标记覆盖同理）。
