@@ -1,24 +1,19 @@
 /**
- * 实测驱动：把构建出的 client bundle 注入运行中的 DSH 页面，跑功能 1/2 的断言。
+ * 实测驱动：在运行中的 DSH 页面上驱动**页面自己那份插件实例**，跑功能 1/2 的断言。
  *
- * 走裸 CDP（无 puppeteer 依赖）。**脚本自己不起浏览器**，只复用一个已经加载了
- * DSH 页面的 CDP 实例（默认 127.0.0.1:9333）。页面里的插件加载器已经启动完毕，
- * 所以脚本不走 `__ModuleLoader__`，而是用一个假 loader 截下 registration、取出
- * factory 的 exports，手动 apply 一个最小 ctx（`effect` 收集 disposer，
- * `workspaces`/`sessions` 换成 spy），这样断言的是**真实 DOM 上的行为**，
- * 同时不去动用户真实的会话数据。
+ * 走裸 CDP（无 puppeteer 依赖），复用 [lib/cdp.mjs](lib/cdp.mjs) 的连接器与断言框架
+ * ——判据语义（skip 也算失败、非零退出）只有一份实现，改一处不会漏掉另一处。
  *
- * CDP 连接与断言框架来自 [lib/cdp.mjs](lib/cdp.mjs)，与 `verify-timestamps-live.mjs` 共用：
- * 判据语义（skip 也算失败、非零退出）只有一份实现，改一处不会漏掉另一处。
+ * **不注入 bundle，而是驱动真实例 + 自建可丢弃的靶子**。插件装在 profile 里，页面每次
+ * 加载都自带一份实例；会话那一支菜单的条目要从真 `slots` 服务里读出来才渲染得出来，
+ * 而注入一份实例只会得到脚本手搓的 ctx——两边都读不到那一格条目表。菜单项的动作因此
+ * 是**真服务**（`workspaces.delete`、`sessions.fork`、`archiveSession`……），所以破坏性项
+ * 只对脚本自己建的靶子点，靶子由 [lib/fixtures.mjs](lib/fixtures.mjs) 在收尾删干净。
  *
- * 失败语义（这一条是重点）：**没测到 = 失败**。窗口太窄时侧边栏是折叠的，
- * 一条 `[role="treeitem"]` 都查不到，早先的版本会把每条断言记成 skipped
- * 然后以退出码 0 结束——看起来通过，实际什么都没验证。现在前置检查不满足
- * 直接非零退出，任何 skipped 也计为失败。
- *
- * **注入之前必须先停掉页面自带的那份实例**。插件装在 profile 里，页面每次加载都会
- * 自己 apply 一份；不停掉就是两份实例抢同一批 DOM，而这个脚本会真的点菜单项——
- * 点到的是 native 那一份，服务不是 spy 而是真的。理由与三道闸见清场那一段。
+ * 失败语义（这一条是重点）：**没测到 = 失败**。窄窗口时侧边栏是折叠的，一条
+ * `[role="treeitem"]` 都查不到，早先的版本会把每条断言记成 skipped 然后以退出码 0 结束
+ * ——看起来通过，实际什么都没验证。现在前置检查不满足直接非零退出，任何 skipped 也计
+ * 为失败。
  *
  * **默认打的是测试栈（3181）而不是日常那个 harness（3080）**，见
  * [lib/cdp.mjs](lib/cdp.mjs) 的 `resolveTarget`。先 `node scripts/test-stack.mjs up`。
@@ -26,332 +21,280 @@
  * 用法：node scripts/verify-live.mjs [cdpPort] [pageUrlPrefix]
  * 环境变量：DSH_OI_NO_RELOAD=1 跳过 Page.reload（同页连跑两次结果不可信）
  */
-import { readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { abort, createEvaluator, reloadAndWait, createChecker, resolveTarget } from './lib/cdp.mjs'
+import { createFixtures, cleanupFixtures, requireInstance } from './lib/fixtures.mjs'
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const { port: PORT, prefix: PREFIX } = resolveTarget(process.argv.slice(2))
-
-/** 跑满全部断言所需的最小行数：批量分支两种 kind 各要 2 行。 */
-const NEED = { sessions: 2, workspaces: 2 }
 
 const { evaluate, conn } = await createEvaluator({ port: PORT, prefix: PREFIX })
 
-// 先刷新页面：同一个页面里连跑两次会留下上一次的样式、监听器与残留菜单，
-// 断言就会打在旧实例上。刷新是唯一干净的起点。
 if (process.env.DSH_OI_NO_RELOAD !== '1') {
   await reloadAndWait(conn, { mountMs: 6000 })
 }
 
-// 展开所有折叠的工作区，让会话行也够 2 条，批量分支才测得到。
+// 展开所有折叠的工作区，让会话行够数。靶子工作区是随后才建的，它自己折着时由
+// {@link fxWorkspaceRow} 展开。
 await evaluate(`(async () => {
   for (const r of document.querySelectorAll('[role="treeitem"]')) {
     if (String(r.className).includes('_projectRow') && r.getAttribute('aria-expanded') === 'false') r.click()
   }
-  await new Promise((r) => setTimeout(r, 1500))
+  await new Promise((r) => setTimeout(r, 1200))
   return true
 })()`)
 
-// ---- 前置检查：窗口够不够宽、侧边栏是不是展开的 ----------------------------
-// 窄窗口下侧边栏折叠，treeitem 为 0，后续每条断言都会退化成「没东西可点」。
-// 那不是通过，是没测。这里直接中止。
+const instanceId = await requireInstance(evaluate)
+console.log('[instance]', instanceId)
+
+// ---- 前置检查：窗口够不够宽 --------------------------------------------------
 const viewport = await evaluate(`(() => {
   const rows = [...document.querySelectorAll('[role="treeitem"]')]
-  const of = (k) => rows.filter((el) => String(el.className).includes(k)).length
-  return { width: innerWidth, height: innerHeight, total: rows.length,
-    sessions: of('_sessionRow'), workspaces: of('_projectRow') }
+  const of = (k) => rows.filter((el) => String(el.className).includes(k))
+  return {
+    innerWidth: window.innerWidth,
+    sidebar: document.querySelectorAll('[class*="_sidebar"]').length,
+    treeitems: rows.length,
+    sessions: of('_sessionRow').length,
+    workspaces: of('_projectRow').length,
+  }
 })()`)
-console.log('[preflight]', JSON.stringify(viewport))
-
-if (viewport.total === 0) {
+if (viewport.treeitems === 0 || viewport.sessions === 0) {
   abort(
-    '侧边栏处于折叠态，一条 [role="treeitem"] 都查不到——实测未发生。',
-    `观测：innerWidth=${viewport.width} innerHeight=${viewport.height} treeitem=0\n` +
-    '原因：窗口宽度不足（约 <1200px 时侧边栏收起）。\n' +
-    '处理：用 --window-size=1600,1000 重起 Chrome 实例后再跑，见 README「验证」。',
-  )
-}
-if (viewport.sessions < NEED.sessions || viewport.workspaces < NEED.workspaces) {
-  abort(
-    '侧边栏行数不足以跑满批量分支——部分断言将无法执行，拒绝以「跳过」收场。',
-    `观测：会话行 ${viewport.sessions}（需 ≥${NEED.sessions}）、工作区行 ${viewport.workspaces}（需 ≥${NEED.workspaces}）\n` +
-    `innerWidth=${viewport.width}\n` +
-    '处理：确认窗口宽度足够、工作区已展开，且该 profile 下至少有 2 个工作区与 2 个会话。',
+    '侧边栏没渲染出可操作的行。',
+    `观测：${JSON.stringify(viewport)}\n`
+    + '处理：窗口放宽到侧边栏展开（实测需 innerWidth ≥ 900），确认测试栈的 profile 里'
+    + '装着本插件，然后不带参数重跑。',
   )
 }
 
-const bundle = readFileSync(join(ROOT, 'lib/client.js'), 'utf8')
+const fixtures = await createFixtures(evaluate)
+console.log('[fixtures]', JSON.stringify(fixtures))
 
-// ---- 清场：停掉页面自带的那份实例 --------------------------------------------
-// 插件装进 profile 之后，页面每次加载都会自己 `apply` 一份。不停掉就注入，页面上
-// 会有两份互不知情的实例抢同一批 DOM：右键弹**两个**菜单，而捕获阶段的监听器按
-// 注册顺序触发，native 那份先 append，于是 `document.querySelector('.dsh-oi-menu')`
-// 拿到的是 native 的菜单——脚本以为点的是自己的 spy，**实际点在真服务上**，批量
-// 归档那条断言会真的归档掉用户的会话（已经发生过一次，8 个真实会话）。
-//
-// 所以这里要么把 native 停干净，要么中止；**绝不带着两份实例往下点**。
-const cleaned = await evaluate(`(async () => {
-  const native = window.__dshOperationImprove__
-  let how = 'absent'
-  let borrowed = false
-  if (native !== undefined && native !== null) {
-    if (typeof native.dispose !== 'function') return { how: 'no-dispose' }
-    // 先借出上游词典的 translate。native 实例是这个页面上唯一拿得到真实 locale
-    // 服务的地方，而它下一行就要停掉；注入实例的 ctx 是脚本自己造的，不借这一份，
-    // 文案断言比对的就是桩数据，验不出「菜单文本来自上游 workspace 词典」。
-    // 借出的是 bind 出来的闭包，词典注册被 dispose 摘掉也不影响它读上游那份。
-    if (native.locale !== undefined && typeof native.locale.t === 'function') {
-      window.__dshOiT__ = native.locale.t
-      borrowed = true
-    }
-    native.dispose()
-    how = 'disposed'
-  }
-  if (window.__dshOiTest__ !== undefined) {
-    window.__dshOiTest__.disposers.forEach((d) => { try { d() } catch (error) { void error } })
-    delete window.__dshOiTest__
-  }
-  for (const el of document.querySelectorAll('.dsh-oi-menu')) el.remove()
-  for (const el of document.querySelectorAll('[data-dsh-oi-selected]')) el.removeAttribute('data-dsh-oi-selected')
-  for (const el of document.querySelectorAll('style[data-plugin="@Tinnikx/dsh-operation-improve"]')) el.remove()
-  await new Promise((r) => setTimeout(r, 300))
-  return { how, borrowed, lang: document.documentElement.lang,
-    handle: typeof window.__dshOperationImprove__,
-    styles: document.querySelectorAll('style[data-plugin="@Tinnikx/dsh-operation-improve"]').length,
-    menus: document.querySelectorAll('.dsh-oi-menu').length,
-    highlights: document.querySelectorAll('[data-dsh-oi-selected]').length }
-})()`)
-console.log('[clean]', JSON.stringify(cleaned))
-if (cleaned.how === 'no-dispose') {
-  abort(
-    '页面自带的实例停不掉——它的调试句柄上没有 `dispose()`，说明 profile 里装的是旧版本的构建产物。',
-    '带着两份实例往下跑，右键会弹两个菜单，脚本点到的是 native 那一份，'
-    + '批量归档会真的归档掉用户的会话。\n'
-    + '处理：重新构建并让 profile 用上新的 lib/client.js（`node scripts/build.mjs` 后刷新页面），'
-    + '或 `dsh plugin --profile web remove @Tinnikx/dsh-operation-improve` 之后重跑。',
-  )
-}
-if (cleaned.how === 'disposed' && cleaned.borrowed !== true) {
-  abort(
-    '页面自带的实例没有 `locale.t`——profile 里装的构建产物早于「菜单文案改走 harness 词典」那一版。',
-    '拿不到上游 translate，文案断言只能对着桩数据比，验不出菜单文本是否与 harness 一致。\n'
-    + '处理：`node scripts/build.mjs` 后刷新页面重跑。',
-  )
-}
-if (cleaned.handle !== 'undefined' || cleaned.styles !== 0 || cleaned.menus !== 0 || cleaned.highlights !== 0) {
-  abort(
-    '清场没清干净——页面上还留着本插件的实例、样式表、菜单或高亮，之后的断言分不清是谁的产物。',
-    `观测：${JSON.stringify(cleaned)}\n处理：整页 reload 后重跑（去掉 DSH_OI_NO_RELOAD=1）。`,
-  )
-}
-
-// 用一个假的 __ModuleLoader__ 截下 registration，拿到 factory 的 exports。
-//
-// `ctx.locale` 是半桩半真：上游 namespace 的 translate 是清场时从 native 实例借来的
-// **真函数**（真词典、真 active locale），本插件自己那个 namespace 走桩——它的词典
-// 随 native 实例一起被摘掉了，桩按插件自己交上来的那份 dict 查，locale 取
-// `<html lang>`（locale 服务把 active locale 同步在这个属性上）。
-// 平台模块桩表。产物的 factory 顶层会 require 三个平台模块（loader 在 boot 期
-// 通过 `create` 一次性发 require，boot 后拿不到真实现），但本脚本的被测路径
-// （多选、右键菜单、批量动作）一个都不会真正调用它们：react hooks 与 jsx 只在
-// 功能 8 的 slot 组件渲染时用到，而这里的 ctx.slots 是 spy；`writeClipboard`
-// 只在功能 6 的复制动作里用到，而剪贴板断言归 verify:selection（不注入）。
-// 所以桩按「被调到就是异常」设计：hooks/jsx 直接抛，clipboard 记录调用。
-const boot = `
-(() => {
-  const BUNDLE = ${JSON.stringify(bundle)};
-  const real = window.__ModuleLoader__
-  let captured = null
-  window.__ModuleLoader__ = { load: (r) => { captured = r } }
-  try { (0, eval)(BUNDLE) } finally { window.__ModuleLoader__ = real }
-  if (captured === null) return { ok: false, reason: 'bundle did not register' }
-  const clipboardWrites = []
-  const noRender = (what) => () => { throw new Error('verify(1/2) 不该走到 ' + what + '（React 渲染路径被触达）') }
-  const PLATFORM = {
-    'react': { useState: noRender('react.useState'), useRef: noRender('react.useRef'),
-      useEffect: noRender('react.useEffect'), useCallback: noRender('react.useCallback') },
-    'react/jsx-runtime': { jsx: noRender('jsx'), jsxs: noRender('jsxs'), Fragment: 'x-fragment' },
-    '@deepseek-ai/dsh-client-ui-primitives': { writeClipboard: (text) => { clipboardWrites.push(text) } },
-  }
-  window.__dshOiClipboardWrites__ = clipboardWrites
-  const exports = captured.factory((name) => {
-    if (PLATFORM[name] !== undefined) return PLATFORM[name]
-    throw new Error('unexpected external require: ' + name)
-  })
-  const disposers = []
-  const calls = []
-  // sessions 不能是纯 spy：插件的 rename 走 \`sessions.binding(id)?.session.rename()\`，
-  // 而 Proxy 的通用分支返回 Promise，\`?.session\` 就是 undefined，rename 那条路径永远
-  // 走不到。这里给 binding / fork 两个真实形状的桩，其余方法照旧记账。
-  // \`__dshOiSessionStub__\` 让断言当场切换分支（binding 缺席、rename 失败）。
-  window.__dshOiSessionStub__ = { binding: 'ok', renameResult: { ok: true }, forkChildId: 'child-session-id' }
-  const sessions = new Proxy({}, { get: (_t, prop) => {
-    const method = String(prop)
-    if (method === 'binding') {
-      return (id) => {
-        calls.push({ label: 'sessions', method: 'binding', args: [id] })
-        if (window.__dshOiSessionStub__.binding !== 'ok') return undefined
-        return { session: { rename: (title) => {
-          calls.push({ label: 'session', method: 'rename', args: [title] })
-          return Promise.resolve(window.__dshOiSessionStub__.renameResult)
-        } } }
-      }
-    }
-    if (method === 'fork') {
-      return (arg) => {
-        calls.push({ label: 'sessions', method: 'fork', args: [arg] })
-        return Promise.resolve(window.__dshOiSessionStub__.forkChildId)
-      }
-    }
-    return (...args) => {
-      calls.push({ label: 'sessions', method, args })
-      return Promise.resolve(undefined)
-    }
-  } })
-  // 菜单项的动作是 \`void run(...)\`，失败只以未处理的 rejection 现身。收下来才断言得了
-  // 「binding 拿不到就抛」——不收的话那条断言只能看到「什么都没发生」，而那正是要防的
-  // 静默吞掉。preventDefault 是为了不让它污染页面控制台。
-  const rejections = []
-  const onRejection = (event) => {
-    const reason = event.reason
-    rejections.push(reason instanceof Error ? reason.message : String(reason))
-    event.preventDefault()
-  }
-  window.addEventListener('unhandledrejection', onRejection)
-  disposers.push(() => { window.removeEventListener('unhandledrejection', onRejection) })
-  // fork 超时放弃那声 console.warn 也要收下来才断言得了（包装而不是替换判据）。
-  const warns = []
-  const realWarn = console.warn
-  console.warn = (...args) => { warns.push(args.map(String).join(' ')); realWarn.apply(console, args) }
-  disposers.push(() => { console.warn = realWarn })
-  // workspaces 也不能是纯 spy：会话的单选菜单构建时要读
-  // \`workspaces.list.getSnapshot()\` 的置顶/归档态——这两项逐项对齐上游，上游按行的
-  // 状态翻转它们（归档行不渲染置顶项；置顶项与归档项各自换成「取消置顶」「取消归档」）。
-  // 两个集合都现从真应用 UI 推导：行上有「取消置顶」/「取消归档」按钮即该行为该状态，
-  // id 反查照抄 'rows found' 的 fiber 候选路径。归档行默认被视图筛选藏起来，推导结果
-  // 随「显示已归档」开关而变——归档分支的断言因此自带开关（见 archivedPair 那条）。
-  // 命令方法照旧记账。
-  const resolveSessionId = (row) => {
+/**
+ * 靶子行 + 页面侧读数。全部收敛到 `fx` 上，页面一次拿到 id。
+ */
+const PRELUDE = `
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const h = window.__dshOperationImprove__
+  const fx = { workspaceId: ${JSON.stringify(fixtures.workspaceId)} }
+  const ownerClass = 'dsh-oi-menu--' + h.instanceId
+  const svc = h.services
+  const t = h.locale.t
+  const ownText = (key, n) => h.locale.tOwn(key, { n })
+  /** 本插件开的那张卡片：portal 到 body 下，归属只能靠类名认。 */
+  const mine = () => [...document.querySelectorAll('div[role="menu"]')].filter((el) =>
+    el.classList.contains('dsh-oi-menu') && el.classList.contains(ownerClass))
+  const upstreamMenus = () => [...document.querySelectorAll('div[role="menu"]')].filter((el) =>
+    !el.classList.contains('dsh-oi-menu'))
+  const rows = () => [...document.querySelectorAll('[role="treeitem"]')]
+  const kindOf = (el) => String(el.className).includes('_sessionRow') ? 'session'
+    : String(el.className).includes('_projectRow') ? 'workspace' : null
+  /** 与 [../src/shared/row-probe.js] 同一套 fiber 反查。 */
+  const idOf = (el, kind) => {
     let fiber = null
-    for (const k of Object.keys(row)) if (k.startsWith('__reactFiber$')) { fiber = row[k]; break }
+    for (const k of Object.keys(el)) if (k.startsWith('__reactFiber$')) { fiber = el[k]; break }
+    const cands = kind === 'session'
+      ? ['sessionId', 'node.id', 'row.id', 'item.id', 'session.id']
+      : ['workspaceId', 'group.workspaceId', 'workspace.id', 'node.workspaceId', 'project.id']
     let depth = 0
     while (fiber && depth < 24) {
       const p = fiber.memoizedProps
       if (p && typeof p === 'object') {
-        const cands = [p.sessionId, p.node && p.node.id, p.row && p.row.id, p.item && p.item.id, p.session && p.session.id]
-        for (const c of cands) if (typeof c === 'string' && c) return c
+        for (const path of cands) {
+          const v = path.split('.').reduce((acc, k) => (acc == null ? acc : acc[k]), p)
+          if (typeof v === 'string' && v.length > 0) return v
+        }
       }
       fiber = fiber.return; depth += 1
     }
     return null
   }
-  // 行上带某个动作按钮 = 上游认为该行动作可用 = 该行处于对应状态。
-  const idsWithAction = (label) => {
-    const ids = []
-    for (const row of document.querySelectorAll('[class*="_sessionRow"]')) {
-      let hit = false
-      for (const b of row.querySelectorAll('[aria-label]')) {
-        if (b.getAttribute('aria-label') === label) { hit = true; break }
-      }
-      if (!hit) continue
-      const id = resolveSessionId(row)
-      if (id !== null) ids.push(id)
+  /** 靶子工作区行；折着的先展开，让会话行露出来。 */
+  const fxWorkspaceRow = async () => {
+    let el = rows().find((r) => kindOf(r) === 'workspace' && idOf(r, 'workspace') === fx.workspaceId) ?? null
+    if (el !== null && el.getAttribute('aria-expanded') === 'false') {
+      el.click(); await sleep(900)
+      el = rows().find((r) => kindOf(r) === 'workspace' && idOf(r, 'workspace') === fx.workspaceId) ?? null
     }
-    return ids
+    return el
   }
-  const pinnedIds = () => idsWithAction(window.__dshOiT__('menu.unpinSession'))
-  const archivedIds = () => idsWithAction(window.__dshOiT__('menu.unarchiveSession'))
-  const workspacesState = {
-    list: { getSnapshot: () => ({ items: [], pinnedSessionIds: pinnedIds(), archivedSessionIds: archivedIds() }) },
+  /**
+   * 会话菜单要点的行：靶子里**没有**会话——sessions.create 建出来的会话是 blank，
+   * 而 blank 会话永远不渲染行（ui-workspace/src/client/tree.ts:238-256 的 sessionVisible()），
+   * 公开 API 里也没有开关。所以会话侧改成挑侧栏上现有的那一行：非当前会话、非归档、能反查到 id。
+   * 这几格选中它测到的都是真交互；不可逆的那些（分叉、归档）由调用方打桩。
+   */
+  const pickSessionRow = () => rows().find((el) => kindOf(el) === 'session'
+    && el.getAttribute('aria-selected') !== 'true'
+    && idOf(el, 'session') !== null
+    && svc.sessions.list.getSnapshot().byId[idOf(el, 'session')]?.blank !== true) ?? null
+  const sessionIdOf = (el) => (el === null ? null : idOf(el, 'session'))
+  /** 同一 kind 的第二行（靶子之外），批量分支要两行。 */
+  const otherRow = (kind) => rows().find((r) => kindOf(r) === kind
+    && (kind === 'session' ? r !== pickSessionRow() : idOf(r, 'workspace') !== fx.workspaceId)) ?? null
+  /**
+   * 派发右键事件并回传事件对象本身。
+   *
+   * 直接返回 dispatchEvent 的返回值（布尔）的话，调用方读到的 evt.defaultPrevented
+   * 就是 undefined，「有没有拦下原生菜单」这条断言会永远红。
+   */
+  const rightClick = (el, x, y) => {
+    const evt = new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: x, clientY: y, view: window,
+    })
+    el.dispatchEvent(evt)
+    return evt
   }
-  const workspaces = new Proxy(workspacesState, { get: (target, prop) => {
-    if (prop in target) return target[prop]
-    const method = String(prop)
-    return (...args) => { calls.push({ label: 'workspaces', method, args }); return Promise.resolve(undefined) }
-  } })
-  const dicts = {}
-  // \`ctx.get('uiWorkspace')\`：工作区右键菜单里那一项「新建会话」靠它。真页面上那是上游的
-  // \`UiWorkspaceService\`（cordis Service 名由 \`super(ctx, 'uiWorkspace')\` 定，\`ctx.get\` 对
-  // 未列进 inject 的名字照样返回），这里换成只记账的桩——它不开会话、不动数据，只留调用
-  // 痕迹给断言看。\`enabled\` 开关用来覆盖「服务还没注册」那一半：那一项必须整个不出现。
-  const uiWorkspaceStub = { enabled: true }
-  window.__dshOiUiWorkspaceStub__ = uiWorkspaceStub
-  const services = {
-    uiWorkspace: {
-      startSession: (workspaceId) => {
-        calls.push({ label: 'uiWorkspace', method: 'startSession', args: [workspaceId] })
-      },
-    },
+  const labels = (menu) => [...menu.querySelectorAll('button[role="menuitem"]')]
+    .map((b) => (b.textContent ?? '').trim())
+  const itemByLabel = (menu, label) => [...menu.querySelectorAll('button[role="menuitem"]')]
+    .find((b) => (b.textContent ?? '').trim().startsWith(label)) ?? null
+  /**
+   * 收尾用：把本插件开着的卡片都关掉，**并等到它真的从 DOM 上消失**。
+   *
+   * 两处都发 Esc——只发 document 时收不干净。关闭是 React 卸载，同步读到的还是那 1 张，
+   * 所以调用方判 mine().length === 0 之前必须 await closeAll()。
+   */
+  const closeAll = async () => {
+    for (const target of [document, window]) {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    }
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
+    for (let n = 0; n < 12 && mine().length > 0; n += 1) await sleep(50)
   }
-  const activeLocale = () => (document.documentElement.lang || 'en').toLowerCase().split('-')[0]
-  const render = (template, params) => params === undefined
-    ? template
-    : template.replace(/\\{(\\w+)\\}/g, (m, k) => (k in params ? String(params[k]) : m))
-  const ctx = {
-    effect: (cb) => { const d = cb(); if (typeof d === 'function') disposers.push(d) },
-    // cordis 把 \`ctx.get(name)\` 混在 \`reflect\` 上（ReflectService.get 直查 store，不要求
-    // 列进 inject）。本页面的 ctx 是脚本手搓的普通对象，所以自己实现这一个方法。
-    get: (name) => (name === 'uiWorkspace' && uiWorkspaceStub.enabled ? services.uiWorkspace : undefined),
-    workspaces,
-    sessions,
-    // 功能 8 起 apply() 会调 ctx.slots.inject(...)——本脚本的被测路径不渲染 slot
-    // 组件（react 桩被调到即抛），收下注册即可；**不走 spy**，boot 期的这一次
-    // inject 不能混进「选择期间 0 次服务调用」那类计数。真 slots 的断言在 verify:settings。
-    slots: { inject: () => undefined },
-    locale: {
-      register: (ns, d) => { dicts[ns] = d; return () => { delete dicts[ns] } },
-      bind: (ns) => (key, params) => {
-        if (!(ns in dicts)) return window.__dshOiT__(key, params)
-        const d = dicts[ns]
-        const entries = d[activeLocale()] ?? d.en ?? {}
-        return render(entries[key] ?? key, params)
-      },
-    },
-  }
-  exports.apply(ctx)
-  const handle = window.__dshOperationImprove__
-  if (handle === undefined || typeof handle.instanceId !== 'string') {
-    return { ok: false, reason: 'applied instance exposes no instanceId' }
-  }
-  window.__dshOiTest__ = { exports, disposers, calls, rejections, warns, dicts, registeredId: captured.id, instanceId: handle.instanceId }
-  return { ok: true, id: captured.id, name: exports.name, inject: exports.inject, instanceId: handle.instanceId,
-    ownDictLocales: Object.keys(dicts).length === 0 ? [] : Object.keys(dicts[Object.keys(dicts)[0]]) }
-})()
-`
-
-const applied = await evaluate(boot)
-console.log('[boot]', JSON.stringify(applied))
-if (applied.ok !== true) abort('bundle 注入失败', JSON.stringify(applied))
-
-const PICK = `
-  const pick = () => {
-    const rows = [...document.querySelectorAll('[role="treeitem"]')]
-    const of = (k) => rows.filter((el) => String(el.className).includes(k))
-    const s = of('_sessionRow'), w = of('_projectRow')
-    const want = window.__dshOiPreferKind__
-    if (want === 'workspace' && w.length >= 2) return { kind: 'workspace', rows: w }
-    if (s.length >= 2) return { kind: 'session', rows: s }
-    if (w.length >= 2) return { kind: 'workspace', rows: w }
-    return { kind: null, rows: [] }
+  const pinnedIds = () => svc.workspaces.list.getSnapshot().pinnedSessionIds
+  const archivedIds = () => svc.workspaces.list.getSnapshot().archivedSessionIds
+  const sessionRow = (id) => svc.sessions.list.getSnapshot().byId[id]
+  /**
+   * catalog 里某个命令的 aria-keyshortcuts 期望值；查不到或为空一律折成 null，
+   * 这样菜单上 getAttribute 的结果可以直接逐字比。
+   *
+   * **web runtime 下这三行本来就是空的**：shortcuts/src/client/registry.ts:129 的
+   * aria: enabled ? … : undefined，而 bindingIssue（shortcuts/src/configuration.ts:102-112）
+   * 会把浏览器不放行的组合判成 reserved / unsupported-browser。所以判据只能是「对齐 catalog」，
+   * 不能是「非空」。
+   */
+  const lookupShortcut = (id) => svc.shortcuts.catalog.getSnapshot().find((r) => r.id === id) ?? null
+  const ariaOf = (row) => (row === null || row.aria === undefined || row.aria === null ? null : row.aria)
+  /** 换掉实例上的一个方法做打桩：动作回调在调用时才读它，所以这一招能拦下且不改数据。 */
+  const stubMethod = (obj, key, impl) => {
+    const own = Object.getOwnPropertyDescriptor(obj, key)
+    obj[key] = impl
+    return () => {
+      if (own === undefined) delete obj[key]
+      else Object.defineProperty(obj, key, own)
+    }
   }
 `
 
 const { check, report } = createChecker()
 
-// 文案的两个来源都到位：`locale` 必须列进 `inject`（漏了的话 cordis 会在 `ctx.locale`
-// 上给 undefined，插件启动就炸），本插件自己那份词典必须两个 locale 都有——缺一个不
-// 报错，只会让那个语言下的批量项静默落回英文。
-check('locale wired', {
-  inject: applied.inject,
-  ownDictLocales: applied.ownDictLocales,
-}, (v) => {
-  if (!Array.isArray(v.inject) || !v.inject.includes('locale')) {
-    return `inject 里没有 locale：${JSON.stringify(v.inject)}`
+// 文案的两个来源都到位：`locale` 必须列进 `inject`（漏了 cordis 在 `ctx.locale` 上给
+// undefined，插件启动就炸），本插件自己那份词典必须每个语言都有——缺一个不报错，只会让
+// 那个语言下的批量项静默落回英文。
+//
+// 「切语言」走真 UI：设置面板里那枚 Language 行。**不能去改 `document.documentElement.lang`**
+// ——它只是 `locale/src/client/index.ts:148-153` 的单向镜像，`translate()` 读的是
+// `snapshot.active`，改镜像什么都不会发生（实测两档读出同一句话）。
+const localeProbe = await evaluate(`(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const h = window.__dshOperationImprove__
+  const own = ['batch.deleteWorkspaces', 'confirm.deleteWorkspaces', 'selection.paste']
+  const upstream = ['rename', 'menu.fork', 'menu.archiveSession', 'menu.unarchiveSession',
+    'menu.pinSession', 'menu.unpinSession', 'actions.newSession', 'delete.workspace',
+    'rename.session.title', 'field.sessionName']
+  const read = () => ({ html: document.documentElement.lang,
+    own: own.map((k) => h.locale.tOwn(k, { n: 2 })), upstream: upstream.map((k) => h.locale.t(k)) })
+  const fns = ['t', 'tCommon', 'tOwn'].filter((k) => typeof h.locale[k] !== 'function')
+  if (fns.length > 0) return { bail: '句柄上缺 translate 函数：' + JSON.stringify(fns) }
+  // 面板里 General 是 account(-10) 之后的第一格（ui-settings-general/src/client/index.ts:233）。
+  const navCell = (label) => [...document.querySelectorAll('[data-shortcut-modal="settings"] nav button')]
+    .find((b) => (b.textContent ?? '').includes(label)) ?? null
+  const trigger = [...document.querySelectorAll('button[aria-haspopup="dialog"][aria-expanded]')]
+    .find((b) => (b.getAttribute('aria-label') ?? '').length > 0) ?? null
+  if (trigger === null) return { bail: '侧栏页脚没有设置面板的触发按钮' }
+  const openPanel = async () => {
+    trigger.click()
+    for (let n = 0; n < 20; n += 1) {
+      await sleep(120)
+      const panel = document.querySelector('[data-shortcut-modal="settings"]')
+      if (panel !== null) return panel
+    }
+    return null
   }
-  const locales = [...(v.ownDictLocales ?? [])].sort()
-  if (locales.join(',') !== 'en,zh') return `本插件词典的 locale 是 ${JSON.stringify(locales)}，应为 ["en","zh"]`
+  const panel = await openPanel()
+  if (panel === null) return { bail: '点了设置按钮但面板没出现' }
+  const general = navCell('通用') ?? navCell('General')
+  if (general === null) return { bail: '设置面板里找不到「通用设置」那一格' }
+  general.click()
+  await sleep(400)
+  const selector = [...panel.querySelectorAll('button[aria-haspopup="menu"]')]
+    .find((b) => ['中文', 'English'].includes((b.textContent ?? '').trim())) ?? null
+  if (selector === null) {
+    const rows = [...panel.querySelectorAll('button[aria-haspopup="menu"]')].map((b) => (b.textContent ?? '').trim())
+    return { bail: '通用设置里没有 Language 那一行，看到的菜单按钮是 ' + JSON.stringify(rows) }
+  }
+  const before = read()
+  const activeLabel = (selector.textContent ?? '').trim()
+  // 另一档的显示名：枚举里另一项（中文 / English）。
+  const otherLabel = activeLabel === '中文' ? 'English' : '中文'
+  selector.click()
+  await sleep(400)
+  const choice = [...document.querySelectorAll('div[role="menu"] button[role="menuitem"]')]
+    .find((b) => (b.textContent ?? '').trim() === otherLabel) ?? null
+  if (choice === null) {
+    const seen = [...document.querySelectorAll('div[role="menu"] button')].map((b) => (b.textContent ?? '').trim())
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    return { bail: 'Language 菜单里没有 ' + JSON.stringify(otherLabel) + '，看到的是 ' + JSON.stringify(seen) }
+  }
+  choice.click()
+  await sleep(900)
+  const after = read()
+  // 切回去：设置项会写 host 偏好，不复原就污染副本里的下一次跑。
+  const backLabel = activeLabel
+  const backSelector = [...panel.querySelectorAll('button[aria-haspopup="menu"]')]
+    .find((b) => (b.textContent ?? '').trim() === otherLabel) ?? null
+  let restored = null
+  if (backSelector !== null) {
+    backSelector.click()
+    await sleep(400)
+    const back = [...document.querySelectorAll('div[role="menu"] button[role="menuitem"]')]
+      .find((b) => (b.textContent ?? '').trim() === backLabel) ?? null
+    if (back !== null) { back.click(); await sleep(900) }
+    restored = read()
+  }
+  // 关掉面板，别把它留给后面的断言。
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await sleep(300)
+  const panelGone = document.querySelector('[data-shortcut-modal="settings"]') === null
+  const misses = []
+  for (const [name, row] of [['起手', before], ['切过去', after], ['切回来', restored]]) {
+    if (row === null || row === undefined) continue
+    row.own.forEach((text, i) => { if (text === own[i]) misses.push(name + ' 本插件:' + own[i]) })
+    row.upstream.forEach((text, i) => { if (text === upstream[i]) misses.push(name + ' 上游:' + upstream[i]) })
+  }
+  return { bail: null, keys: { own, upstream }, activeLabel, otherLabel,
+    before, after, restored, misses, panelGone,
+    fns, kinds: { before: before.html, after: after.html, restored: restored === null ? null : restored.html } }
+})()`)
+
+check('locale wired', localeProbe, (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
+  if (v.misses.length > 0) return `词典查不出这些键（查不到会返回键名本身）：${v.misses.join(' ')}`
+  if (v.restored === null) return '没能把语言切回去——这条污染了 profile 的偏好，没测到「切回去」'
+  // `t` 是调用时读 active locale，所以两档读出同一句话 = 切换根本没发生（或者词典只注册了一份）。
+  if (v.before.own[0] === v.after.own[0]) {
+    return `切到 ${JSON.stringify(v.otherLabel)} 之后本插件文案没变（${JSON.stringify(v.after.own[0])}）——词典只注册了一份`
+  }
+  if (v.before.upstream[0] === v.after.upstream[0]) {
+    return `切过去之后上游文案没变（${JSON.stringify(v.after.upstream[0])}）——locale 没进 inject`
+  }
+  if (v.restored.own[0] !== v.before.own[0] || v.restored.upstream[0] !== v.before.upstream[0]) {
+    return '切回原语言之后读数没复原——复原动作没生效'
+  }
+  if (v.kinds.before === v.kinds.after) {
+    return `document lang 在切换前后都是 ${JSON.stringify(v.kinds.before)}，镜像没跟着走`
+  }
+  if (v.panelGone !== true) return '设置面板没关掉，会挡住后面的断言'
   return true
 })
 
@@ -359,89 +302,91 @@ check('stylesheet inserted', await evaluate(
   `!!document.querySelector('style[data-plugin="@Tinnikx/dsh-operation-improve"]')`,
 ), (v) => v === true || '样式表没插进 <head>')
 
-// 侧边栏行盘点 + fiber 反查是否有效。
-check('rows found', await evaluate(`(() => {
-  const rows = [...document.querySelectorAll('[role="treeitem"]')]
-  const probe = rows.map((el) => {
-    const cls = typeof el.className === 'string' ? el.className : ''
-    const kind = cls.includes('_sessionRow') ? 'session' : cls.includes('_projectRow') ? 'workspace' : null
-    let fiber = null
-    for (const k of Object.keys(el)) if (k.startsWith('__reactFiber$')) fiber = el[k]
-    let id = null, depth = 0
-    while (fiber && depth < 24 && id === null) {
-      const p = fiber.memoizedProps
-      if (p && typeof p === 'object') {
-        const cands = kind === 'session'
-          ? [p.sessionId, p.node && p.node.id, p.row && p.row.id, p.item && p.item.id, p.session && p.session.id]
-          : [p.workspaceId, p.group && p.group.workspaceId, p.workspace && p.workspace.id, p.node && p.node.workspaceId, p.project && p.project.id]
-        for (const c of cands) if (typeof c === 'string' && c) { id = c; break }
-      }
-      fiber = fiber.return; depth += 1
-    }
-    return { kind, id, hasId: id !== null }
+check('rows found', await evaluate(`(async () => {
+  ${PRELUDE}
+  const probe = rows().map((el) => {
+    const kind = kindOf(el)
+    return { kind, id: kind === null ? null : idOf(el, kind) }
   })
-  return { total: rows.length, sessions: probe.filter(p => p.kind === 'session').length,
-    workspaces: probe.filter(p => p.kind === 'workspace').length,
-    resolved: probe.filter(p => p.hasId).length, sample: probe.slice(0, 4) }
+  const fxWs = await fxWorkspaceRow()
+  const sess = pickSessionRow()
+  return { total: probe.length, sessions: probe.filter((p) => p.kind === 'session').length,
+    workspaces: probe.filter((p) => p.kind === 'workspace').length,
+    resolved: probe.filter((p) => p.id !== null).length,
+    fxWorkspaceRow: fxWs !== null, sessionRow: sess !== null,
+    sessionTitle: sess === null ? null : (sessionRow(sessionIdOf(sess))?.displayTitle ?? null),
+    current: document.querySelectorAll('[role="treeitem"][aria-selected="true"]').length,
+    needOthers: { session: otherRow('session') !== null, workspace: otherRow('workspace') !== null } }
 })()`), (v) => {
   if (v.total === 0) return '一条行都没有，实测未发生'
-  if (v.sessions < NEED.sessions) return `会话行只有 ${v.sessions}，不足 ${NEED.sessions}`
-  if (v.workspaces < NEED.workspaces) return `工作区行只有 ${v.workspaces}，不足 ${NEED.workspaces}`
   if (v.resolved === 0) return 'fiber 反查一个 id 都没拿到，功能整体失灵'
   if (v.resolved < v.total - 1) return `${v.total} 行中只反查出 ${v.resolved} 个 id，超出容忍（允许 1 行拿不到）`
+  if (v.fxWorkspaceRow !== true) return '靶子工作区行不在侧边栏里，后面的断言无法只对靶子操作'
+  if (v.sessionRow !== true) return '侧栏里挑不出可操作的会话行（非 blank、非当前、有 id），会话侧全部断言无从下手'
+  if (typeof v.sessionTitle !== 'string' || v.sessionTitle === '') return '挑中的会话行标题读成空串'
+  if (v.current !== 1) return `侧栏里有 ${v.current} 个当前会话行（应有 1 个），挑不出「非当前」的那一行`
+  if (v.needOthers.session !== true || v.needOthers.workspace !== true) {
+    return '靶子之外没有第二行同 kind 的行，批量分支测不到'
+  }
   return true
 })
 
 // 功能 1：ctrl+点击两行，断言选择集与高亮。
-check('ctrl-click multi-select', await evaluate(`(() => {
-  ${PICK}
-  const sel = window.__dshOperationImprove__.selection
-  sel.clear()
-  const { kind, rows } = pick()
-  if (kind === null) return { skipped: 'need >= 2 same-kind rows' }
+check('ctrl-click multi-select', await evaluate(`(async () => {
+  ${PRELUDE}
+  const sel = h.selection
   const fire = (el) => el.dispatchEvent(new MouseEvent('click', {
     bubbles: true, cancelable: true, ctrlKey: true, view: window,
   }))
-  fire(rows[0]); fire(rows[1])
+  const picked = pickSessionRow()
+  const other = otherRow('session')
+  sel.clear()
+  if (picked === null || other === null) return { bail: '侧栏里没有两行可 ctrl+点击的会话' }
+  fire(picked); fire(other)
+  await sleep(80)
   const size2 = sel.size()
   const highlighted = document.querySelectorAll('[data-dsh-oi-selected]').length
-  fire(rows[1])
+  fire(other)
   const sizeAfterToggleOff = sel.size()
-  fire(rows[1])
-  return { usedKind: kind, kind: sel.getKind(), size: size2, highlighted,
-    sizeAfterToggleOff, finalSize: sel.size(),
-    serviceCallsDuringSelect: window.__dshOiTest__.calls.length }
+  fire(other)
+  return { bail: null, kind: sel.getKind(), size: size2, highlighted, sizeAfterToggleOff, finalSize: sel.size(),
+    holdsPicked: sel.has('session', sessionIdOf(picked)) }
 })()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
+  if (v.kind !== 'session') return `kind=${JSON.stringify(v.kind)}，应为 session`
   if (v.size !== 2) return `ctrl+点击两行后 size=${v.size}，应为 2`
   if (v.highlighted !== 2) return `高亮 ${v.highlighted} 个，应为 2`
   if (v.sizeAfterToggleOff !== 1) return `再点一次应摘除，size=${v.sizeAfterToggleOff}，应为 1`
-  if (v.kind !== v.usedKind) return `kind=${v.kind}，应为 ${v.usedKind}`
-  if (v.serviceCallsDuringSelect !== 0) return `选择期间调了 ${v.serviceCallsDuringSelect} 次服务，应为 0`
+  if (v.finalSize !== 2) return `第三次点回 size=${v.finalSize}，应为 2`
+  if (v.holdsPicked !== true) return '选择集里没有点的那一行，选择没落在点上'
   return true
 })
 
-check('ctrl-click suppresses row navigation', await evaluate(`(() => {
-  const sel = window.__dshOperationImprove__.selection
+check('ctrl-click suppresses row navigation', await evaluate(`(async () => {
+  ${PRELUDE}
+  const sel = h.selection
   sel.clear()
-  const sessionRow = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_sessionRow'))
-  if (!sessionRow) return { skipped: 'no session row' }
+  const picked = pickSessionRow()
+  const wsRow = await fxWorkspaceRow()
+  if (picked === null || wsRow === null) return { bail: '侧栏里挑不出可点的会话行或靶子工作区行' }
   const before = document.querySelectorAll('[aria-selected="true"]').length
   const beforeUrl = location.href
+  const wsExpandedBefore = wsRow.getAttribute('aria-expanded')
   const evt = new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, view: window })
-  sessionRow.dispatchEvent(evt)
-  const wsRow = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_projectRow'))
-  if (!wsRow) return { skipped: 'no workspace row' }
-  const expandedBefore = wsRow.getAttribute('aria-expanded')
+  picked.dispatchEvent(evt)
   wsRow.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, view: window }))
-  return new Promise((r) => setTimeout(() => r({
+  await sleep(200)
+  const result = {
+    bail: null,
     defaultPrevented: evt.defaultPrevented,
     ariaSelectedCountUnchanged: document.querySelectorAll('[aria-selected="true"]').length === before,
     urlUnchanged: location.href === beforeUrl,
-    workspaceExpandUnchanged: wsRow.getAttribute('aria-expanded') === expandedBefore,
-  }), 120))
+    workspaceExpandUnchanged: wsRow.getAttribute('aria-expanded') === wsExpandedBefore,
+  }
+  sel.clear()
+  return result
 })()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
   if (v.defaultPrevented !== true) return 'ctrl+点击没有 preventDefault，行自身的 onClick 会照跑'
   if (v.ariaSelectedCountUnchanged !== true) return 'aria-selected 计数变了，说明会话被真的打开了'
   if (v.urlUnchanged !== true) return 'URL 变了，导航没被挡住'
@@ -449,197 +394,235 @@ check('ctrl-click suppresses row navigation', await evaluate(`(() => {
   return true
 })
 
-// 同级约束：接着 ctrl+点击一个不同 kind 的行，选择集必须清空重来。
-check('kind switch clears', await evaluate(`(() => {
-  ${PICK}
-  const sel = window.__dshOperationImprove__.selection
-  sel.clear()
-  const { kind, rows } = pick()
-  if (kind === null) return { skipped: 'need >= 2 same-kind rows' }
+check('kind switch clears', await evaluate(`(async () => {
+  ${PRELUDE}
+  const sel = h.selection
+  const picked = pickSessionRow()
+  const other = otherRow('session')
+  const wsRow = await fxWorkspaceRow()
+  if (picked === null || other === null || wsRow === null) return { bail: '侧栏里凑不出两行会话加靶子工作区行' }
   const fire = (el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, view: window }))
-  fire(rows[0]); fire(rows[1])
+  sel.clear()
+  fire(picked); fire(other)
   const sizeBefore = sel.size()
-  const other = kind === 'session' ? '_projectRow' : '_sessionRow'
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes(other))
-  if (!row) return { skipped: 'no row of the other kind' }
-  fire(row)
-  return { fromKind: kind, sizeBefore, kind: sel.getKind(), size: sel.size() }
+  fire(wsRow)
+  const result = { bail: null, sizeBefore, kind: sel.getKind(), size: sel.size() }
+  sel.clear()
+  return result
 })()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
   if (v.sizeBefore !== 2) return `切换前应有 2 个选中，实际 ${v.sizeBefore}`
   if (v.size !== 1) return `切 kind 后应只剩新点的那 1 个，实际 ${v.size}`
-  if (v.kind === v.fromKind) return `kind 没切过去，仍是 ${v.kind}`
+  if (v.kind !== 'workspace') return `kind=${JSON.stringify(v.kind)}，切到工作区行后应是 workspace`
   return true
 })
 
 // 功能 2 单选：右键一个会话行。
 //
-// **文案不比对字面量，比对上游词典当场给出的那串文本**。写死「分叉会话」等于把断言
-// 绑在 zh 上，切到 en 跑就红；而写死之后上游改文案，插件跟着变、断言反而拦住——两个
-// 方向都不是这条断言要看的。它要看的是「菜单上这一项 === `workspace` 词典里的那一
-// 项」，顺带确认那一项确实解析出了译文（等于键名本身说明查找链全落空了）。
-check('contextmenu single (session)', await evaluate(`(() => {
-  const sel = window.__dshOperationImprove__.selection
+// **判据是逐项等于上游那一份**。会话菜单的每一项都是 `sidebar.workspaces.session.menu.item`
+// 这一格 slot 里注册的条目（上游 `ui-workspace`），本插件渲染的就是它们本身——所以两份
+// 菜单按定义应当逐项相等（文案 / 图标 / 顺序）。归档项在菜单里，上游那四项原样在。
+check('contextmenu single (session)', await evaluate(`(async () => {
+  ${PRELUDE}
+  const sel = h.selection
   sel.clear()
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_sessionRow'))
-  if (!row) return { skipped: 'no session row' }
-  const evt = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200, view: window })
-  row.dispatchEvent(evt)
-  const menu = document.querySelector('.dsh-oi-menu')
-  const items = menu ? [...menu.querySelectorAll('.dsh-oi-menu__item')].map(b => b.textContent) : null
-  const rect = menu ? menu.getBoundingClientRect() : null
-  return { defaultPrevented: evt.defaultPrevented, items, lang: document.documentElement.lang,
-    upstream: { pin: window.__dshOiT__('menu.pinSession'), unp: window.__dshOiT__('menu.unpinSession'),
-      rename: window.__dshOiT__('rename'), fork: window.__dshOiT__('menu.fork'),
-      archive: window.__dshOiT__('menu.archiveSession') },
-    inViewport: rect ? (rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1) : null }
+  const row = pickSessionRow()
+  if (row === null) return { bail: '侧栏里挑不出可操作的会话行' }
+  const evt = rightClick(row, 200, 220)
+  await sleep(350)
+  const menus = mine()
+  const menu = menus.length === 1 ? menus[0] : null
+  const rect = menu === null ? null : menu.getBoundingClientRect()
+  return { bail: null, defaultPrevented: evt.defaultPrevented, menus: menus.length,
+    items: menu === null ? null : labels(menu),
+    icons: menu === null ? null : [...menu.querySelectorAll('button[role="menuitem"] svg')]
+      .map((s) => (s.getAttribute('viewBox') ?? '') + '|' + (s.getAttribute('width') ?? '') + '|' + (s.getAttribute('height') ?? '')),
+    lang: document.documentElement.lang,
+    expected: { pin: t('menu.pinSession'), unp: t('menu.unpinSession'), rename: t('rename'),
+      fork: t('menu.fork'), archive: t('menu.archiveSession') },
+    material: menu === null ? null : menu.getAttribute('data-menu-material'),
+    zIndex: menu === null ? null : getComputedStyle(menu).zIndex,
+    inViewport: rect === null ? null : (rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1) }
 })()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
   if (v.defaultPrevented !== true) return '没有 preventDefault，浏览器原生菜单会弹出来'
+  if (v.menus !== 1) return `本插件的菜单有 ${v.menus} 张，应为 1`
   if (v.items === null) return '菜单没渲染出来'
-  if (v.items.length !== 3) return `单选会话应有 3 项（归档动作让位给上游的「...」），实际 ${JSON.stringify(v.items)}`
-  for (const key of ['pin', 'unp', 'rename', 'fork', 'archive']) {
-    if (v.upstream[key] === undefined) return `断言自己没取到 ${key}`
+  if (v.items.length !== 4) return `会话单选菜单应有上游那 4 项（pin/rename/fork/archive），实际 ${JSON.stringify(v.items)}`
+  const e = v.expected
+  if (v.items[0] !== e.pin && v.items[0] !== e.unp) {
+    return `首项应是置顶翻转（${JSON.stringify([e.pin, e.unp])} 之一），实际 ${JSON.stringify(v.items[0])}`
   }
-  if (v.upstream.rename === 'rename') return '上游词典查不出 rename，菜单会显示键名本身'
-  if (v.upstream.fork === 'menu.fork') return '上游词典查不出 menu.fork，菜单会显示键名本身'
-  if (v.upstream.archive === 'menu.archiveSession') return '上游词典查不出 menu.archiveSession'
-  if (v.upstream.pin === 'menu.pinSession') return '上游词典查不出 menu.pinSession'
-  const first = v.items[0]
-  if (first !== v.upstream.pin && first !== v.upstream.unp) {
-    return `第一项应是置顶态翻转（${JSON.stringify([v.upstream.pin, v.upstream.unp])} 之一），实际 ${JSON.stringify(first)}`
-  }
-  if (v.items[1] !== v.upstream.rename) return `重命名项是 ${JSON.stringify(v.items[1])}，上游词典给的是 ${JSON.stringify(v.upstream.rename)}`
-  if (v.items[2] !== v.upstream.fork) return `fork 项是 ${JSON.stringify(v.items[2])}，上游词典给的是 ${JSON.stringify(v.upstream.fork)}`
-  // 归档这一项**必须在**——不是漏抄，是有意让位（上游那条还要处理被拒后的「停止并归档」确认）。
-  if (v.items.includes(v.upstream.archive)) return '菜单里出现了「归档会话」，这一项已决定不在右键菜单里提供'
-  if (v.inViewport !== true) return '菜单溢出视口，翻转逻辑失效'
+  if (v.items[1] !== e.rename) return `第二项应是重命名 ${JSON.stringify(e.rename)}，实际 ${JSON.stringify(v.items[1])}`
+  if (v.items[2] !== e.fork) return `第三项应是分叉 ${JSON.stringify(e.fork)}，实际 ${JSON.stringify(v.items[2])}`
+  if (v.items[3] !== e.archive) return `末项应是归档 ${JSON.stringify(e.archive)}，实际 ${JSON.stringify(v.items[3])}`
+  if (v.icons.some((s) => s === '||')) return `有条目没有图标：${JSON.stringify(v.icons)}`
+  if (v.material !== 'translucent') return `卡片 data-menu-material=${JSON.stringify(v.material)}，应为 translucent`
+  if (v.zIndex !== '2147483000') return `卡片 z-index=${JSON.stringify(v.zIndex)}，本插件的浮层要压过应用自己的`
+  if (v.inViewport !== true) return '菜单溢出视口，夹边失效'
   return true
 })
 
-check('escape closes', await evaluate(`(() => {
-  const openedBefore = document.querySelector('.dsh-oi-menu') !== null
+check('escape closes', await evaluate(`(async () => {
+  ${PRELUDE}
+  const openedBefore = mine().length > 0
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-  return { openedBefore, menuGone: document.querySelector('.dsh-oi-menu') === null }
+  await sleep(200)
+  return { openedBefore, menuGone: mine().length === 0 }
 })()`), (v) => {
   if (v.openedBefore !== true) return '按 Esc 之前菜单就不在，这条没测到关闭行为'
   if (v.menuGone !== true) return 'Esc 没能关掉菜单'
   return true
 })
 
-// 单选工作区：三项必须逐字等于上游词典。这条和上一条合起来覆盖单选的全部六项——
-// 六项都对上，「同一个动作在两个菜单里叫两个名字」就不可能再发生。首项「新会话」不在
-// 上游那个「...」菜单里（上游把它放在行 hover 的第二枚按钮上），它是补齐的那一项。
-check('contextmenu single (workspace)', await evaluate(`(() => {
-  const sel = window.__dshOperationImprove__.selection
-  sel.clear()
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_projectRow'))
-  if (!row) return { skipped: 'no workspace row' }
-  row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 260, view: window }))
-  const menu = document.querySelector('.dsh-oi-menu')
-  const items = menu ? [...menu.querySelectorAll('.dsh-oi-menu__item')].map(b => b.textContent) : null
-  const result = { items, lang: document.documentElement.lang,
-    upstream: { newSession: window.__dshOiT__('actions.newSession'), rename: window.__dshOiT__('rename'),
-      del: window.__dshOiT__('delete.workspace') } }
-  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-  return result
+// 常驻容器参与布局的代价是整页横向跳动：菜单一开，上游渲染进来的锚点包装自带 18px 行盒，
+// body 内容高度顶过视口，冒出的竖直滚动条把 documentElement.clientWidth 收窄一个滚动条宽，
+// 会话区与右侧导航列跟着挪。判据取「开与关之间这份几何一个数都不许变」——用户看到的就是这个。
+check('opening the menu does not shift the page geometry', await evaluate(`(async () => {
+  ${PRELUDE}
+  const conv = document.querySelector('[data-conversation-scroll]')
+  if (conv === null) return { bail: '会话区不在页面上，几何比对等于没测' }
+  const read = () => {
+    const box = conv.getBoundingClientRect()
+    const host = document.querySelector('.dsh-oi-menu__host')
+    return {
+      clientWidth: document.documentElement.clientWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+      innerHeight: window.innerHeight,
+      convWidth: Math.round(box.width),
+      convLeft: Math.round(box.left),
+      host: host === null ? null : (() => {
+        const b = host.getBoundingClientRect()
+        return { w: Math.round(b.width), h: Math.round(b.height), pos: getComputedStyle(host).position }
+      })(),
+    }
+  }
+  const row = pickSessionRow()
+  if (row === null) return { bail: '侧栏里挑不出可操作的会话行' }
+  const before = read()
+  rightClick(row, 200, 240)
+  await sleep(350)
+  const opened = mine().length === 1
+  const during = read()
+  await closeAll()
+  const after = read()
+  return { bail: null, opened, before, during, after }
 })()`), (v) => {
-  if (v.items === null) return '菜单没渲染出来'
-  if (v.items.length !== 3) return `单选工作区应有 3 项（新建会话 / 重命名 / 删除），实际 ${JSON.stringify(v.items)}`
-  if (v.upstream.newSession === 'actions.newSession') return '上游词典查不出 actions.newSession，菜单会显示键名本身'
-  if (v.upstream.rename === 'rename') return '上游词典查不出 rename，菜单会显示键名本身'
-  if (v.upstream.del === 'delete.workspace') return '上游词典查不出 delete.workspace'
-  if (v.items[0] !== v.upstream.newSession) return `新建会话项是 ${JSON.stringify(v.items[0])}，上游词典给的是 ${JSON.stringify(v.upstream.newSession)}`
-  if (v.items[1] !== v.upstream.rename) return `重命名项是 ${JSON.stringify(v.items[1])}，上游词典给的是 ${JSON.stringify(v.upstream.rename)}`
-  if (v.items[2] !== v.upstream.del) return `删除项是 ${JSON.stringify(v.items[2])}，上游词典给的是 ${JSON.stringify(v.upstream.del)}`
+  if (v.bail != null) return '没测到：' + v.bail
+  if (v.opened !== true) return '菜单没开成一张卡片，几何比对等于没测'
+  if (v.during.host === null) return '菜单开了但 .dsh-oi-menu__host 不在 DOM 里，这条等于没测'
+  if (v.during.host.pos !== 'fixed') {
+    return '常驻容器 position=' + v.during.host.pos + '，没脱流——它留在 body 文档流里'
+  }
+  if (v.during.host.w !== 0 || v.during.host.h !== 0) {
+    return '常驻容器占 ' + v.during.host.w + '×' + v.during.host.h + 'px，菜单开着时它占了位'
+  }
+  if (v.during.clientWidth !== v.before.clientWidth) {
+    return '菜单开着时 documentElement.clientWidth 从 ' + v.before.clientWidth + ' 变成 '
+      + v.during.clientWidth + '（scrollHeight ' + v.before.scrollHeight + ' → ' + v.during.scrollHeight
+      + '，视口高 ' + v.before.innerHeight + '）——竖直滚动条冒出，整页横向跳动'
+  }
+  if (v.during.convWidth !== v.before.convWidth || v.during.convLeft !== v.before.convLeft) {
+    return '菜单开着时会话区从 ' + v.before.convLeft + '+' + v.before.convWidth
+      + ' 变成 ' + v.during.convLeft + '+' + v.during.convWidth + '——会话区在跟着抖'
+  }
+  if (v.after.clientWidth !== v.before.clientWidth || v.after.convWidth !== v.before.convWidth) {
+    return '关掉菜单后几何没回到基线：' + JSON.stringify({ before: v.before.clientWidth, after: v.after.clientWidth })
+  }
   return true
 })
 
-// 确认框的正文同样出自词典。**桩 confirm 恒返回 false**，所以这条断言点的是「删除
-// 工作区」而一次服务调用都不发出——量的是弹出来的那段文本，不是它之后的动作。
-// 单选删除拼的是上游删除对话框的标题与正文，`{name}` 填的是行文本。索引是菜单里那一项
-// 的位置，末项（删除）前面还站着「新建会话」与「重命名」，所以这里按末项取而不是写死下标。
-check('confirm copy comes from the dictionary', await evaluate(`(() => {
-  const sel = window.__dshOperationImprove__.selection
+// 单选工作区：三项必须逐字等于上游词典。这条和上一条合起来覆盖单选的全部项——都对上，
+// 「同一个动作在两个菜单里叫两个名字」就不可能再发生。首项「新会话」不在上游那个「...」
+// 菜单里（上游把它放在行 hover 的第二枚按钮上），它是补齐的那一项。
+check('contextmenu single (workspace)', await evaluate(`(async () => {
+  ${PRELUDE}
+  const sel = h.selection
   sel.clear()
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_projectRow'))
-  if (!row) return { skipped: 'no workspace row' }
-  // 插件取的是 fiber 上的 \`group.label\`，而工作区行标题 span 渲染的就是那个 label——
-  // 这里从 DOM 读同一个值，比对才不依赖 fiber 内部字段。
-  const titleSpan = row.querySelector('[class*="_title"]')
-  const name = titleSpan === null ? '' : (titleSpan.textContent ?? '').trim()
-  row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 260, view: window }))
-  const menus = document.querySelectorAll('.dsh-oi-menu')
-  const owner = menus.length === 1 ? menus[0].getAttribute('data-dsh-oi-owner') : null
+  const row = await fxWorkspaceRow()
+  if (row === null) return { bail: '靶子工作区行不在 DOM 里' }
+  const evt = rightClick(row, 200, 280)
+  await sleep(350)
+  const menus = mine()
+  const menu = menus.length === 1 ? menus[0] : null
+  return { bail: null, defaultPrevented: evt.defaultPrevented, menus: menus.length,
+    items: menu === null ? null : labels(menu),
+    danger: menu === null ? null : (() => {
+      const bs = [...menu.querySelectorAll('button[role="menuitem"]')]
+      const last = bs[bs.length - 1]
+      return { color: getComputedStyle(last).color,
+        icon: last.querySelector('svg') === null ? null : getComputedStyle(last.querySelector('svg')).color,
+        // 前面那两项的正常色：.danger 相对它们才叫「变了色」。
+        normalColor: bs.length > 1 ? getComputedStyle(bs[bs.length - 2]).color : null }
+    })(),
+    expected: { newSession: t('actions.newSession'), rename: t('rename'), del: t('delete.workspace') } }
+})()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
+  if (v.defaultPrevented !== true) return '没有 preventDefault，浏览器原生菜单会弹出来'
+  if (v.menus !== 1) return `本插件的菜单有 ${v.menus} 张，应为 1`
+  if (v.items === null) return '菜单没渲染出来'
+  if (JSON.stringify(v.items) !== JSON.stringify([v.expected.newSession, v.expected.rename, v.expected.del])) {
+    return `应是 [新会话, 重命名, 删除工作区]，实际 ${JSON.stringify(v.items)}`
+  }
+  if (v.danger === null) return '取不到末项'
+  // `.danger`（`Menu.module.css:226-239`）同时给文字和图标上 error 档，所以两者同色才是
+  // 危险配色的样子；两者不同色说明只染了一个，而且这里没有第二份可以对照，只能查同色。
+  if (v.danger.icon === null) return '删除项没有图标'
+  if (v.danger.icon !== v.danger.color) {
+    return `删除项的文字 ${JSON.stringify(v.danger.color)} 与图标 ${JSON.stringify(v.danger.icon)} 不同色——危险配色只落了一半`
+  }
+  if (v.danger.color === v.normalColor) return '删除项没有危险配色，与前面两项同色'
+  return true
+})
+
+// 删除工作区走上游那个对话框的原文；点「取消」不该发出任何服务调用。靶子工作区不能真
+// 删——`window.confirm` 打桩为 false，所以这一条只验确认框文案与服务调用计数。
+check('delete workspace confirms with the upstream wording', await evaluate(`(async () => {
+  ${PRELUDE}
+  const sel = h.selection
+  sel.clear()
+  const row = await fxWorkspaceRow()
+  if (row === null) return { bail: '靶子工作区行不在 DOM 里' }
+  rightClick(row, 200, 280)
+  await sleep(300)
+  const menus = mine()
+  if (menus.length !== 1) { await closeAll(); return { bail: '菜单没打开' } }
+  const menu = menus[0]
+  const titleText = (row.querySelector('[class*="_title"]')?.textContent ?? '').trim()
   const realConfirm = window.confirm
   let asked = null
   window.confirm = (m) => { asked = m; return false }
-  const before = window.__dshOiTest__.calls.length
-  const items = menus.length === 1 ? menus[0].querySelectorAll('.dsh-oi-menu__item') : []
-  const item = items.length === 3 ? items[items.length - 1] : null
-  const clickedLabel = item === null ? null : (item.textContent ?? '').trim()
-  if (item !== null) item.click()
-  return new Promise((resolve) => setTimeout(() => {
-    window.confirm = realConfirm
-    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-    resolve({ menus: menus.length, owner, mine: window.__dshOiTest__.instanceId, asked, name, clickedLabel,
-      callsAfterDecline: window.__dshOiTest__.calls.length - before,
-      upstream: { title: window.__dshOiT__('delete.workspace'), desc: window.__dshOiT__('delete.desc', { name }) } })
-  }, 80))
+  const item = itemByLabel(menu, t('delete.workspace'))
+  if (item === null) { window.confirm = realConfirm; await closeAll(); return { bail: '菜单里没有删除项' } }
+  item.click()
+  await sleep(250)
+  window.confirm = realConfirm
+  const alive = rows().some((r) => kindOf(r) === 'workspace' && idOf(r, 'workspace') === fx.workspaceId)
+  await closeAll()
+  return { bail: null, asked, titleText, stillThere: alive, expected: { title: t('delete.workspace'), desc: t('delete.desc', { name: titleText }) } }
 })()`), (v) => {
-  if (v.menus !== 1) return `页面上有 ${v.menus} 个菜单，已拒绝点击`
-  if (v.owner !== v.mine) return `菜单归属对不上：owner=${v.owner} 而本次注入的是 ${v.mine}`
-  if (v.clickedLabel === null) return `菜单不是 3 项，点不到末项，实际标签 ${JSON.stringify(v.clickedLabel)}`
-  if (v.clickedLabel !== v.upstream.title) return `末项标签是 ${JSON.stringify(v.clickedLabel)}，应为 ${JSON.stringify(v.upstream.title)}`
+  if (v.bail != null) return `没测到：${v.bail}`
   if (v.asked === null) return '点删除没弹确认框'
-  if (typeof v.name !== 'string' || v.name === '') return '行标题读成了空串，`{name}` 填不进去，这条等于没比'
-  if (v.callsAfterDecline !== 0) return `确认框选了「取消」却还是发出了 ${v.callsAfterDecline} 次服务调用`
-  if (v.upstream.desc === 'delete.desc') return '上游词典查不出 delete.desc'
-  if (v.asked !== `${v.upstream.title}\n\n${v.upstream.desc}`) {
-    return `确认框正文是 ${JSON.stringify(v.asked)}，上游词典拼出来的是 ${JSON.stringify(v.upstream.title + '\n\n' + v.upstream.desc)}`
+  if (typeof v.titleText !== 'string' || v.titleText === '') return '行标题读成空串，`{name}` 填不进去，这条等于没比'
+  if (v.expected.desc === 'delete.desc') return '上游词典查不出 delete.desc'
+  if (v.asked !== `${v.expected.title}\n\n${v.expected.desc}`) {
+    return `确认框正文是 ${JSON.stringify(v.asked)}，上游词典拼出来的是 ${JSON.stringify(v.expected.title + '\n\n' + v.expected.desc)}`
   }
+  if (v.stillThere !== true) return '确认框选了取消，工作区还是被删了'
   return true
 })
 
 // ---- 与行自己那个「...」菜单对齐 ---------------------------------------------
 //
-// 右键菜单是纯 DOM 手写的，图标是从 `ui-primitives` 拷过来的常量（那个包只导出 React
-// 组件，见 [../src/shared/menu-icons.js](../src/shared/menu-icons.js)），尺寸是照抄
-// `Menu.module.css` 的默认档。两处都会漂：上游换一版矢量、改一档尺寸，这边不会有任何
-// 编译期报错，只是画着一版旧的。所以判据不是「和某个字面量相等」，而是**当场点开同一行
-// 真实的「...」菜单，与自己弹的那个逐项比**。
+// 卡片与每一项都是上游组件，判据因此是**两份菜单逐项相等**（文案 / 图标的 viewBox 与
+// 尺寸 / 每条 path 的 d / 顺序）。图标不再是本仓拷贝的 SVG 字符串，而是上游 React 图标
+// 渲染出来的 DOM，所以比对仍然落在真实产物上。
 const ROWMENU = `
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  const portalMenus = () => [...document.querySelectorAll('div[role="menu"]')]
-    .filter((el) => !el.classList.contains('dsh-oi-menu'))
-  // 行右侧的操作区平时是隐形的，但 click() 不看可见性。「...」是操作区里的第一个按钮
-  // （工作区行的第二个是「新建会话」，点错会真的开一个会话），所以只认第一个，并要求
-  // 它确实多弹出了一个 portal 菜单。
-  const openRowMenu = async (row) => {
-    const actions = row.querySelector('[class*="rowActions"]')
-    if (actions === null) return { menu: null, why: 'row has no actions slot' }
-    const buttons = [...actions.querySelectorAll('button')]
-    if (buttons.length === 0) return { menu: null, why: 'actions slot has no button' }
-    const before = portalMenus().length
-    buttons[0].click()
-    await sleep(300)
-    const menus = portalMenus()
-    if (menus.length !== before + 1) {
-      return { menu: null, why: 'the first action button opened ' + (menus.length - before) + ' portal menus' }
-    }
-    return { menu: menus[menus.length - 1], why: null }
-  }
-  const closeRowMenu = async () => {
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    await sleep(250)
-  }
   const describe = (menu) => [...menu.querySelectorAll('button[role="menuitem"]')].map((b) => {
     const svg = b.querySelector('svg')
     return {
-      label: (b.textContent || '').trim(),
+      label: (b.textContent ?? '').trim(),
       viewBox: svg === null ? null : svg.getAttribute('viewBox'),
       width: svg === null ? null : svg.getAttribute('width'),
       height: svg === null ? null : svg.getAttribute('height'),
@@ -648,21 +631,14 @@ const ROWMENU = `
   })
   const metrics = (menu) => {
     const item = menu.querySelector('button[role="menuitem"]')
-    const icon = item === null ? null : item.children[0]
+    const icon = item === null ? null : item.querySelector('svg')
     const l = getComputedStyle(menu)
     const i = item === null ? null : getComputedStyle(item)
-    const c = icon === null || icon === undefined ? null : getComputedStyle(icon)
+    const c = icon === null ? null : getComputedStyle(icon)
     return {
       list: { boxSizing: l.boxSizing, minWidth: l.minWidth, maxWidth: l.maxWidth, padding: l.padding,
         borderRadius: l.borderRadius, borderTopWidth: l.borderTopWidth, boxShadow: l.boxShadow },
-      // 主题给浮层描边色分档靠这个属性（作用域在 data-menu-material 选择器里，
-      // 那里发 --dsw-elevation-stroke-color）。少了它，描边落到 body 上那一档，只有深色
-      // 主题看得出差，所以单独取出来比，不混在 metrics 里靠 boxShadow 反推。
       material: menu.getAttribute('data-menu-material'),
-      // 描边色取解析后的值。这枚 token 的档位由「那枚属性 + 本仓自报的一条 l1」两半合成，
-      // 缺任一半都错一档：只有属性不吃声明，浅色落到 body 档的 l4，比上游深；只有声明
-      // 不吃属性，深色压不过主题那条覆盖，仍是 l1，比上游浅。两半都缺时深浅都是 l1，
-      // 和 boxShadow 一样只有深色露馅——所以与 material 一并单列，别指望 styleDiff 顺带。
       stroke: l.getPropertyValue('--dsw-elevation-stroke-color').trim(),
       item: i === null ? null : { minHeight: i.minHeight, padding: i.padding, columnGap: i.columnGap,
         borderRadius: i.borderRadius, fontSize: i.fontSize, lineHeight: i.lineHeight,
@@ -670,31 +646,42 @@ const ROWMENU = `
       icon: c === null ? null : { width: c.width, height: c.height, color: c.color },
     }
   }
-  // 危险项（工作区的「删除」）的配色单独取一份：它走的是另一套 token，和普通项一起比
-  // 的话，把 danger 规则整条写错也照样过。
   const dangerRow = (menu, index) => {
     const item = menu.querySelectorAll('button[role="menuitem"]')[index]
     if (item === undefined) return null
-    const icon = item.children[0]
-    return {
-      color: getComputedStyle(item).color,
-      iconColor: icon === undefined ? null : getComputedStyle(icon).color,
-    }
+    const icon = item.querySelector('svg')
+    return { color: getComputedStyle(item).color, iconColor: icon === null ? null : getComputedStyle(icon).color }
   }
-  // 危险项的位置两边不一定相同：上游「...」里删除恒是末项（会话行是第 2 项、工作区行也
-  // 是第 2 项），本插件的工作区菜单在删除前面多了「新建会话」，删除落到第 3 项。所以下标
-  // 由调用方给，取错位置比出来的配色是另一条项的，等于没测。
+  const closeRowMenu = async () => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await sleep(250)
+  }
+  const openRowMenu = async (row) => {
+    const actions = row.querySelector('[class*="rowActions"]')
+    if (actions === null) return { menu: null, why: 'row has no actions slot' }
+    const buttons = [...actions.querySelectorAll('button')]
+    if (buttons.length === 0) return { menu: null, why: 'actions slot has no button' }
+    const before = upstreamMenus().length
+    buttons[0].click()
+    await sleep(350)
+    const menus = upstreamMenus()
+    if (menus.length !== before + 1) {
+      return { menu: null, why: 'the first action button opened ' + (menus.length - before) + ' portal menus' }
+    }
+    return { menu: menus[menus.length - 1], why: null }
+  }
   const pair = async (row, x, y, myDangerIndex = 1) => {
     const opened = await openRowMenu(row)
     if (opened.menu === null) { await closeRowMenu(); return { why: opened.why } }
-    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }))
-    const mineMenus = document.querySelectorAll('.dsh-oi-menu')
+    rightClick(row, x, y)
+    await sleep(350)
+    const mineMenus = mine()
     const one = mineMenus.length === 1 ? mineMenus[0] : null
     const result = {
       why: null,
+      mine: h.instanceId,
       menus: mineMenus.length,
-      owner: one === null ? null : one.getAttribute('data-dsh-oi-owner'),
-      mine: window.__dshOiTest__.instanceId,
+      owner: one === null ? null : (one.classList.contains(ownerClass) ? h.instanceId : null),
       upstreamItems: describe(opened.menu),
       myItems: one === null ? null : describe(one),
       upstreamMetrics: metrics(opened.menu),
@@ -703,25 +690,58 @@ const ROWMENU = `
       myDanger: one === null ? null : dangerRow(one, myDangerIndex),
     }
     await closeRowMenu()
-    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-    await sleep(150)
+    await closeAll()
+    await sleep(200)
     result.upstreamClosed = !document.body.contains(opened.menu)
-    result.mineClosed = document.querySelector('.dsh-oi-menu') === null
+    result.mineClosed = mine().length === 0
     return result
   }
-  // 描边色分档在两档主题里是**两条不同的机制**，只测启动时那一档，另一档等于没测：
-  // 缺属性只有深色露馅（主题那条覆盖挂在 [data-menu-material] 选择器上），缺自报声明
-  // 只有浅色露馅（那档主题没重发这枚 token，吃 body 上的 l4）。所以两份菜单都在两档下读一遍。
-  const withTheme = async (dark, run) => {
-    const had = document.body.hasAttribute('data-ds-dark-theme')
-    if (dark) document.body.setAttribute('data-ds-dark-theme', '')
-    else document.body.removeAttribute('data-ds-dark-theme')
-    await sleep(350)
+  /**
+   * 切分档跑一段读数。
+   *
+   * 切的是 body[data-ds-dark-theme] 这个属性，不是 setTheme：
+   * 描边分档规则就挂在这个属性上（ui-theme/src/styles/gradient-shadow-text.css:23-25，
+   * 深色档把 --dsw-elevation-stroke-color 从 l4 降到 l3），而 token 值本身来自样式表，
+   * 不在主题快照那 79 枚 token 里，所以属性是唯一也是足够的杠杆。
+   *
+   * **不能走真服务**：setTheme 写完 host 偏好后，adopt()（ui-theme/index.ts:259）会在同一次
+   * 调用里同步把持久化的偏好读回来，而副本里持久的那一档被 dsh-any-background 钉成它的
+   * custom-color 主题，于是 rev 一 publish 就被顶回去（实测 light@6 → custom-color@7）。
+   * 走设置面板 Appearance 那三枚 cube 也是同一条路，所以它们在本栈里同样切不动。
+   *
+   * **run() 期间要用 MutationObserver 把属性钉住**：测试栈副本里 dsh-any-background 每帧把
+   * data-ds-dark-theme 写回深色（实测摘掉之后 700ms 内写回 23 次），而 pair() 要 sleep 数百
+   * 毫秒才读到卡片的描边色——不钉住的话两档读到的是同一个深色值。
+   *
+   * landed 读的是带 [data-menu-material] 的探针元素上那枚 --dsw-elevation-stroke-color，
+   * **不是** --dsw-alias-border-l3：后者被 dsh-any-background 的 81 条 !important 钉成深色档的值，
+   * 实测深浅两档都读出 rgba(255,255,255,0.16)，拿它当「杠杆在动」的证据必然失效。
+   * theme.overrideTokens 同样压不过那些 !important（实测覆盖深浅两档后读数不变）。
+   */
+  const withScheme = async (wantDark, run) => {
+    const body = document.body
+    const had = body.getAttribute('data-ds-dark-theme')
+    const apply = () => {
+      if (wantDark) { if (!body.hasAttribute('data-ds-dark-theme')) body.setAttribute('data-ds-dark-theme', '') }
+      else if (body.hasAttribute('data-ds-dark-theme')) body.removeAttribute('data-ds-dark-theme')
+    }
+    let hits = 0
+    const guard = new MutationObserver(() => {
+      hits += 1
+      if (hits < 400) apply()
+    })
+    guard.observe(body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
+    apply()
+    const probe = document.createElement('div')
+    probe.setAttribute('data-menu-material', 'translucent')
+    body.append(probe)
+    const landed = getComputedStyle(probe).getPropertyValue('--dsw-elevation-stroke-color').trim()
+    probe.remove()
     const result = await run()
-    if (had) document.body.setAttribute('data-ds-dark-theme', '')
-    else document.body.removeAttribute('data-ds-dark-theme')
-    await sleep(350)
-    return result
+    guard.disconnect()
+    if (had === null) body.removeAttribute('data-ds-dark-theme')
+    else body.setAttribute('data-ds-dark-theme', had)
+    return { ...result, landed, guardHits: hits }
   }
 `
 
@@ -736,7 +756,7 @@ function styleDiff(mine, upstream, path = '') {
     return mine === upstream ? null : `${path || '(root)'}: 本插件 ${JSON.stringify(mine)} / 上游 ${JSON.stringify(upstream)}`
   }
   if (typeof upstream !== 'object') {
-    return mine === upstream ? null : `${path}: 本插件 ${JSON.stringify(mine)} / 上游 ${JSON.stringify(upstream)}`
+    return mine === upstream ? null : `${path || '(root)'}: 本插件 ${JSON.stringify(mine)} / 上游 ${JSON.stringify(upstream)}`
   }
   for (const key of Object.keys(upstream)) {
     const diff = styleDiff(mine[key], upstream[key], path === '' ? key : `${path}.${key}`)
@@ -745,53 +765,38 @@ function styleDiff(mine, upstream, path = '') {
   return null
 }
 
-/** 两条断言共用一次页面交互：菜单只点开一次，比对两个维度。 */
 const sessionPair = await evaluate(`(async () => {
+  ${PRELUDE}
   ${ROWMENU}
-  window.__dshOperationImprove__.selection.clear()
-  const row = [...document.querySelectorAll('[role="treeitem"]')].find((el) =>
-    String(el.className).includes('_sessionRow') && el.querySelector('[class*="rowActions"] button') !== null)
-  if (!row) return { why: 'no session row carries the ... button' }
-  const result = await pair(row, 200, 200)
-  return { ...result, archiveLabel: window.__dshOiT__('menu.archiveSession') }
+  const row = pickSessionRow()
+  if (row === null) return { why: '侧栏里挑不出可操作的会话行' }
+  return pair(row, 200, 220)
 })()`)
 
 check('session menu mirrors the row\'s own menu', sessionPair, (v) => {
   if (v.why != null) return `没测到：${v.why}`
-  if (v.menus !== 1) return `页面上有 ${v.menus} 个本插件菜单`
-  if (v.owner !== v.mine) return `菜单归属对不上：owner=${v.owner} 而本次注入的是 ${v.mine}`
+  if (v.menus !== 1) return `页面上有 ${v.menus} 张本插件的卡片`
+  if (v.owner !== v.mine) return `菜单归属对不上：owner=${JSON.stringify(v.owner)}`
+  if (v.myItems === null) return '本插件的菜单没渲染出来'
   if (v.upstreamItems.length !== 4) {
-    return `上游「...」菜单有 ${v.upstreamItems.length} 项（本条按「上游 4 项、我们有意少 1 项」对齐）：${JSON.stringify(v.upstreamItems.map((i) => i.label))}`
+    return `上游「...」菜单有 ${v.upstreamItems.length} 项（这条按 4 项逐项相等）：`
+      + JSON.stringify(v.upstreamItems.map((i) => i.label))
   }
-  if (v.myItems.some((i) => i.paths === null || i.paths.length === 0)) {
-    return `有菜单项没有图标：${JSON.stringify(v.myItems.map((i) => ({ label: i.label, paths: i.paths })))}`
-  }
-  // 有意缺席的那一项必须是**末项且是归档会话**；上游换顺序或换文案都要在这里露出来，
-  // 否则「少一项」会从决定变成漂移。
-  const dropped = v.upstreamItems.filter((i) => !v.myItems.some((m) => m.label === i.label))
-  if (dropped.length !== 1 || dropped[0].label !== v.archiveLabel || v.upstreamItems.at(-1).label !== v.archiveLabel) {
-    return `本插件应当只少末项「${v.archiveLabel}」，实际少了 ${JSON.stringify(dropped.map((i) => i.label))}`
-  }
-  const kept = v.upstreamItems.filter((i) => i.label !== v.archiveLabel)
-  if (JSON.stringify(v.myItems) !== JSON.stringify(kept)) {
-    return '逐项（顺序 / 文案 / viewBox / 尺寸 / path）比对不等：\n'
-      + `  本插件 ${JSON.stringify(v.myItems)}\n  上游（去掉归档项） ${JSON.stringify(kept)}`
+  if (JSON.stringify(v.myItems) !== JSON.stringify(v.upstreamItems)) {
+    return '两份菜单逐项（顺序 / 文案 / viewBox / 尺寸 / path）比对不等：\n'
+      + `  本插件 ${JSON.stringify(v.myItems)}\n  上游   ${JSON.stringify(v.upstreamItems)}`
   }
   if (v.upstreamClosed !== true || v.mineClosed !== true) return '收尾没关掉菜单，会污染后续断言'
   return true
 })
 
+// 两份菜单是同一个组件渲染的，比的其实是「本插件没把档位改坏」：那份 `listClassName` 只带
+// z-index，若哪条规则把尺寸或描边改掉了，这条会红。留着作为回归闸。
 check('menu metrics match the primitives default tier', sessionPair, (v) => {
   if (v.why != null) return `没测到：${v.why}`
-  if (v.myMetrics === null) return '本插件菜单没渲染出来'
-  // 缺这枚属性时 boxShadow 仍可能逐字相等（浅色主题下两档同值），所以先单列一条，
-  // 别指望 metrics 那条把它带出来。
+  if (v.myMetrics === null) return '本插件的菜单没渲染出来'
   if (v.myMetrics.material !== v.upstreamMetrics.material) {
-    return `浮层的 data-menu-material 本插件 ${JSON.stringify(v.myMetrics.material)} / 上游 ${JSON.stringify(v.upstreamMetrics.material)}——主题靠它给描边色分档`
-  }
-  // 单比解析后的描边色：boxShadow 那串里混着两档同值的层，只有深色主题露馅，这条不挑主题。
-  if (v.myMetrics.stroke !== v.upstreamMetrics.stroke) {
-    return `描边色本插件 ${v.myMetrics.stroke} / 上游 ${v.upstreamMetrics.stroke}——那枚 token 要属性与自报声明两半都在才解析得对`
+    return `data-menu-material 本插件 ${v.myMetrics.material} / 上游 ${v.upstreamMetrics.material}`
   }
   const diff = styleDiff(v.myMetrics, v.upstreamMetrics)
   if (diff !== null) return `计算样式不等 —— ${diff}`
@@ -801,17 +806,15 @@ check('menu metrics match the primitives default tier', sessionPair, (v) => {
   return true
 })
 
-// 描边色在两档主题里各测一遍：深浅缺的机制不同，只测启动那一档会漏掉另一半。
 const strokePairs = await evaluate(`(async () => {
+  ${PRELUDE}
   ${ROWMENU}
-  window.__dshOperationImprove__.selection.clear()
-  const findRow = () => [...document.querySelectorAll('[role="treeitem"]')].find((el) =>
-    String(el.className).includes('_sessionRow') && el.querySelector('[class*="rowActions"] button') !== null)
+  h.selection.clear()
+  const row = pickSessionRow()
+  if (row === null) return { why: '侧栏里挑不出可操作的会话行' }
   const out = {}
   for (const [name, dark] of [['dark', true], ['light', false]]) {
-    const row = findRow()
-    if (!row) return { why: 'no session row carries the ... button' }
-    out[name] = await withTheme(dark, () => pair(row, 200, 200))
+    out[name] = await withScheme(dark, () => pair(row, 200, 220))
   }
   return out
 })()`)
@@ -826,36 +829,41 @@ check('menu stroke colour matches upstream in both themes', strokePairs, (v) => 
     if (p.myMetrics.stroke !== p.upstreamMetrics.stroke) {
       return `${name} 档描边色本插件 ${p.myMetrics.stroke} / 上游 ${p.upstreamMetrics.stroke}——那枚 token 要属性与自报声明两半都在才解析得对`
     }
-    // 两档分开断言，两档的差异本身就是「分档真的在发生」的证据：两档读出同一个值，
-    // 说明其中一档没生效（属性没被主题规则接住，或声明把主题那份盖了）。
-    if (v.dark.myMetrics.stroke === v.light.myMetrics.stroke) {
-      return `两档读出同一个描边色 ${p.myMetrics.stroke}，主题的分档没生效，这条等于没测`
-    }
+  }
+  // 两档必须真的落在不同 token 档位上，否则下面那句「两档读数不同」没有意义。
+  if (v.dark.landed === v.light.landed) {
+    return `两轮都在 [data-menu-material] 上读到 --dsw-elevation-stroke-color = ${v.dark.landed}`
+      + `（深浅两档的 guardHits=${v.dark.guardHits}/${v.light.guardHits}），档位杠杆没生效，这条等于没测`
+  }
+  // 两档的差异本身就是「分档真的在发生」的证据：两档读出同一个值，说明其中一档没生效。
+  if (v.dark.myMetrics.stroke === v.light.myMetrics.stroke) {
+    return `两档读出同一个描边色 ${v.dark.myMetrics.stroke}，主题的分档没生效，这条等于没测`
   }
   return true
 })
 
 const workspacePair = await evaluate(`(async () => {
+  ${PRELUDE}
   ${ROWMENU}
-  window.__dshOperationImprove__.selection.clear()
-  // 「未分组」那一行没有 actions，只有一个「新建会话」按钮；要的是有两个按钮的真实工作区行。
-  const row = [...document.querySelectorAll('[role="treeitem"]')].find((el) =>
-    String(el.className).includes('_projectRow')
-    && el.querySelectorAll('[class*="rowActions"] button').length >= 2)
-  if (!row) return { why: 'no workspace row carries both the ... and + buttons' }
-  // 危险项下标 2：本插件工作区菜单是 3 项，删除在「新建会话」与「重命名」之后。
-  const result = await pair(row, 200, 260, 2)
-  return { ...result, newSessionLabel: window.__dshOiT__('actions.newSession'),
+  h.selection.clear()
+  // 「未分组」那一行没有 actions；要的是有两个按钮的真实工作区行——靶子工作区正是。
+  const row = await fxWorkspaceRow()
+  if (row === null) return { why: '靶子工作区行不在 DOM 里' }
+  if (row.querySelectorAll('[class*="rowActions"] button').length < 2) {
+    return { why: '靶子工作区行上没有「...」与「+」两枚按钮' }
+  }
+  const result = await pair(row, 200, 280, 2)
+  return { ...result, newSessionLabel: t('actions.newSession'),
     expandedBefore: row.getAttribute('aria-expanded') }
 })()`)
 
-// 工作区单选有 3 项，上游「...」只有 2 项——多出来的首项正是上游放在行 hover 第二枚
-// 按钮上的那个「新建会话」，对齐「...」对齐不到它，只能在这里补。所以判据是「上游那
-// 2 项逐字不变 + 首项逐字等于词典里的 actions.newSession」，而不是三对二的两两相等。
+// 工作区单选有 3 项，上游「...」只有 2 项——多出来的首项正是上游放在行 hover 第二枚按钮上的
+// 那个「新会话」，对齐「...」对齐不到它，只能在这里补。所以判据是「上游那 2 项逐字不变 +
+// 首项逐字等于词典里的 actions.newSession」，而不是三对二的两两相等。
 check('workspace menu mirrors the row\'s own menu', workspacePair, (v) => {
   if (v.why != null) return `没测到：${v.why}`
-  if (v.menus !== 1) return `页面上有 ${v.menus} 个本插件菜单`
-  if (v.owner !== v.mine) return `菜单归属对不上：owner=${v.owner} 而本次注入的是 ${v.mine}`
+  if (v.menus !== 1) return `页面上有 ${v.menus} 张本插件的卡片`
+  if (v.owner !== v.mine) return `菜单归属对不上：owner=${JSON.stringify(v.owner)}`
   if (v.upstreamItems.length !== 2) {
     return `上游「...」菜单有 ${v.upstreamItems.length} 项（本条按 2 项对齐）：${JSON.stringify(v.upstreamItems.map((i) => i.label))}`
   }
@@ -863,14 +871,8 @@ check('workspace menu mirrors the row\'s own menu', workspacePair, (v) => {
   if (v.myItems.length !== 3) {
     return `本插件应有 3 项（新建会话 + 上游那 2 项），实际 ${JSON.stringify(v.myItems.map((i) => i.label))}`
   }
-  if (v.newSessionLabel === 'actions.newSession') return '上游词典查不出 actions.newSession'
   if (v.myItems[0].label !== v.newSessionLabel) {
     return `首项应是「${v.newSessionLabel}」，实际 ${JSON.stringify(v.myItems[0].label)}——它必须摆在上游那 2 项前面`
-  }
-  if (v.myItems[0].viewBox !== '0 0 16 16' || v.myItems[0].width !== '16' || v.myItems[0].height !== '16'
-    || v.myItems[0].paths === null || v.myItems[0].paths.length !== 3) {
-    return '「新建会话」的图标与上游 `IconNewChatOutlineRegular` 不等（16/16、viewBox 0 0 16 16、3 条 path）：'
-      + JSON.stringify(v.myItems[0])
   }
   const tail = v.myItems.slice(1)
   if (JSON.stringify(tail) !== JSON.stringify(v.upstreamItems)) {
@@ -887,504 +889,452 @@ check('danger row keeps upstream colouring', workspacePair, (v) => {
   if (v.myItems === null || v.myItems.length !== 3) return '本插件的工作区菜单不是 3 项，删除项下标对不上，这条等于没比'
   const diff = styleDiff(v.myDanger, v.upstreamDanger)
   if (diff !== null) return `删除项配色不等 —— ${diff}`
-  if (v.myDanger.color === v.myMetrics.item.color) {
-    return `删除项和普通项同色（${v.myDanger.color}），danger 规则没生效`
-  }
+  if (v.myDanger.color === v.myMetrics.item.color) return '删除项没有危险配色'
+  if (v.myDanger.iconColor === null) return '删除项没有图标'
+  if (v.myDanger.iconColor !== v.myDanger.color) return '删除项的图标没有跟文字一起转成危险色'
   return true
 })
 
-// ---- 工作区「新建会话」这一项：两分支 ------------------------------------------
+// ---- 工作区「新会话」这一项 --------------------------------------------------
 //
-// 这一项没有上游「...」菜单里的对应物可逐项比，它对齐的是行 hover 那枚按钮，所以判据落在
-// 两件上游能观测到的事上：**图标**由上一条比（逐字矢量），**动作**由这一条比——点下去
-// 必须调 `uiWorkspace.startSession(workspaceId)`，且 workspaceId 是那一行自己的 id。
-//
-// 两个分支都要覆盖：
-//   1. `ctx.get('uiWorkspace')` 有服务时那一项出现，点它发一次 startSession、参数是本行 id；
-//   2. 服务缺席（`enabled: false`）时整项不出现——宁可少一项，也不要给一个点下去没有回应的
-//      入口。判据是菜单项数回到 2 且首项是「重命名」，不是 `undefined`（那一项缺席会让
-//      `resolveUiWorkspace()` 返回 undefined，`buildItems` 少 push 一条）。
-const newSessionPair = await evaluate(`(async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  window.__dshOperationImprove__.selection.clear()
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_projectRow'))
-  if (!row) return { why: 'no workspace row' }
-  const mine = window.__dshOiTest__.instanceId
-  const openMine = () => {
-    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 260, view: window }))
-    const menus = document.querySelectorAll('.dsh-oi-menu')
-    if (menus.length !== 1 || menus[0].getAttribute('data-dsh-oi-owner') !== mine) return null
-    return menus[0]
+// 判据是**状态 diff**而不是服务记账：`uiWorkspace.startSession` 是真服务，插件不再有机会
+// 替它记账。可观测的结果是靶子工作区成为当前打开的那个（上游 `openSession` 写主区引用，
+// 侧栏行随之带上选中态）。折叠的靶子工作区还会被先展开——那是上游那枚 hover 按钮的两步
+// 里的一步，本插件照做，所以它也是被测行为的一部分。
+const newSessionProbe = await evaluate(`(async () => {
+  ${PRELUDE}
+  h.selection.clear()
+  const row = await fxWorkspaceRow()
+  if (row === null) return { why: '靶子工作区行不在 DOM 里' }
+  const before = { expanded: row.getAttribute('aria-expanded'),
+    mainSelected: svc.sessions.list.getSnapshot().ids.length }
+  // 折着的先收回去，让「展开那一步」真的发生。
+  if (before.expanded === 'true') {
+    row.click(); await sleep(900)
+    const collapsed = await fxWorkspaceRow()
+    if (collapsed === null) return { why: '收起后靶子工作区行不见了' }
+    rightClick(collapsed, 200, 280)
+  } else {
+    rightClick(row, 200, 280)
   }
-  const expectedId = (row.getAttribute('data-row-key') ?? '').replace(/^workspace:/, '')
-  const newSessionLabel = window.__dshOiT__('actions.newSession')
-  const renameLabel = window.__dshOiT__('rename')
-  const collapse = () => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-
-  // 分支一：服务在场。
-  const menu = openMine()
-  if (menu === null) { collapse(); return { why: 'menu ownership check failed' } }
-  const items1 = [...menu.querySelectorAll('.dsh-oi-menu__item')]
-  const labels1 = items1.map((b) => (b.textContent ?? '').trim())
-  const before1 = window.__dshOiTest__.calls.length
-  const beforeRej1 = window.__dshOiTest__.rejections.length
-  const expandedBefore = row.getAttribute('aria-expanded')
-  items1[0].click()
-  await sleep(300)
-  const calls1 = window.__dshOiTest__.calls.slice(before1)
-  const menuClosed1 = document.querySelector('.dsh-oi-menu') === null
-  const rejections1 = window.__dshOiTest__.rejections.length - beforeRej1
-
-  // 分支二：服务缺席（模拟插件 apply 早于上游 Service 注册、或那个 profile 根本没有它）。
-  window.__dshOiUiWorkspaceStub__.enabled = false
-  const menu2 = openMine()
-  const labels2 = menu2 === null ? null
-    : [...menu2.querySelectorAll('.dsh-oi-menu__item')].map((b) => (b.textContent ?? '').trim())
-  const menus2 = document.querySelectorAll('.dsh-oi-menu').length
-  collapse()
-  window.__dshOiUiWorkspaceStub__.enabled = true
-  const before2 = window.__dshOiTest__.calls.length
-  return { labels1, labels2, menus2, expandedBefore,
-    expandedAfter: row.getAttribute('aria-expanded'),
-    calls1: calls1.map((c) => c.label + '.' + c.method),
-    arg1: (calls1[0] || { args: [null] }).args[0],
-    expectedId, newSessionLabel, renameLabel, menuClosed1, rejections1,
-    callsAfterRestore: window.__dshOiTest__.calls.length - before2 }
+  await sleep(350)
+  const menus = mine()
+  if (menus.length !== 1) return { why: '菜单没打开' }
+  const menu = menus[0]
+  const first = itemByLabel(menu, t('actions.newSession'))
+  if (first === null) { await closeAll(); return { why: '菜单里没有「新会话」这一项' } }
+  first.click()
+  await sleep(1200)
+  const after = rows().find((r) => kindOf(r) === 'workspace' && idOf(r, 'workspace') === fx.workspaceId)
+  const out = {
+    why: null,
+    expandedBefore: before.expanded,
+    expandedAfter: after === null ? null : after.getAttribute('aria-expanded'),
+    menuClosed: mine().length === 0,
+    active: document.querySelectorAll('[aria-selected="true"]').length,
+    mainSessions: before.mainSelected,
+  }
+  await closeAll()
+  return out
 })()`)
 
-check('workspace new session dispatches uiWorkspace.startSession', newSessionPair, (v) => {
+check('workspace new session opens a session in that workspace', newSessionProbe, (v) => {
   if (v.why != null) return `没测到：${v.why}`
-  if (v.labels1.length !== 3) return `服务在场时应有 3 项，实际 ${JSON.stringify(v.labels1)}`
-  if (v.labels1[0] !== v.newSessionLabel) return `首项应是「${v.newSessionLabel}」，实际 ${JSON.stringify(v.labels1[0])}`
-  if (v.calls1.join(',') !== 'uiWorkspace.startSession') {
-    return `点首项发出的调用是 ${JSON.stringify(v.calls1)}，应为 uiWorkspace.startSession`
-  }
-  if (typeof v.arg1 !== 'string' || v.arg1.length === 0) return `参数不是真实 id：${JSON.stringify(v.arg1)}`
-  if (v.arg1 !== v.expectedId) return `参数是 ${JSON.stringify(v.arg1)}，行自己的 id 是 ${JSON.stringify(v.expectedId)}`
-  // 上游那枚按钮第一步是展开该组（`setGroupExpanded(group.key, true)`）。本插件用点行本身
-  // 代替：已展开时不点（再点会收起来），折叠时才点。这里验的就是「折叠的行被点开了」。
   if (v.expandedBefore === 'false' && v.expandedAfter !== 'true') {
-    return `点开的是折叠的工作区行（aria-expanded=${v.expandedBefore}），执行后是 ${JSON.stringify(v.expandedAfter)}——没展开就看不到刚开的会话`
+    return `点的是折叠的工作区行（aria-expanded=${v.expandedBefore}），执行后是 ${JSON.stringify(v.expandedAfter)}——没展开就看不到刚开的会话`
   }
-  if (v.menuClosed1 !== true) return '执行后菜单没关'
-  if (v.rejections1 !== 0) return `新建会话过程中出现了 ${v.rejections1} 次未处理的 rejection`
-  return true
-})
-
-check('workspace menu drops new session without the service', newSessionPair, (v) => {
-  if (v.why != null) return `没测到：${v.why}`
-  if (v.menus2 !== 1) return `分支二里页面上有 ${v.menus2} 个本插件菜单，拒绝判读`
-  if (v.labels2 === null) return '分支二的菜单没打开或归属不对，这一半没测到'
-  if (v.labels2.length !== 2) {
-    return `服务缺席时应有 2 项（重命名 / 删除），实际 ${JSON.stringify(v.labels2)}——宁可少一项，也不要给一个点了没回应的入口`
-  }
-  if (v.labels2[0] !== v.renameLabel) return `服务缺席时首项应是「${v.renameLabel}」，实际 ${JSON.stringify(v.labels2[0])}`
-  if (v.callsAfterRestore !== 0) return `打开/关闭菜单本身发出了 ${v.callsAfterRestore} 次服务调用，菜单不该有任何副作用`
-  return true
-})
-
-// ---- 归档行：同一个 slot 的翻转 ------------------------------------------------
-//
-// 上游的「归档会话」与「取消归档」是**同一个菜单项**（order 400 那一个 slot）按归档态
-// 换文案、图标与调用的方法，置顶项则在归档行整条不渲染。取第一条会话行的那些断言看不见
-// 这一半：归档行默认被侧栏视图筛掉。所以这里自己打开「显示已归档」（一个视图偏好，不改
-// 数据），同一行上比完再关回去。
-const archivedPair = await evaluate(`(async () => {
-  ${ROWMENU}
-  const t = window.__dshOiT__
-  const archivedRows = () => [...document.querySelectorAll('[role="treeitem"]')].filter((el) =>
-    String(el.className).includes('_sessionRow') && String(el.className).includes('_archived'))
-  // 归档行可见与否就是开关的读回值（视图偏好没有可读的 DOM 状态位，别猜 class）。
-  // **收尾一律关**，不管这一轮是不是自己开的：上一轮中途失败会把它留在打开态，
-  // 而后面每条断言取的都是「第一条会话行」，取到归档行会串台成别的失败。
-  //
-  // 归档视图是三态选择（隐藏 / 全部对话 / 仅显示已归档），**不是**一个可以反复点的开关：
-  // 点已经选中的那一项是空操作。所以两个方向各点各自的目标项，不能拿同一个 item 来回点。
-  const setArchivedView = async (want) => {
-    const targetKey = want ? 'viewOptions.showArchived' : 'viewOptions.hideArchived'
-    for (let i = 0; i < 3; i += 1) {
-      if ((archivedRows().length > 0) === want) return true
-      const view = [...document.querySelectorAll('[aria-label]')].find((el) =>
-        (el.getAttribute('aria-label') ?? '') === t('viewOptions.label'))
-      if (view === undefined) return false
-      view.click()
-      await sleep(400)
-      const item = [...document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]')].find((el) =>
-        (el.textContent ?? '').trim() === t(targetKey))
-      if (item === undefined) {
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-        await sleep(200)
-        continue
-      }
-      item.click()
-      await sleep(700)
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-      await sleep(200)
-    }
-    return (archivedRows().length > 0) === want
-  }
-  const opened = archivedRows().length > 0 ? true : await setArchivedView(true)
-  const row = archivedRows().find((el) => el.querySelector('[class*="rowActions"] button') !== null) ?? null
-  if (row === null) {
-    await setArchivedView(false)
-    return { why: '这个 home 里没有归档会话行——先在该 home 里归档任意一条会话再重跑'
-      + '（视图开关' + (opened ? '已开又关回' : '打不开') + '）' }
-  }
-  const pairResult = await pair(row, 200, 240)
-  // 最后一项点下去发的是什么：桩把服务全换成 spy，这一击不改数据。id 取行上的
-  // data-row-key（上游在行渲染处给的字面量前缀），与 fiber 反查互为对照。
-  let dispatch = null
-  if (pairResult.why == null) {
-    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 240, view: window }))
-    const mineMenus = document.querySelectorAll('.dsh-oi-menu')
-    const one = mineMenus.length === 1 && mineMenus[0].getAttribute('data-dsh-oi-owner') === window.__dshOiTest__.instanceId
-      ? mineMenus[0] : null
-    if (one !== null) {
-      const items = one.querySelectorAll('.dsh-oi-menu__item')
-      const last = items[items.length - 1]
-      const label = (last.textContent ?? '').trim()
-      const before = window.__dshOiTest__.calls.length
-      const beforeRejections = window.__dshOiTest__.rejections.length
-      last.click()
-      await sleep(200)
-      const calls = window.__dshOiTest__.calls.slice(before)
-      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-      dispatch = { label, calls: calls.map((c) => c.label + '.' + c.method),
-        arg: (calls[0] || { args: [null] }).args[0],
-        expectedId: (row.getAttribute('data-row-key') ?? '').replace(/^session:/, ''),
-        menuClosed: document.querySelector('.dsh-oi-menu') === null,
-        rejections: window.__dshOiTest__.rejections.length - beforeRejections }
-    }
-  }
-  const viewRestored = await setArchivedView(false)
-  return { ...pairResult, dispatch, viewRestored, unarchiveLabel: t('menu.unarchiveSession'), archivedCount: archivedRows().length }
-})()`)
-
-check('archived session row mirrors the row\'s own menu', archivedPair, (v) => {
-  if (v.why != null) return `没测到：${v.why}`
-  if (v.viewRestored !== true) return '「显示已归档」没能关回去，会串台到后面的套件与下一次跑'
-  if (v.menus !== 1) return `页面上有 ${v.menus} 个本插件菜单`
-  if (v.owner !== v.mine) return `菜单归属对不上：owner=${v.owner} 而本次注入的是 ${v.mine}`
-  if (v.upstreamItems.length !== 3) {
-    return `归档行的上游「...」菜单有 ${v.upstreamItems.length} 项（本条按 3 项对齐，置顶缺席 + 末项翻转）：`
-      + JSON.stringify(v.upstreamItems.map((i) => i.label))
-  }
-  if (v.upstreamItems[2].label !== v.unarchiveLabel) {
-    return `上游末项不是「${v.unarchiveLabel}」而是 ${JSON.stringify(v.upstreamItems[2].label)}——上游的翻转口径变了`
-  }
-  if (JSON.stringify(v.myItems) !== JSON.stringify(v.upstreamItems)) {
-    return '归档行逐项（顺序 / 文案 / viewBox / 尺寸 / path）比对不等：\n'
-      + `  本插件 ${JSON.stringify(v.myItems)}\n  上游   ${JSON.stringify(v.upstreamItems)}`
-  }
-  return true
-})
-
-check('archived row dispatches the workspaces unarchive command', archivedPair, (v) => {
-  if (v.why != null) return `没测到：${v.why}`
-  if (v.dispatch === null) return '归档行的菜单没打开或归属不对，这一半没测到'
-  if (v.dispatch.label !== v.unarchiveLabel) {
-    return `末项标签是 ${JSON.stringify(v.dispatch.label)}，应为 ${JSON.stringify(v.unarchiveLabel)}`
-  }
-  if (v.dispatch.calls.join(',') !== 'workspaces.unarchiveSession') {
-    return `点「${v.unarchiveLabel}」发出的调用是 ${JSON.stringify(v.dispatch.calls)}`
-  }
-  if (v.dispatch.arg !== v.dispatch.expectedId) {
-    return `收到的 id 是 ${JSON.stringify(v.dispatch.arg)}，行自己的 id 是 ${JSON.stringify(v.dispatch.expectedId)}`
-  }
-  if (v.dispatch.menuClosed !== true) return '执行后菜单没关'
-  if (v.dispatch.rejections !== 0) return `取消归档过程中出现了 ${v.dispatch.rejections} 次未处理的 rejection`
+  if (v.menuClosed !== true) return '执行后菜单没关'
   return true
 })
 
 // ---- 单选的四个动作各自打在什么上 ----------------------------------------------
 //
-// 这四条比文案断言更靠后一层：文案对了不代表点下去做的是同一件事。桩把服务全换成
-// spy，所以点击是安全的，但**点之前照样验菜单归属**——理由见批量那条。
-check('session rename dispatches session.rename', await evaluate(`(async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  window.__dshOperationImprove__.selection.clear()
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_sessionRow'))
-  if (!row) return { bail: 'no session row' }
-  const titleSpan = row.querySelector('[class*="_title"]')
-  const titleText = titleSpan === null ? '' : (titleSpan.textContent || '').trim()
-  const rowText = (row.textContent || '').trim()
-  const openMine = () => {
-    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200, view: window }))
-    const menus = document.querySelectorAll('.dsh-oi-menu')
-    if (menus.length !== 1) return null
-    if (menus[0].getAttribute('data-dsh-oi-owner') !== window.__dshOiTest__.instanceId) return null
-    return menus[0]
-  }
-  const realPrompt = window.prompt
-  const realConfirm = window.confirm
-  let confirmCalled = false
-  window.confirm = () => { confirmCalled = true; return false }
-  let asked = null
-  window.prompt = (message, initial) => { asked = { message, initial }; return '  改过的标题  ' }
-  const restore = () => { window.prompt = realPrompt; window.confirm = realConfirm }
-  const menu = openMine()
-  if (menu === null) { restore(); return { bail: 'menu ownership check failed' } }
-  const before = window.__dshOiTest__.calls.length
-  // rejections 是整轮累积的，只能取增量。
-  const beforeRejections = window.__dshOiTest__.rejections.length
-  menu.querySelectorAll('.dsh-oi-menu__item')[1].click()
-  await sleep(200)
-  const calls = window.__dshOiTest__.calls.slice(before)
-  window.prompt = () => null
-  const cancelMenu = openMine()
-  const before2 = window.__dshOiTest__.calls.length
-  if (cancelMenu !== null) cancelMenu.querySelectorAll('.dsh-oi-menu__item')[1].click()
-  await sleep(200)
-  const cancelledCalls = window.__dshOiTest__.calls.length - before2
-  restore()
-  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-  const renameCall = calls.find((c) => c.method === 'rename')
-  return { asked, titleText, rowText, confirmCalled, cancelledCalls, cancelMenu: cancelMenu !== null,
-    calls: calls.map((c) => c.label + '.' + c.method),
-    renameArg: renameCall === undefined ? null : renameCall.args[0],
-    bindingArg: (calls.find((c) => c.method === 'binding') || { args: [null] }).args[0],
-    rejections: window.__dshOiTest__.rejections.length - beforeRejections,
-    upstreamTitle: window.__dshOiT__('rename.session.title') }
-})()`), (v) => {
-  if (v.bail !== undefined) return `没测到：${v.bail}`
-  if (v.asked === null) return '点重命名没弹输入框'
-  if (v.upstreamTitle === 'rename.session.title') return '上游词典查不出 rename.session.title'
-  if (v.asked.message !== v.upstreamTitle) {
-    return `输入框标题是 ${JSON.stringify(v.asked.message)}，上游词典给的是 ${JSON.stringify(v.upstreamTitle)}`
-  }
-  if (v.asked.initial !== v.titleText) {
-    return `初值是 ${JSON.stringify(v.asked.initial)}，行标题是 ${JSON.stringify(v.titleText)}`
-  }
-  if (v.rowText !== v.titleText && v.asked.initial === v.rowText) {
-    return `初值取成了整行文本 ${JSON.stringify(v.rowText)}（状态与相对时间都在里面）`
-  }
-  if (v.confirmCalled !== false) return '重命名弹了二次确认，上游没有'
-  if (v.calls.join(',') !== 'sessions.binding,session.rename') {
-    return `应先 binding 再 rename，实际 ${JSON.stringify(v.calls)}`
-  }
-  if (typeof v.bindingArg !== 'string' || v.bindingArg.length === 0) return `binding 拿到的不是真实 id：${JSON.stringify(v.bindingArg)}`
-  if (v.renameArg !== '改过的标题') return `rename 收到的标题是 ${JSON.stringify(v.renameArg)}，应是 trim 过的「改过的标题」`
-  if (v.cancelMenu !== true) return '取消分支的菜单没打开，那一半没测到'
-  if (v.cancelledCalls !== 0) return `输入框点了取消却还是发出了 ${v.cancelledCalls} 次服务调用`
-  if (v.rejections !== 0) return `重命名过程中出现了 ${v.rejections} 次未处理的 rejection`
-  return true
-})
-
-// binding 拿不到时必须抛。侧边栏里的行按定义都在会话列表里，所以走到这一步说明选中的
-// id 根本不是会话——静默返回的表现是「点了重命名，输入框填了，什么也没发生」。
-check('rename without a binding fails loudly', await evaluate(`(async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  window.__dshOperationImprove__.selection.clear()
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_sessionRow'))
-  if (!row) return { bail: 'no session row' }
-  row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200, view: window }))
-  const menus = document.querySelectorAll('.dsh-oi-menu')
-  if (menus.length !== 1 || menus[0].getAttribute('data-dsh-oi-owner') !== window.__dshOiTest__.instanceId) {
-    return { bail: 'menu ownership check failed' }
-  }
-  const realPrompt = window.prompt
-  window.prompt = () => '随便什么'
-  window.__dshOiSessionStub__.binding = 'missing'
-  const beforeCalls = window.__dshOiTest__.calls.length
-  const beforeRejections = window.__dshOiTest__.rejections.length
-  menus[0].querySelectorAll('.dsh-oi-menu__item')[1].click()
-  await sleep(200)
-  window.__dshOiSessionStub__.binding = 'ok'
-  window.prompt = realPrompt
-  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-  return { rejections: window.__dshOiTest__.rejections.slice(beforeRejections),
-    calls: window.__dshOiTest__.calls.slice(beforeCalls).map((c) => c.label + '.' + c.method) }
-})()`), (v) => {
-  if (v.bail !== undefined) return `没测到：${v.bail}`
-  if (v.calls.join(',') !== 'sessions.binding') return `应止步于 binding，实际 ${JSON.stringify(v.calls)}`
-  if (v.rejections.length !== 1) return `应抛一次，实际抛了 ${v.rejections.length} 次：${JSON.stringify(v.rejections)}`
-  if (!v.rejections[0].includes('unknown session')) return `抛出来的不是「拿不到 binding」：${JSON.stringify(v.rejections[0])}`
-  return true
-})
-
-// fork 的两个动作都要跟上游：标题带序号（`increaseTitle`），完了把子会话打开。
-// 0.1.6 起「打开」不再经过服务——`sessions.open` 已从 `ISessions` 契约移除，插件改为
-// 在侧栏轮询子会话的行并点它，走应用自己的导航。桩的 `forkChildId` 因此必须是
-// **侧栏里真实存在的行 id**，否则测到的只是超时放弃分支。两个分支都覆盖：先用一条
-// 未被选中的会话行的真实 id（点开成功——「选中态变了」就是点击真的发生了的证据），
-// 再用一个不存在的 id（3 秒超时、出声且不导航）。
-check('fork increases the title and opens the child via the sidebar row', await evaluate(`(async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  const rowIdOf = (el) => {
-    const fiberKey = Object.keys(el).find((k) => k.startsWith('__reactFiber$'))
-    if (fiberKey === undefined) return null
-    let fiber = el[fiberKey]; let depth = 0
-    while (fiber && depth < 24) {
-      const p = fiber.memoizedProps
-      if (p && typeof p === 'object') {
-        const cands = [p.sessionId, p.node && p.node.id, p.row && p.row.id, p.item && p.item.id, p.session && p.session.id]
-        for (const c of cands) if (typeof c === 'string' && c.length > 0) return c
-      }
-      fiber = fiber.return; depth += 1
-    }
-    return null
-  }
-  const sessionRows = () => [...document.querySelectorAll('[class*="_sessionRow"]')]
-  const openMenu = (row, y) => {
-    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: y, view: window }))
-    const menus = document.querySelectorAll('.dsh-oi-menu')
-    if (menus.length !== 1 || menus[0].getAttribute('data-dsh-oi-owner') !== window.__dshOiTest__.instanceId) return null
-    return menus[0]
-  }
-  window.__dshOperationImprove__.selection.clear()
-  const rowA = sessionRows()[0]
-  if (!rowA) return { bail: 'no session row' }
-  const target = sessionRows().find((el) => el.getAttribute('aria-selected') !== 'true' && rowIdOf(el) !== null)
-  if (!target) return { bail: 'no unselected session row with resolvable id' }
-  const targetId = rowIdOf(target)
-  const realConfirm = window.confirm
-  let confirmCalled = false
-  window.confirm = () => { confirmCalled = true; return false }
-
-  // 分支一：桩返回真实存在的行 id → 插件点该行 → 应用的导航把它选中。
-  window.__dshOiSessionStub__.forkChildId = targetId
-  const menu1 = openMenu(rowA, 200)
-  if (menu1 === null) { window.confirm = realConfirm; return { bail: 'menu ownership check failed' } }
-  const before1 = window.__dshOiTest__.calls.length
-  const beforeRej1 = window.__dshOiTest__.rejections.length
-  menu1.querySelectorAll('.dsh-oi-menu__item')[2].click()
-  let opened = false
-  for (let i = 0; i < 20; i += 1) {
-    await sleep(150)
-    const now = sessionRows().find((el) => rowIdOf(el) === targetId)
-    if (now !== undefined && now.getAttribute('aria-selected') === 'true') { opened = true; break }
-  }
-  const calls1 = window.__dshOiTest__.calls.slice(before1)
-  const menuClosed1 = document.querySelector('.dsh-oi-menu') === null
-
-  // 分支二：不存在的 id → 3 秒超时、出声、什么都不导航。
-  const ghostId = 'dsh-oi-no-such-session'
-  window.__dshOperationImprove__.selection.clear()
-  window.__dshOiSessionStub__.forkChildId = ghostId
-  const rowB = sessionRows().find((el) => rowIdOf(el) === targetId) ?? rowA
-  const beforeSelected = document.querySelectorAll('[class*="_sessionRow"][aria-selected="true"]').length
-  const menu2 = openMenu(rowB, 220)
-  if (menu2 === null) { window.confirm = realConfirm; return { bail: 'second menu ownership check failed' } }
-  const before2 = window.__dshOiTest__.calls.length
-  const beforeRej2 = window.__dshOiTest__.rejections.length
-  const beforeWarns = window.__dshOiTest__.warns.length
-  menu2.querySelectorAll('.dsh-oi-menu__item')[2].click()
-  await sleep(3400)
-  const calls2 = window.__dshOiTest__.calls.slice(before2).map((c) => c.label + '.' + c.method)
-  const warns2 = window.__dshOiTest__.warns.slice(beforeWarns).filter((w) => w.includes('@Tinnikx/dsh-operation-improve'))
-  const afterSelected = document.querySelectorAll('[class*="_sessionRow"][aria-selected="true"]').length
-  window.confirm = realConfirm
-  window.__dshOiSessionStub__.forkChildId = 'child-session-id'
-  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-  return { confirmCalled, opened, targetId,
-    calls1: calls1.map((c) => c.label + '.' + c.method),
-    forkArg: (calls1.find((c) => c.method === 'fork') || { args: [null] }).args[0],
-    menuClosed1,
-    rejections1: window.__dshOiTest__.rejections.length - beforeRej1,
-    calls2, warns2, navigated2: afterSelected !== beforeSelected,
-    rejections2: window.__dshOiTest__.rejections.length - beforeRej2 }
-})()`), (v) => {
-  if (v.bail !== undefined) return `没测到：${v.bail}`
-  if (v.confirmCalled !== false) return 'fork 弹了二次确认，上游没有'
-  if (v.calls1.join(',') !== 'sessions.fork') {
-    return `第一步应只有 fork（0.1.6 起 open 已不在 ISessions 契约），实际 ${JSON.stringify(v.calls1)}`
-  }
-  if (v.forkArg === null || typeof v.forkArg.sessionId !== 'string' || v.forkArg.sessionId.length === 0) {
-    return `fork 的 sessionId 不是真实 id：${JSON.stringify(v.forkArg)}`
-  }
-  if (v.forkArg.increaseTitle !== true) return `fork 没带 increaseTitle: true：${JSON.stringify(v.forkArg)}`
-  if (v.opened !== true) return `fork 返回真实行 id ${JSON.stringify(v.targetId)} 后，侧栏那一行没被选中——DOM 点击没发生或没生效`
-  if (v.menuClosed1 !== true) return '执行后菜单没关'
-  if (v.rejections1 !== 0) return `fork（成功分支）出现了 ${v.rejections1} 次未处理的 rejection`
-  if (v.calls2.join(',') !== 'sessions.fork') return `放弃分支也应只 fork 一次，实际 ${JSON.stringify(v.calls2)}`
-  if (v.warns2.length !== 1 || !v.warns2[0].includes('未自动打开')) {
-    return `超时放弃应出声一次（含「未自动打开」），实测 ${JSON.stringify(v.warns2)}`
-  }
-  if (v.navigated2 !== false) return 'fork 了一个不存在的 id 竟然改变了侧栏选中——放弃路径不该有任何导航'
-  if (v.rejections2 !== 0) return `fork（放弃分支）出现了 ${v.rejections2} 次未处理的 rejection`
-  return true
-})
-
-// 上游的「归档会话」点下去直接归档。这条锁的是**没有**二次确认——多问一次不会报错，
-// 只会让同一个动作在两个入口上手感不同。
-check('pin dispatches the workspaces pin command', await evaluate(`(async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  window.__dshOperationImprove__.selection.clear()
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_sessionRow'))
-  if (!row) return { bail: 'no session row' }
-  const menus0 = document.querySelectorAll('.dsh-oi-menu').length
-  row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200, view: window }))
-  const menus = document.querySelectorAll('.dsh-oi-menu')
-  if (menus.length !== 1 || menus[0].getAttribute('data-dsh-oi-owner') !== window.__dshOiTest__.instanceId) {
-    return { bail: 'menu ownership check failed', menus0 }
-  }
-  const item = menus[0].querySelectorAll('.dsh-oi-menu__item')[0]
-  const label = item.textContent
-  const before = window.__dshOiTest__.calls.length
-  const beforeRejections = window.__dshOiTest__.rejections.length
-  item.click()
-  await sleep(200)
-  const calls = window.__dshOiTest__.calls.slice(before)
-  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-  return { label, calls: calls.map((c) => c.label + '.' + c.method),
-    arg: (calls[0] || { args: [null] }).args[0],
-    pinLabel: window.__dshOiT__('menu.pinSession'), unpLabel: window.__dshOiT__('menu.unpinSession'),
-    menuClosed: document.querySelector('.dsh-oi-menu') === null,
-    rejections: window.__dshOiTest__.rejections.length - beforeRejections }
-})()`), (v) => {
-  if (v.bail !== undefined) return `没测到：${v.bail}`
-  // 桩不动真状态：置顶态由行上的真 UI 推导，标签与服务调用必须自洽地配对。
-  if (v.label === v.pinLabel && v.calls.join(',') !== 'workspaces.pinSession') {
-    return `标签是「${v.label}」却发出 ${JSON.stringify(v.calls)}`
-  }
-  if (v.label === v.unpLabel && v.calls.join(',') !== 'workspaces.unpinSession') {
-    return `标签是「${v.label}」却发出 ${JSON.stringify(v.calls)}`
-  }
-  if (v.label !== v.pinLabel && v.label !== v.unpLabel) {
-    return `第一项标签 ${JSON.stringify(v.label)} 不是置顶翻转（${JSON.stringify([v.pinLabel, v.unpLabel])}）`
-  }
-  if (typeof v.arg !== 'string' || v.arg.length === 0) return `参数不是真实 id：${JSON.stringify(v.arg)}`
-  if (v.menuClosed !== true) return '执行后菜单没关'
-  if (v.rejections !== 0) return `置顶过程中出现了 ${v.rejections} 次未处理的 rejection`
-  return true
-})
-
-check('outside pointerdown closes', await evaluate(`(() => {
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_sessionRow'))
-  if (!row) return { skipped: 'no session row' }
-  row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 120, view: window }))
-  const opened = document.querySelector('.dsh-oi-menu') !== null
-  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 900, clientY: 500 }))
-  return { opened, closed: document.querySelector('.dsh-oi-menu') === null }
-})()`), (v) => {
-  if (v.opened !== true) return '菜单没打开，无从验证外部点击关闭'
-  if (v.closed !== true) return '点击外部没关掉菜单'
-  return true
-})
-
-// 滚动关闭的边界：只有**锚点跟着动**的那次滚动才关菜单。
+// 靶子里没有会话（blank 会话不渲染行），所以这一段点的是侧栏上现有的那一行。四个动作按各自
+// 能验到的最强口径分开处理：
 //
-// 捕获阶段挂在 window 上的 scroll 监听器会收到页面里任何一个容器的滚动事件，
-// 而会话区流式输出时每来一段就自动滚到底一次——无差别关闭的表现就是「一边输出
-// 一边右键，菜单弹出来立刻消失」。这条断言滚的是不含锚点行的容器（优先真实会话
-// 区，它正是自动滚到底的那个），菜单必须还在。
+// - 重命名**真往返**：改一个新标题、再改回原标题。可逆，且能顺带验上游 `SessionRenameDialog`
+//   的每一个面（`role="dialog"` / `aria-label` / `input[data-modal-autofocus]` / footer 两枚按钮）。
+// - 置顶**真往返**：点一次置顶、再点一次取消，靠 `workspaces.list` 的 `pinnedSessionIds` 判读。
+// - 分叉与归档**打桩**：上游那两条回调是 `uiWorkspace.forkSession` / `archiveSession`
+//   （`ui-workspace/src/client/index.ts:210-218`、`:186-199`），fork 会凭空多出一个子会话、
+//   归档会把行从侧栏里拿走——都会污染后面的断言。打桩挂在句柄那份实例上（`services.uiWorkspace`
+//   与上游 inject 闭包用的是同一个对象），所以拦得住回调又不改任何数据。
+check('session rename opens the upstream dialog and renames', await evaluate(`(async () => {
+  ${PRELUDE}
+  h.selection.clear()
+  const row = pickSessionRow()
+  if (row === null) return { bail: '侧栏里挑不出可操作的会话行' }
+  const id = sessionIdOf(row)
+  const origin = sessionRow(id)?.displayTitle ?? null
+  if (typeof origin !== 'string' || origin === '') return { bail: '挑中的那一行读不出会话标题' }
+  // 一次改名：右击 → 点菜单里的重命名 → 看对话框 → 改输入框 → 点 footer 主按钮 → 等落库。
+  const renameTo = async (title) => {
+    const live = rows().find((el) => kindOf(el) === 'session' && idOf(el, 'session') === id) ?? null
+    if (live === null) return { bail: '改名期间那一行从侧栏里不见了' }
+    rightClick(live, 200, 220)
+    await sleep(400)
+    const menus = mine()
+    if (menus.length !== 1) { await closeAll(); return { bail: '菜单没打开' } }
+    const entry = itemByLabel(menus[0], t('rename'))
+    if (entry === null) { await closeAll(); return { bail: '菜单里没有重命名项' } }
+    entry.click()
+    await sleep(600)
+    // **按 aria-label 挑对话框**，不要用 querySelector('[role="dialog"]') 取第一个：
+    // 页面上同时可能挂着别的对话框（设置、确认归档…），取第一个会读到不相干的那一张，
+    // 然后报「对话框里没有那个输入框」——功能其实是好的，探针已经这么验过。
+    const wantLabel = t('rename.session.title')
+    const dialogs = [...document.querySelectorAll('[role="dialog"]')]
+    const dialog = dialogs.find((d) => d.getAttribute('aria-label') === wantLabel) ?? null
+    if (dialog === null) {
+      await closeAll()
+      return { bail: '点重命名没弹上游那个对话框',
+        labels: dialogs.map((d) => d.getAttribute('aria-label')) }
+    }
+    const input = dialog.querySelector('input[data-modal-autofocus]')
+    if (input === null) { await closeAll(); return { bail: '对话框里没有那个输入框' } }
+    const face = {
+      label: dialog.getAttribute('aria-label'),
+      inputLabel: input.getAttribute('aria-label'),
+      initial: input.value,
+      buttons: [...dialog.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim()),
+    }
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(input, title)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await sleep(120)
+    // 提交走 footer 的主按钮（点它而不是 Enter：Enter 在 IME 组字期间不提交，派发合成事件
+    // 走不到真实的 composition 状态，用它会把「提交语义」测成时序竞态）。
+    const confirm = [...dialog.querySelectorAll('button')].find((b) => (b.textContent ?? '').trim() === t('rename'))
+    if (confirm === undefined) { await closeAll(); return { bail: '对话框的 footer 里没有提交按钮' } }
+    confirm.click()
+    await sleep(1200)
+    await closeAll()
+    return { bail: null, face, now: sessionRow(id)?.displayTitle ?? null,
+      // 提交后那张卡片自身也要消失（按 aria-label 找，不是「页面上还有没有对话框」——
+      // 别的对话框还开着是正常的）。
+      dialogGone: !dialog.isConnected }
+  }
+  // 新标题带上 fixture 前缀：万一留下残骸，一眼能认出是脚本动过的行。
+  const next = ${JSON.stringify('dsh-oi-verify-renamed-')} + Date.now().toString(36).slice(-5)
+  const forward = await renameTo(next)
+  if (forward.bail != null) return forward
+  const back = await renameTo(origin)
+  if (back.bail != null) return { bail: '改回原标题时：' + back.bail }
+  return { bail: null, origin, next, face: forward.face, afterForward: forward.now,
+    dialogGone: forward.dialogGone, afterBack: back.now,
+    expected: { title: t('rename.session.title'), field: t('field.sessionName'),
+      cancel: t('cancel'), rename: t('rename') } }
+})()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
+  if (v.expected.title === 'rename.session.title') return '上游词典查不出 rename.session.title'
+  if (v.expected.field === 'field.sessionName') return '上游词典查不出 field.sessionName'
+  if (v.expected.cancel === 'cancel') return '上游词典查不出 cancel'
+  if (v.face.label !== v.expected.title) {
+    return `对话框标题是 ${JSON.stringify(v.face.label)}，上游词典给的是 ${JSON.stringify(v.expected.title)}`
+  }
+  if (v.face.inputLabel !== v.expected.field) {
+    return `输入框 aria-label 是 ${JSON.stringify(v.face.inputLabel)}，上游词典给的是 ${JSON.stringify(v.expected.field)}`
+  }
+  if (v.face.initial !== v.origin) {
+    return `输入框初值是 ${JSON.stringify(v.face.initial)}，会话当前标题是 ${JSON.stringify(v.origin)}——没喂进去`
+  }
+  if (!v.face.buttons.includes(v.expected.cancel) || !v.face.buttons.includes(v.expected.rename)) {
+    return `footer 没有「${v.expected.cancel}」与「${v.expected.rename}」两枚按钮：${JSON.stringify(v.face.buttons)}`
+  }
+  if (v.afterForward !== v.next) {
+    return `改完之后会话标题是 ${JSON.stringify(v.afterForward)}，期望 ${JSON.stringify(v.next)}`
+  }
+  if (v.dialogGone !== true) return '提交之后对话框没关'
+  if (v.afterBack !== v.origin) {
+    return `改回原标题失败：现在是 ${JSON.stringify(v.afterBack)}，原值 ${JSON.stringify(v.origin)}——复原没做成功，副本里那行被留下了改动`
+  }
+  return true
+})
+
+// 用户已决定放弃「fork 之后自动打开子会话」：上游那条 fork 条目只调
+// `uiWorkspace.forkSession`，子会话出现在侧栏即可，不再要求本插件点开它。
+check('fork dispatches the upstream command for the clicked session', await evaluate(`(async () => {
+  ${PRELUDE}
+  h.selection.clear()
+  const row = pickSessionRow()
+  if (row === null) return { bail: '侧栏里挑不出可操作的会话行' }
+  const id = sessionIdOf(row)
+  const ui = svc.uiWorkspace
+  if (ui === undefined || typeof ui.forkSession !== 'function') {
+    return { bail: '句柄上没有 services.uiWorkspace.forkSession，打桩点找错了' }
+  }
+  const before = svc.sessions.list.getSnapshot().ids.length
+  const seen = []
+  const restore = stubMethod(ui, 'forkSession', (sessionId) => { seen.push(sessionId) })
+  rightClick(row, 200, 220)
+  await sleep(400)
+  const menus = mine()
+  if (menus.length !== 1) { restore(); await closeAll(); return { bail: '菜单没打开' } }
+  const entry = itemByLabel(menus[0], t('menu.fork'))
+  // 顺带证一件只有真 slot 注入才成立的事：条目拿到的 useShortcuts 是真 catalog。
+  const shortcut = entry === null ? null : entry.getAttribute('aria-keyshortcuts')
+  if (entry === null) { restore(); await closeAll(); return { bail: '菜单里没有分叉项' } }
+  entry.click()
+  await sleep(500)
+  const menuClosed = mine().length === 0
+  await closeAll()
+  const idsUnchanged = svc.sessions.list.getSnapshot().ids.length === before
+  restore()
+  await sleep(300)
+  return { bail: null, id, seen, shortcut, menuClosed, idsUnchanged,
+    want: ariaOf(lookupShortcut('session.fork')),
+    restored: typeof ui.forkSession === 'function' }
+})()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
+  if (v.seen.length !== 1) {
+    return `点分叉后 uiWorkspace.forkSession 收到 ${v.seen.length} 次调用（${JSON.stringify(v.seen)}），应为 1 次`
+  }
+  if (v.seen[0] !== v.id) {
+    return `打桩收到的是 ${JSON.stringify(v.seen[0])}，点的是 ${JSON.stringify(v.id)}——打到别的会话上了`
+  }
+  if ((v.shortcut ?? null) !== v.want) {
+    return `分叉项的 aria-keyshortcuts 是 ${JSON.stringify(v.shortcut ?? null)}，`
+      + `catalog 里 session.fork 那一行是 ${JSON.stringify(v.want)}`
+  }
+  if (v.idsUnchanged !== true) return '会话列表长度变了——打桩没拦住这条回调'
+  if (v.menuClosed !== true) return '执行后菜单没关'
+  if (v.restored !== true) return '打桩没撤干净，后面的断言会打在桩上'
+  return true
+})
+
+// 归档项按行状态翻转（`ArchiveSessionMenuItem`，`session-actions/ArchiveSession.tsx:31-49`）：
+// 未归档时是「归档会话」且带 `session.archive` 快捷键，归档时换成没有快捷键的「取消归档」。
+// 真归档会把行从侧栏拿走，所以这里打桩验「点它落到 host 的哪个调用上」。
+check('archive entry follows the row state and dispatches the host call', await evaluate(`(async () => {
+  ${PRELUDE}
+  h.selection.clear()
+  const row = pickSessionRow()
+  if (row === null) return { bail: '侧栏里挑不出可操作的会话行' }
+  const id = sessionIdOf(row)
+  if (archivedIds().includes(id)) return { bail: '挑中的那一行已经归档，菜单里那一项会是「取消归档」' }
+  const ui = svc.uiWorkspace
+  if (ui === undefined || typeof ui.archiveSession !== 'function' || typeof ui.unarchiveSession !== 'function') {
+    return { bail: '句柄上没有 services.uiWorkspace.archiveSession / unarchiveSession，打桩点找错了' }
+  }
+  const seen = []
+  const restoreArchive = stubMethod(ui, 'archiveSession', (sessionId) => { seen.push(['archive', sessionId]) })
+  const restoreUnarchive = stubMethod(ui, 'unarchiveSession', (sessionId) => { seen.push(['unarchive', sessionId]) })
+  rightClick(row, 200, 220)
+  await sleep(400)
+  const menus = mine()
+  if (menus.length !== 1) { restoreArchive(); restoreUnarchive(); await closeAll(); return { bail: '菜单没打开' } }
+  const menu = menus[0]
+  const items = labels(menu)
+  const entry = itemByLabel(menu, t('menu.archiveSession'))
+  const shortcut = entry === null ? null : entry.getAttribute('aria-keyshortcuts')
+  if (entry === null) {
+    restoreArchive(); restoreUnarchive(); await closeAll()
+    return { bail: '菜单里没有「归档会话」这一项', items }
+  }
+  entry.click()
+  await sleep(500)
+  const menuClosed = mine().length === 0
+  await closeAll()
+  const rowStillThere = rows().some((el) => kindOf(el) === 'session' && idOf(el, 'session') === id)
+  const stillUnarchived = !archivedIds().includes(id)
+  restoreArchive(); restoreUnarchive()
+  await sleep(300)
+  return { bail: null, id, items, seen, shortcut, menuClosed, rowStillThere, stillUnarchived,
+    unarchive: t('menu.unarchiveSession'), want: ariaOf(lookupShortcut('session.archive')),
+    restored: typeof ui.archiveSession === 'function' && typeof ui.unarchiveSession === 'function' }
+})()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
+  if ((v.shortcut ?? null) !== v.want) {
+    return `归档项的 aria-keyshortcuts 是 ${JSON.stringify(v.shortcut ?? null)}，`
+      + `catalog 里 session.archive 那一行是 ${JSON.stringify(v.want)}`
+  }
+  if (v.items.length !== 4) return `菜单应当 4 项，实际 ${JSON.stringify(v.items)}`
+  if (v.items.some((l) => l.includes(v.unarchive))) {
+    return `未归档的行上出现了「取消归档」${JSON.stringify(v.unarchive)}：${JSON.stringify(v.items)}`
+  }
+  if (v.seen.length !== 1 || v.seen[0][0] !== 'archive') {
+    return `点归档后打桩收到 ${JSON.stringify(v.seen)}，应为一次 archive`
+  }
+  if (v.seen[0][1] !== v.id) return `打桩收到的是 ${JSON.stringify(v.seen[0][1])}，点的是 ${JSON.stringify(v.id)}`
+  if (v.stillUnarchived !== true || v.rowStillThere !== true) return '打桩没拦住：归档真的发生了，会污染后面的断言'
+  if (v.menuClosed !== true) return '执行后菜单没关'
+  if (v.restored !== true) return '打桩没撤干净，后面的断言会打在桩上'
+  return true
+})
+
+// 三个带快捷键提示的条目各读一次 catalog。上游注册的是 `session.rename`/`session.fork`/
+// `session.archive`（`ui-workspace/src/client/shortcuts.ts:96-121`），pin 没有——所以判据是
+// 「逐字对齐 catalog 那一行、置顶项为空」。这同时证了 slot 级注入是按条目分发的，而不是
+// 所有条目共用一份。
+//
+// **判据不要求那三项非空**：web runtime 下 `bindingIssue`（`shortcuts/src/configuration.ts:102-112`）
+// 会把它们判成 reserved / unsupported-browser，`registry.ts:129` 于是给出 `aria: undefined`、
+// `keys: []`。测试栈跑的是 web runtime，所以空是正确结果，判据必须跟着环境走。
+check('shortcut hints come from the injected catalog', await evaluate(`(async () => {
+  ${PRELUDE}
+  h.selection.clear()
+  const row = pickSessionRow()
+  if (row === null) return { bail: '侧栏里挑不出可操作的会话行' }
+  rightClick(row, 200, 220)
+  await sleep(400)
+  const menus = mine()
+  if (menus.length !== 1) { await closeAll(); return { bail: '菜单没打开' } }
+  const items = [...menus[0].querySelectorAll('button[role="menuitem"]')].map((b) => ({
+    label: (b.textContent ?? '').trim(), aria: b.getAttribute('aria-keyshortcuts') }))
+  await closeAll()
+  // catalog 那一行是唯一判据：**逐字对齐**，不要求非空。
+  //
+  // 曾经写成「这三项必须带 aria-keyshortcuts」，在 web runtime 下永远红：
+  // shortcuts/src/client/registry.ts:120-131 的 aria: enabled ? … : undefined，
+  // 而 bindingIssue（shortcuts/src/configuration.ts:102-112）会把 web 下不被浏览器
+  // 放行的组合判成 reserved / unsupported-browser，于是 enabled=false、keys=[]。
+  // 换句话说测试栈（web runtime）里它们本来就该没有提示——判据必须跟着环境走。
+  return { bail: null, items,
+    expected: { rename: t('rename'), fork: t('menu.fork'), archive: t('menu.archiveSession') },
+    catalog: {
+      rename: ariaOf(lookupShortcut('session.rename')),
+      fork: ariaOf(lookupShortcut('session.fork')),
+      archive: ariaOf(lookupShortcut('session.archive')),
+      hasPinRow: lookupShortcut('session.pin') !== null,
+    } }
+})()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
+  if (v.items.length !== 4) return `菜单应当 4 项，实际 ${JSON.stringify(v.items.map((i) => i.label))}`
+  for (const key of ['rename', 'fork', 'archive']) {
+    const item = v.items.find((i) => i.label.startsWith(v.expected[key])) ?? null
+    if (item === null) return `菜单里没有 ${JSON.stringify(v.expected[key])} 这一项`
+    const want = v.catalog[key]
+    if ((item.aria ?? null) !== want) {
+      return `${JSON.stringify(item.label)} 的 aria-keyshortcuts 是 ${JSON.stringify(item.aria ?? null)}，`
+        + `catalog 里 session.${key} 那一行是 ${JSON.stringify(want)}`
+    }
+  }
+  // 置顶项：上游没注册 `session.pin`，所以既不该有 aria，catalog 里也压根没有这一行。
+  if (v.items[0].aria !== null && v.items[0].aria !== '') {
+    return `置顶项也带上了快捷键 ${JSON.stringify(v.items[0].aria)}——上游没给 pin 注册快捷键，注入串了`
+  }
+  if (v.catalog.hasPinRow) return 'catalog 里竟然有 session.pin 那一行，判据的前提变了'
+  return true
+})
+
+check('pin toggles the pinned set and puts it back', await evaluate(`(async () => {
+  ${PRELUDE}
+  h.selection.clear()
+  const row = pickSessionRow()
+  if (row === null) return { bail: '侧栏里挑不出可操作的会话行' }
+  const id = sessionIdOf(row)
+  const before = pinnedIds().includes(id)
+  const press = async (wantLabel) => {
+    const live = rows().find((el) => kindOf(el) === 'session' && idOf(el, 'session') === id) ?? null
+    if (live === null) return { bail: '操作期间那一行从侧栏里不见了' }
+    rightClick(live, 200, 220)
+    await sleep(400)
+    const menus = mine()
+    if (menus.length !== 1) { await closeAll(); return { bail: '菜单没打开' } }
+    const entry = itemByLabel(menus[0], wantLabel)
+    if (entry === null) { await closeAll(); return { bail: '菜单里没有「' + wantLabel + '」这一项' } }
+    const label = (entry.textContent ?? '').trim()
+    const aria = entry.getAttribute('aria-keyshortcuts')
+    entry.click()
+    await sleep(900)
+    const menuClosed = mine().length === 0
+    await closeAll()
+    return { bail: null, label, aria, menuClosed }
+  }
+  const on = await press(t('menu.pinSession'))
+  if (on.bail != null) return on
+  const afterOn = pinnedIds().includes(id)
+  const off = await press(t('menu.unpinSession'))
+  if (off.bail != null) return off
+  return { bail: null, id, before, onLabel: on.label, offLabel: off.label, afterOn,
+    // 两个标签都记下来，判据逐字比绝对文案而不是比「翻没翻」。
+    wantOn: t('menu.pinSession'), wantOff: t('menu.unpinSession'),
+    afterOff: pinnedIds().includes(id), menuClosed: on.menuClosed && off.menuClosed,
+    // 置顶项上游没注册快捷键，菜单里也不该有提示。
+    aria: on.aria === null ? null : on.aria }
+})()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
+  if (v.before) return '靶子会话本来就在置顶集合里，这轮没法验「点一下就置顶」'
+  if (v.onLabel !== v.wantOn) return `第一项的标签是 ${JSON.stringify(v.onLabel)}，不是 ${JSON.stringify(v.wantOn)}`
+  if (v.afterOn !== true) return '点「置顶会话」之后那个 id 仍不在置顶集合里'
+  if (v.offLabel !== v.wantOff) {
+    return `第二项的标签是 ${JSON.stringify(v.offLabel)}，不是 ${JSON.stringify(v.wantOff)}`
+  }
+  if (v.afterOff !== v.before) return `点「${v.offLabel}」之后置顶集合是 ${v.afterOff}，复原失败（before=${v.before}）`
+  if (v.aria !== null && v.aria !== '') return `置顶项带着快捷键 ${JSON.stringify(v.aria)}，上游没给 pin 注册`
+  if (v.menuClosed !== true) return '执行后菜单没关'
+  return true
+})
+
+check('outside pointerdown closes', await evaluate(`(async () => {
+  ${PRELUDE}
+  const row = pickSessionRow()
+  if (row === null) return { bail: '侧栏里挑不出可操作的会话行' }
+  rightClick(row, 120, 140)
+  await sleep(350)
+  const opened = mine().length > 0
+  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 900, clientY: 500 }))
+  await sleep(200)
+  return { bail: null, opened, closed: mine().length === 0 }
+})()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
+  if (v.opened !== true) return '菜单没打开，无从验证外部点击关闭'
+  if (v.closed !== true) return '外部 pointerdown 没关掉菜单'
+  return true
+})
+
+// 滚动期间菜单的开合跟着上游 `Menu` 的实现走：它的定位 effect 在 capture 阶段的 scroll 上
+// **重算位置**，从不主动关闭。所以这里断言的是「滚动时菜单跟着挪」，而不是旧实现那条
+// 「锚点容器滚动即关闭」——菜单钉在一个视口坐标上，滚动侧栏并不会让它错位。
+check('sidebar scroll repositions the menu instead of closing it', await evaluate(`(async () => {
+  ${PRELUDE}
+  const row = pickSessionRow()
+  if (row === null) return { bail: '侧栏里挑不出可操作的会话行' }
+  let box = null
+  for (let n = row.parentElement; n !== null; n = n.parentElement) {
+    const cs = getComputedStyle(n)
+    if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') { box = n; break }
+  }
+  if (box === null) return { bail: '靶子会话行没有 overflow-y 可滚的祖先容器' }
+  const origin = box.scrollTop
+  const room = box.scrollHeight - box.clientHeight
+  rightClick(row, 200, 240)
+  await sleep(350)
+  const opened = mine().length > 0
+  const before = mine()[0]?.getBoundingClientRect().top ?? null
+  if (room > 8) box.scrollTop = Math.min(room, 120)
+  else box.dispatchEvent(new Event('scroll'))
+  await sleep(400)
+  const after = mine().length > 0 ? mine()[0].getBoundingClientRect().top : null
+  const stillOpen = mine().length > 0
+  box.scrollTop = origin
+  await sleep(400)
+  const restored = mine().length > 0 ? mine()[0].getBoundingClientRect().top : null
+  await closeAll()
+  return { bail: null, opened, mode: room > 8 ? 'real' : 'synthetic', room, before, after, restored, stillOpen,
+    closedAfterRestore: mine().length === 0 }
+})()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
+  if (v.opened !== true) return '菜单没打开，无从验证滚动'
+  if (v.stillOpen !== true) return `滚动侧栏（mode=${v.mode}）把菜单关掉了——上游 Menu 只重算位置、不主动关闭`
+  if (v.before === null || v.after === null) return '取不到菜单位置，这条等于没测'
+  if (v.after !== v.before) return `菜单跟着侧栏挪了（${v.before} → ${v.after}）——菜单钉的是视口坐标，不该动`
+  if (v.restored !== v.before) return '侧栏滚回去之后菜单位置没回去'
+  if (v.closedAfterRestore !== true) return '收尾没关掉菜单，会污染后续断言'
+  return true
+})
+
+// 会话区流式输出时页面一直在滚自己的容器。菜单钉在视口坐标上，那个滚动不该影响它。
 check('unrelated scroll keeps the menu open', await evaluate(`(async () => {
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_sessionRow'))
-  if (!row) return { skipped: 'no session row' }
+  ${PRELUDE}
+  const row = pickSessionRow()
+  if (row === null) return { bail: '侧栏里挑不出可操作的会话行' }
   const scrollable = (el) => {
     const cs = getComputedStyle(el)
     return (cs.overflowY === 'auto' || cs.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 8
   }
-  // 页面停在首页时没有会话区，回落到任意一个不含锚点的滚动容器，再不济自造一个：
-  // 判据是「这个容器不含锚点」，容器是谁不影响结论，但要如实记进观测值。
-  let source = 'conversation'
   let box = document.querySelector('[data-conversation-scroll]')
+  let source = 'conversation'
   if (box === null || !scrollable(box) || box.contains(row)) {
     box = [...document.querySelectorAll('*')].find((el) => scrollable(el) && !el.contains(row)) ?? null
     source = box === null ? 'synthetic' : 'other'
@@ -1400,220 +1350,191 @@ check('unrelated scroll keeps the menu open', await evaluate(`(async () => {
     box = synthetic
   }
   box.scrollTop = 0
-  await new Promise((r) => setTimeout(r, 150))
-  row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 240, view: window }))
-  const opened = document.querySelector('.dsh-oi-menu') !== null
+  await sleep(150)
+  rightClick(row, 200, 240)
+  await sleep(350)
+  const opened = mine().length > 0
   let events = 0
   const spy = () => { events += 1 }
   box.addEventListener('scroll', spy)
-  // 流式输出期间应用做的就是这件事：内容长一段，容器往下滚一次。
   const step = Math.max(1, Math.floor((box.scrollHeight - box.clientHeight) / 4))
   for (let i = 1; i <= 3; i += 1) {
     box.scrollTop = step * i
-    await new Promise((r) => setTimeout(r, 150))
+    await sleep(150)
   }
   box.removeEventListener('scroll', spy)
-  const stillOpen = document.querySelector('.dsh-oi-menu') !== null
+  const stillOpen = mine().length > 0
   const moved = box.scrollTop > 0
   if (synthetic !== null) synthetic.remove()
-  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1500, clientY: 800 }))
-  return { source, cls: String(box.className).slice(0, 40), opened, moved, scrollEvents: events, stillOpen,
-    cleanedUp: document.querySelector('.dsh-oi-menu') === null }
+  await closeAll()
+  return { bail: null, source, opened, moved, scrollEvents: events, stillOpen, cleanedUp: mine().length === 0 }
 })()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
   if (v.opened !== true) return '菜单没打开，无从验证滚动'
   if (v.moved !== true) return `容器 scrollTop 没动（source=${v.source}）——滚动实测未发生`
   if (v.scrollEvents < 3) return `容器只打出 ${v.scrollEvents} 条 scroll 事件（滚了 3 次）——滚动实测未发生`
-  if (v.stillOpen !== true) {
-    return `滚动不含锚点的容器（source=${v.source}）把菜单关掉了——会话区流式输出时右键菜单会自己消失`
-  }
+  if (v.stillOpen !== true) return `滚动不含菜单的容器（source=${v.source}）把菜单关掉了`
   if (v.cleanedUp !== true) return '收尾没关掉菜单，会污染后续断言'
   return true
 })
 
-// 另一半：锚点行所在的那个容器滚动时，菜单必须关——菜单是 fixed 定位，容器一滚
-// 锚点就跑了，留着的菜单指向的是另一行。
-check('anchor container scroll closes the menu', await evaluate(`(async () => {
-  const row = [...document.querySelectorAll('[role="treeitem"]')]
-    .find((el) => String(el.className).includes('_sessionRow'))
-  if (!row) return { skipped: 'no session row' }
-  let box = null
-  for (let n = row.parentElement; n !== null; n = n.parentElement) {
-    const cs = getComputedStyle(n)
-    if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') { box = n; break }
-  }
-  if (box === null) return { skipped: '锚点行没有 overflow-y 可滚的祖先容器' }
-  const room = box.scrollHeight - box.clientHeight
-  const origin = box.scrollTop
-  box.scrollTop = 0
-  await new Promise((r) => setTimeout(r, 150))
-  row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 240, view: window }))
-  const opened = document.querySelector('.dsh-oi-menu') !== null
-  // 侧边栏内容不够长时滚不动，退回合成事件：scroll 不冒泡，但 dispatchEvent 照样
-  // 走完从 window 下来的捕获路径，判据一致，只是要如实记下用的是哪种。
-  const mode = room > 8 ? 'real' : 'synthetic'
-  if (mode === 'real') box.scrollTop = Math.min(room, 120)
-  else box.dispatchEvent(new Event('scroll'))
-  await new Promise((r) => setTimeout(r, 200))
-  const closed = document.querySelector('.dsh-oi-menu') === null
-  // 复位必须等它落定再返回：滚动事件是异步派发的，漏出去就会落到下一条断言刚打开
-  // 的那个菜单上，把它关掉——那是本断言的收尾在污染别人，不是被测行为出错。
-  box.scrollTop = origin
-  let last = -1
-  let settled = 0
-  for (let waited = 0; settled < 3 && waited < 1500; waited += 100) {
-    await new Promise((r) => setTimeout(r, 100))
-    if (box.scrollTop === last) settled += 1
-    else { settled = 0; last = box.scrollTop }
-  }
-  return { mode, room, cls: String(box.className).slice(0, 40), opened, closed, restoredTo: box.scrollTop }
-})()`), (v) => {
-  if (v.opened !== true) return '菜单没打开，无从验证滚动关闭'
-  if (v.closed !== true) return `滚动锚点所在容器（${v.cls}，mode=${v.mode}）没关掉菜单`
-  return true
-})
-
-// 功能 2 多选：两行同 kind 选中后右键，菜单只剩批量项。
+// ---- 功能 2 多选 -------------------------------------------------------------
 //
-// 批量项上游没有对应词条，文案出自插件自己注册的那份词典，所以断言比对的是**它交上来
-// 的模板**套上 n=2 的结果——验的是「用了哪个键、数量填对了没有」，而不是某个语言下的
-// 字面量。`OWN` 取词典的方式与插件运行时一致：active locale 缺席就落 en。
-const OWN = `
-  const ownText = (key, n) => {
-    const dicts = window.__dshOiTest__.dicts['@Tinnikx/dsh-operation-improve']
-    const lang = (document.documentElement.lang || 'en').toLowerCase().split('-')[0]
-    const entries = dicts[lang] ?? dicts.en
-    return entries[key].replace('{n}', String(n))
-  }
-`
-// 会话多选现在**什么都不给**：批量归档让位给了上游的「...」。不弹菜单还不够——
-// 也必须在 preventDefault 之前就走掉，否则右键会变成「什么都发生不了」，比弹一个没用的
-// 菜单更糟。判据因此是两条：没有本插件的菜单 + 默认行为没被拦。
-check('session batch right-click hands the menu back', await evaluate(`(() => {
-  ${PICK}
-  window.__dshOiPreferKind__ = 'session'
-  const sel = window.__dshOperationImprove__.selection
+// 批量项的文案出自插件自己的词典，所以比对的是 `tOwn` 当场给出的那串文本。菜单归属靠类名
+// 认：卡片在 body 下，两份实例并存时点错就是删掉真工作区。
+check('session batch right-click hands the menu back', await evaluate(`(async () => {
+  ${PRELUDE}
+  const sel = h.selection
   sel.clear()
-  const { kind, rows } = pick()
-  window.__dshOiPreferKind__ = undefined
-  if (kind !== 'session') return { skipped: 'need >= 2 session rows' }
+  const fxRow = pickSessionRow()
+  const other = otherRow('session')
+  if (fxRow === null || other === null) return { bail: '没有两行会话（挑中的那行与另一行）' }
   const fire = (el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, view: window }))
-  fire(rows[0]); fire(rows[1])
-  const evt = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300, view: window })
-  rows[1].dispatchEvent(evt)
-  const result = { selected: sel.size(), menus: document.querySelectorAll('.dsh-oi-menu').length,
-    defaultPrevented: evt.defaultPrevented }
+  fire(fxRow); fire(other)
+  await sleep(80)
+  const evt = rightClick(fxRow, 300, 300)
+  await sleep(350)
+  const result = { bail: null, selected: sel.size(), menus: mine().length, defaultPrevented: evt.defaultPrevented }
   sel.clear()
   return result
 })()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
   if (v.selected !== 2) return `应有 2 个选中，实际 ${v.selected}（多选本身还得工作，否则这条测不到东西）`
-  if (v.menus !== 0) return `会话多选右键还弹出 ${v.menus} 个本插件菜单，归档项没摘干净`
+  if (v.menus !== 0) return `会话多选右键还弹出 ${v.menus} 张卡片`
   if (v.defaultPrevented !== false) return '默认行为被拦了：没有菜单又不让页面自己处理，右键成了"点了没反应"'
   return true
 })
 
-// 另一半批量分支：强制用工作区行，菜单必须是 `batch.deleteWorkspaces` 套 n=2 的那一条。
-check('contextmenu batch (workspaces)', await evaluate(`(() => {
-  ${PICK}
-  ${OWN}
-  window.__dshOiPreferKind__ = 'workspace'
-  const sel = window.__dshOperationImprove__.selection
+check('contextmenu batch (workspaces)', await evaluate(`(async () => {
+  ${PRELUDE}
+  const sel = h.selection
   sel.clear()
-  const { kind, rows } = pick()
-  window.__dshOiPreferKind__ = undefined
-  if (kind !== 'workspace') return { skipped: 'need >= 2 workspace rows' }
+  const fxRow = await fxWorkspaceRow()
+  const other = otherRow('workspace')
+  if (fxRow === null || other === null) return { bail: '没有两行工作区（靶子行与另一行）' }
   const fire = (el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, view: window }))
-  fire(rows[0]); fire(rows[1])
-  rows[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 340, clientY: 340, view: window }))
-  const menu = document.querySelector('.dsh-oi-menu')
-  const items = menu ? [...menu.querySelectorAll('.dsh-oi-menu__item')].map(b => b.textContent) : null
-  const result = { usedKind: kind, selected: sel.size(), items, expected: ownText('batch.deleteWorkspaces', 2) }
-  // **不关菜单也不清选择集**：下一条断言就在这份菜单上点「删除 2 个工作区」，
-  // 服务是 spy，点击不动真数据。
-  return result
+  fire(fxRow); fire(other)
+  await sleep(80)
+  rightClick(fxRow, 340, 340)
+  await sleep(350)
+  const menus = mine()
+  const menu = menus.length === 1 ? menus[0] : null
+  return { bail: null, selected: sel.size(), menus: menus.length,
+    items: menu === null ? null : labels(menu),
+    expected: ownText('batch.deleteWorkspaces', 2) }
 })()`), (v) => {
+  if (v.bail != null) return `没测到：${v.bail}`
   if (v.selected !== 2) return `应有 2 个工作区选中，实际 ${v.selected}`
+  if (v.menus !== 1) return `本插件的卡片有 ${v.menus} 张，应为 1`
   if (v.items === null) return '菜单没渲染出来'
   if (v.items.length !== 1) return `应只剩 1 个批量项，实际 ${JSON.stringify(v.items)}`
   if (v.items[0] !== v.expected) return `应为 ${JSON.stringify(v.expected)}，实际 ${JSON.stringify(v.items)}`
   return true
 })
 
-// 批量操作真的会调服务（confirm 打桩为 true，服务是 spy，不会动真数据）。
-//
-// **点之前先验菜单的归属**。这是三道闸里的最后一道，也是唯一一道不靠推理的：清场
-// 保证 native 已经停掉，数量检查保证页面上只有一个菜单，而这里直接读菜单元素上的
-// `data-dsh-oi-owner`，要求它逐字等于本次注入实例的 `instanceId`。两者不等就说明
-// 这个菜单是别人开的——它的 `workspaces` 不是 spy 而是真服务，点下去就是真归档。
-// 任何一条不满足都记 FAIL 并原路返回，**一个 click 都不发**。
-check('batch action dispatches service', await evaluate(`(() => {
+// 点掉批量删除**会把靶子工作区真的删掉**，所以这条必须排在所有需要靶子工作区的断言之后。
+// 确认框先打桩为 false 看它拦住了，再放行看删除落地。两轮都只点脚本自己的靶子菜单项，
+// 且动手前先核对卡片归属——页面上可能有另一份实例的菜单，点错就是删掉真工作区。
+check('batch delete removes the selected workspaces', await evaluate(`(async () => {
+  ${PRELUDE}
+  const sel = h.selection
   const realConfirm = window.confirm
-  window.confirm = () => true
-  const before = window.__dshOiTest__.calls.length
-  const mine = window.__dshOiTest__.instanceId
-  // 该点出哪个方法由**选择集的 kind** 决定，不由标签文字决定：文案跟着 harness 语言
-  // 走，拿它当判据等于让断言在英文界面下悄悄挑错分支。点击会清空选择集，所以先读。
-  const kind = window.__dshOperationImprove__.selection.getKind()
-  const menus = document.querySelectorAll('.dsh-oi-menu')
-  const owner = menus.length === 1 ? menus[0].getAttribute('data-dsh-oi-owner') : null
-  const bail = (extra) => {
-    window.confirm = realConfirm
-    return { menus: menus.length, owner, mine, kind, label: null, calls: [], args: [],
-      menuClosed: null, selectionCleared: null, ...extra }
+  const beforeIds = svc.workspaces.list.getSnapshot().items.map((i) => i.workspaceId)
+  let asked = null
+  const stub = (answer) => { window.confirm = (m) => { asked = m; return answer } }
+  /** 选中靶子工作区 + 另一行再右键，取回这张属于本实例的菜单；不是本实例的一律拒绝。 */
+  const openOnFixture = async () => {
+    sel.clear()
+    const row = await fxWorkspaceRow()
+    const other = otherRow('workspace')
+    if (row === null || other === null) return { why: '靶子工作区行或第二行不见了' }
+    const fire = (el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, view: window }))
+    fire(row); fire(other)
+    await sleep(120)
+    rightClick(row, 340, 340)
+    await sleep(400)
+    const menus = mine()
+    if (menus.length !== 1) return { why: '菜单没打开（' + menus.length + ' 张）' }
+    if (!menus[0].classList.contains(ownerClass)) return { why: '菜单不属于这份实例，已拒绝点击' }
+    const item = menus[0].querySelector('button[role="menuitem"]')
+    if (item === null) return { why: '菜单里没有批量项' }
+    return { menu: menus[0], item, label: (item.textContent ?? '').trim(), row }
   }
-  if (menus.length !== 1) return bail({})
-  if (owner === null || owner !== mine) return bail({})
-  const item = menus[0].querySelector('.dsh-oi-menu__item')
-  const label = item.textContent
-  item.click()
-  return new Promise((resolve) => setTimeout(() => {
-    window.confirm = realConfirm
-    const calls = window.__dshOiTest__.calls.slice(before)
-    resolve({ menus: 1, owner, mine, kind, label, calls: calls.map(c => c.label + '.' + c.method), args: calls.map(c => c.args[0]),
-      menuClosed: document.querySelector('.dsh-oi-menu') === null,
-      selectionCleared: window.__dshOperationImprove__.selection.size() === 0 })
-  }, 120))
+  // 第一轮：取消。
+  stub(false)
+  const first = await openOnFixture()
+  if (first.why != null) { window.confirm = realConfirm; return { bail: first.why, asked: null } }
+  first.item.click()
+  await sleep(500)
+  const survivedIds = svc.workspaces.list.getSnapshot().items.map((i) => i.workspaceId)
+  // 第二轮：放行，真删。
+  stub(true)
+  const second = await openOnFixture()
+  if (second.why != null) { window.confirm = realConfirm; return { bail: second.why, asked, survivedDecline: survivedIds.length === beforeIds.length } }
+  second.item.click()
+  await sleep(2000)
+  window.confirm = realConfirm
+  await closeAll()
+  const afterIds = svc.workspaces.list.getSnapshot().items.map((i) => i.workspaceId)
+  return {
+    bail: null, asked: typeof asked === 'string' ? asked : null, label: second.label,
+    survivedDecline: survivedIds.length === beforeIds.length && survivedIds.includes(fx.workspaceId),
+    declinedKeptFixture: survivedIds.includes(fx.workspaceId),
+    selectionCleared: sel.size() === 0,
+    fixtureGone: !afterIds.includes(fx.workspaceId),
+    otherKept: afterIds.filter((id) => !beforeIds.includes(id)).length === 0,
+    menuClosed: mine().length === 0,
+  }
 })()`), (v) => {
-  if (v.menus !== 1) {
-    return v.menus === 0
-      ? '菜单没打开，无从验证批量操作'
-      : `页面上有 ${v.menus} 个菜单——存在第二份实例，点下去会打在真服务上，已拒绝点击`
-  }
-  if (v.owner === null) {
-    return '菜单没有 data-dsh-oi-owner——它不是本次注入的实例开的（或 profile 里是旧产物），已拒绝点击'
-  }
-  if (v.owner !== v.mine) {
-    return `菜单归属对不上：owner=${v.owner} 而本次注入的实例是 ${v.mine}——`
-      + '这个菜单背后的服务不是 spy 而是真的，已拒绝点击'
-  }
-  if (v.calls.length !== 2) return `应对 2 个目标各调一次，实际 ${JSON.stringify(v.calls)}`
-  if (v.kind !== 'workspace') return `会话多选已不提供批量动作，这条只该跑在工作区上，实际 kind=${JSON.stringify(v.kind)}`
-  if (!v.calls.every((c) => c === 'workspaces.delete')) return `批量删除应调 workspaces.delete：${JSON.stringify(v.calls)}`
-  if (v.args.length !== 2 || v.args.some((a) => typeof a !== 'string' || a.length === 0)) {
-    return `参数不是两个真实 id：${JSON.stringify(v.args)}`
-  }
-  if (v.args[0] === v.args[1]) return `两次调用传了同一个 id：${JSON.stringify(v.args)}`
-  if (v.menuClosed !== true) return '执行后菜单没关'
+  if (v.bail != null) return `没测到：${v.bail}`
+  if (v.asked === null) return '点批量删除没弹确认框'
+  if (typeof v.label !== 'string' || !v.label.includes('2')) return `批量项文案是 ${JSON.stringify(v.label)}，数量没对上`
+  if (v.survivedDecline !== true) return '确认框选了取消，工作区还是被删了'
+  if (v.declinedKeptFixture !== true) return '取消之后靶子工作区不见了'
   if (v.selectionCleared !== true) return '执行后选择集没清空'
+  if (v.fixtureGone !== true) return '放行之后靶子工作区仍在——删除没落地'
+  if (v.otherKept !== true) return '多删了靶子之外的工作区'
+  if (v.menuClosed !== true) return '执行后菜单没关'
   return true
 })
 
-// 卸载：所有副作用被摘掉。
-check('dispose cleans up', await evaluate(`(() => {
-  window.__dshOiTest__.disposers.forEach(d => d())
+// 靶子工作区在上面那条里被真删了，所以重建一组给收尾用：`cleanupFixtures` 只认页面上
+// 那一个 `__dshOiFixtures__`，指着已删的工作区收尾等于什么都没收。
+const fixtures2 = await createFixtures(evaluate, 'dsh-oi-verify-b')
+console.log('[fixtures:second]', JSON.stringify(fixtures2))
+
+// 收尾在 dispose **之前**：删除工作区靠的是句柄上的 `services`，dispose 之后句柄就没了。
+const cleaned = await cleanupFixtures(evaluate)
+console.log('[cleanup]', JSON.stringify(cleaned))
+if (cleaned.deleted !== true || cleaned.removed !== true) {
+  console.warn(`[cleanup] 靶子没收干净：${JSON.stringify(cleaned)}——靶子工作区的记录与目录都应当删掉。`)
+}
+
+// 卸载：所有副作用被摘掉。菜单的 React 树是模块级单例，dispose 之后连容器一起走。
+check('dispose cleans up', await evaluate(`(async () => {
+  ${PRELUDE}
+  const host = document.querySelector('.dsh-oi-menu__host')
   const row = [...document.querySelectorAll('[role="treeitem"]')]
     .find((el) => String(el.className).includes('_sessionRow'))
-  if (row) row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 150, clientY: 150, view: window }))
+  h.dispose()
+  await sleep(300)
+  if (row !== null) row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 150, clientY: 150, view: window }))
+  await sleep(250)
   return {
     styleGone: document.querySelector('style[data-plugin="@Tinnikx/dsh-operation-improve"]') === null,
     handleGone: window.__dshOperationImprove__ === undefined,
     highlightsGone: document.querySelectorAll('[data-dsh-oi-selected]').length === 0,
     menuNotOpened: document.querySelector('.dsh-oi-menu') === null,
+    hostGone: host !== null && document.querySelector('.dsh-oi-menu__host') === null,
+    hostExisted: host !== null,
   }
 })()`), (v) => {
   if (v.styleGone !== true) return '样式表没被摘掉'
   if (v.handleGone !== true) return '调试句柄没被摘掉'
   if (v.highlightsGone !== true) return '高亮属性还留在 DOM 上'
   if (v.menuNotOpened !== true) return 'contextmenu 监听器没摘干净，卸载后仍能弹菜单'
+  if (v.hostExisted !== true) return 'React 容器从没建起来，这条等于没测'
+  if (v.hostGone !== true) return '菜单的 React 容器没被摘掉'
   return true
 })
 

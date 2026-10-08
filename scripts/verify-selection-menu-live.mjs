@@ -54,6 +54,17 @@ const GEOMETRY_KEYS = new Set([
   '-webkit-logical-width', '-webkit-logical-height',
 ])
 
+/**
+ * 每挂一次就变的键，也不参与「外观是否一致」的判断。
+ *
+ * 上游 `MenuSurface` 用 `useId()` 生成自己的锚点名，再写进 `--dsh-menu-anchor` 供 CSS
+ * anchor positioning 用——两次挂载拿到两个不同的 useId，所以同一张卡片的两个样本必然在这两个
+ * 键上不等。它比的是取值本身而不是「两张卡片长得一样」，所以要把整对键一起排除。
+ */
+const INSTANCE_KEYS = new Set([
+  'anchor-name', '--dsh-menu-anchor',
+])
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const { evaluate, conn } = await createEvaluator({ port: PORT, prefix: PREFIX })
@@ -147,24 +158,39 @@ async function press(key, code, vk) {
   await sleep(120)
 }
 
+// 菜单卡片是上游 `MenuSurface` 渲染的那块：portal 到 `document.body`，`role="menu"` 与
+// `data-menu-material` 都在它身上。本插件那份经 `listClassName` 带上了自己的类名，那是
+// 区分「谁的菜单」的唯一入口（见 [../src/shared/menu.jsx](../src/shared/menu.jsx)）。
+const MENU_CARD = 'div[role="menu"].dsh-oi-menu'
+/** owner 以类名编码：`dsh-oi-menu--<instanceId>`。卡片在 body 下，属性查不到。 */
+const OWNER_OF = `(card) => {
+  const hit = [...card.classList].find((c) => c.startsWith('dsh-oi-menu--'))
+  return hit === undefined ? null : hit.slice('dsh-oi-menu--'.length)
+}`
+/** 条目文案：上游 `MenuItemButton` 的 label 是那个既不含 svg、也不标 `aria-hidden` 的 span（另一个是快捷键提示）。 */
+const LABEL_OF = `(b) => {
+  const span = [...b.children].find((s) => s.tagName === 'SPAN'
+    && s.getAttribute('aria-hidden') !== 'true' && s.querySelector('svg') === null)
+  return (span ?? b).textContent.trim()
+}`
+
 /** 读当前页面上的菜单：数量、归属、逐项文案。 */
 const readMenu = () => evaluate(`(() => {
-  const roots = [...document.querySelectorAll('.dsh-oi-menu')]
+  const roots = [...document.querySelectorAll(${JSON.stringify(MENU_CARD)})]
   const root = roots[0] ?? null
   return {
     count: roots.length,
-    owner: root === null ? null : root.getAttribute('data-dsh-oi-owner'),
-    items: root === null ? [] : [...root.querySelectorAll('.dsh-oi-menu__item')]
-      .map((b) => b.querySelector('.dsh-oi-menu__label').textContent),
+    owner: root === null ? null : (${OWNER_OF})(root),
+    items: root === null ? [] : [...root.querySelectorAll('button[role="menuitem"]')].map((${LABEL_OF})),
   }
 })()`)
 
 /** 菜单里某一项的中心点；没有该项时返回 `null`。 */
 const itemPoint = (label) => evaluate(`(() => {
-  const root = document.querySelector('.dsh-oi-menu')
+  const root = document.querySelector(${JSON.stringify(MENU_CARD)})
   if (root === null) return null
-  const button = [...root.querySelectorAll('.dsh-oi-menu__item')]
-    .find((b) => b.querySelector('.dsh-oi-menu__label').textContent === ${JSON.stringify(label)})
+  const button = [...root.querySelectorAll('button[role="menuitem"]')]
+    .find((b) => (${LABEL_OF})(b) === ${JSON.stringify(label)})
   if (button === undefined) return null
   const r = button.getBoundingClientRect()
   return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }
@@ -173,7 +199,7 @@ const itemPoint = (label) => evaluate(`(() => {
 /** Esc 关掉可能还开着的菜单，返回关完之后还剩几个。 */
 async function escapeMenu() {
   await press('Escape', 'Escape', 27)
-  return evaluate('document.querySelectorAll(".dsh-oi-menu").length')
+  return evaluate(`document.querySelectorAll(${JSON.stringify(MENU_CARD)}).length`)
 }
 
 // ---- 环境准备 ----
@@ -208,8 +234,9 @@ const boot = await evaluate(`(() => {
     copy: h.locale?.tCommon?.('copy') ?? null,
     paste: h.locale?.tOwn?.('selection.paste') ?? null,
     rowPin: [h.locale?.t?.('menu.pinSession') ?? null, h.locale?.t?.('menu.unpinSession') ?? null],
-    // 归档这一项右键菜单里已经没有（让位给上游的「...」），行菜单只剩置顶翻转 + 重命名 + 分叉。
+    // 会话行菜单整份就是上游那四个 slot 条目，顺序按注册 order：置顶 / 重命名 / 分叉 / 归档。
     rowLabels: [h.locale?.t?.('rename') ?? null, h.locale?.t?.('menu.fork') ?? null],
+    rowArchive: [h.locale?.t?.('menu.archiveSession') ?? null, h.locale?.t?.('menu.unarchiveSession') ?? null],
   }
 })()`)
 if (boot.fatal !== undefined) {
@@ -223,6 +250,51 @@ if (!boot.hasSelectionMenu || !boot.hasTCommon) {
 
 const LANG = boot.lang.startsWith('en') ? 'en' : 'zh'
 const EXPECT = LITERALS[LANG]
+
+// ---- 环境准备用的三条会话原语 ----
+//
+// 选区探针只认页面上已经渲染出来的正文，而跨脚本串台会把现场挪走：接在 `npm run verify` 之后
+// 跑时，页面停在那条「新会话」断言开出来的空白会话上（实测会话区只剩 78 字、composer 都不在），
+// 而 `Page.reload` 恢复的就是同一个会话——表现成「右键不弹菜单」，看着像功能坏了。
+// 行锚点用 `data-chat-node-key`（与 verify-timestamps 同源）。`[data-conversation-scroll]`
+// 这个容器在页面上有，但把它当可滚容器实测取不到——`verify` 那条「无关滚动」断言因此退到了
+// 合成容器（观测值 `source:"synthetic"`）。跳过运行中的会话：流式追加会改布局，选区算出来的点
+// 在右键之前就被 React 重渲染掐掉。
+const probeConversation = () => evaluate(`(() => {
+  const composer = document.querySelector('div[contenteditable="true"][role="textbox"]')
+  return {
+    nodes: document.querySelectorAll('[data-chat-node-key]').length,
+    hasComposer: composer !== null,
+  }
+})()`)
+
+/** 侧栏里可点的会话行数（跳过运行中的）。 */
+const countSessionRows = () => evaluate(`[...document.querySelectorAll('[role="treeitem"]')]
+  .filter((el) => String(el.className).includes('_sessionRow'))
+  .filter((r) => r.querySelector('svg[data-state="ongoing"]') === null).length`)
+
+/** 点开第 index 行会话（跳运行中），等视图落定＝两次节点数读数一致。 */
+const settleOnSession = async (index) => {
+  const title = await evaluate(`(() => {
+    const rows = [...document.querySelectorAll('[role="treeitem"]')]
+      .filter((el) => String(el.className).includes('_sessionRow'))
+      .filter((r) => r.querySelector('svg[data-state="ongoing"]') === null)
+    const row = rows[${index}]
+    if (row === undefined) return false
+    row.click()
+    return (row.textContent ?? '').trim().slice(0, 30)
+  })()`)
+  if (title === false) return null
+  let prev = null
+  let flow = null
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await sleep(400)
+    flow = await probeConversation()
+    if (prev !== null && flow.nodes === prev) break
+    prev = flow.nodes
+  }
+  return { title, flow }
+}
 
 // 探针：读每次 contextmenu 结束时的 defaultPrevented。挂在捕获阶段且注册在插件之后，
 // 所以它一定在插件那个 handler 之后跑——`stopPropagation()` 拦不住同一节点上的另一个
@@ -246,6 +318,12 @@ const { check, report } = createChecker()
 
 // 选一段真实正文：必须**整段落在一行里**（`getClientRects().length === 1`），否则算出来的
 // 中点可能落在行尾空白上，那里不在选区内，右键理应不弹——判据会失败，但失败的是探针。
+//
+// **必须落在会话消息行内**（`[data-chat-node-key]` 的子孙）：只按「够长 + 可见 + 不在侧栏行与
+// 输入框里」筛，会话一空就会挑到界面外壳上的文本。实测页面停在空白新会话时，`document.body`
+// 里第一个够长的文本是 composer 上那枚模型名按钮的标签（`SPAN._7KE1Ra_triggerLabel` →
+// `BUTTON._7KE1Ra_trigger` → `DIV.uV2eYG_standardControls`），插件对它不弹菜单是对的
+// （`probeSelection` 要点击点落在选区内），探针却把它当正文——表现成「功能 6 坏了」。
 const pickBodySelection = () => evaluate(`(() => {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
   let node = null
@@ -255,6 +333,7 @@ const pickBodySelection = () => evaluate(`(() => {
     const host = node.parentElement
     if (host === null) continue
     if (host.closest('[class*="_sessionRow"], [class*="_projectRow"], textarea, input, [contenteditable], .dsh-oi-menu') !== null) continue
+    if (host.closest('[data-chat-node-key]') === null) continue
     const box = host.getBoundingClientRect()
     if (box.top < 80 || box.bottom > window.innerHeight - 120 || box.width < 80) continue
     // 折叠组里的行有布局盒但没有渲染可见性（rect 非零而选区 API 取不到文本）。
@@ -266,35 +345,70 @@ const pickBodySelection = () => evaluate(`(() => {
     range.setEnd(node, Math.min(raw.length, lead + 12))
     const rects = [...range.getClientRects()]
     if (rects.length !== 1 || rects[0].width < 20) continue
+    const x = Math.round(rects[0].x + rects[0].width / 2)
+    const y = Math.round(rects[0].y + rects[0].height / 2)
+    // **命中测试**：算出来的点必须真落在这段文本自己的盒子上。会话列上方有一层吸顶的
+    // _header_… 覆盖带，实测探针取 range 中点、elementFromPoint 却拿到那层吸顶元素
+    // （y≈116）——右键打在选区之外，Chrome 当场把选区折叠，插件不弹也不 preventDefault，
+    // 行为正确；这种失败是探针踩空。跳过这类候选，继续往下找。
+    const hit = document.elementFromPoint(x, y)
+    if (hit === null) continue
+    const anc = range.commonAncestorContainer
+    const ancEl = anc instanceof Element ? anc : anc.parentElement
+    if (ancEl !== null && !(ancEl === hit || ancEl.contains(hit) || hit.contains(ancEl))) continue
     const s = window.getSelection()
     s.removeAllRanges()
     s.addRange(range)
     window.__dshOiSel__ = { range: range.cloneRange() }
     return {
       text: range.toString(),
-      x: Math.round(rects[0].x + rects[0].width / 2),
-      y: Math.round(rects[0].y + rects[0].height / 2),
+      x,
+      y,
+      // 下次再失败时，观测值自己说清「右键打在了什么上面」，不用再重跑一遍取证。
+      host: host.tagName + '.' + String(host.className).slice(0, 48),
+      hitAt: hit.tagName + '.' + String(hit.className).slice(0, 48),
+      flowRows: document.querySelectorAll('[data-chat-node-key]').length,
     }
   }
   return null
 })()`)
 
-// 连跑多脚本时实测过一次偶发：选中后、右键前的间隙里 React 重渲染把选区掐掉，菜单数变 0
-// ——那是探针踩空，不是功能坏了（同产物单跑必过）。重选一次再判定；两次都空才记 FAIL。
+// 挑会话与挑选区合成一个循环：一条会话的消息行里未必有「整行放得下、又可见」的文本（几十行的
+// 会话里正文可能整组折叠，`checkVisibility` 一律拿不到），所以挑不到就换下一条，最多试 12 行。
+//
+// 一旦在某条会话上挑到了选区就停下来判定，不再换会话——那时「右键不弹菜单」是功能的失败，
+// 不是探针踩空。连跑多脚本时实测过的探针踩空是另一种：选中后、右键前的间隙里 React 重渲染把
+// 选区掐掉（同产物单跑必过），所以同一会话上重试两次。
 let picked = null
 let menu1 = null
-for (let attempt = 0; attempt < 2; attempt += 1) {
-  picked = await pickBodySelection()
-  if (picked === null) break
-  await rightClick(picked.x, picked.y)
-  menu1 = await readMenu()
-  if (menu1.count === 1) break
-  await escapeMenu()
-  await sleep(300)
-}
-if (picked === null) {
-  abort('页面上找不到可用于选区的会话正文', '要求：≥20 字的文本节点、不在侧边栏/输入框里、'
-    + '前 12 个字符在同一行内、整体落在视口内。先在测试栈里打开一个有正文的会话。')
+{
+  const total = await countSessionRows()
+  console.log(`[conversation-pick] ${total} 行可点的会话（跳过运行中）`)
+  let most = null
+  for (let i = 0; i < Math.min(total, 12) && picked === null && menu1 === null; i += 1) {
+    const settled = await settleOnSession(i)
+    if (settled === null) break
+    if (most === null || settled.flow.nodes > most.flow.nodes) most = settled
+    if (!settled.flow.hasComposer || settled.flow.nodes < 8) continue
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const found = await pickBodySelection()
+      if (found === null) break
+      await rightClick(found.x, found.y)
+      menu1 = await readMenu()
+      if (menu1.count === 1) {
+        picked = found
+        console.log(`[conversation-pick] 用「${settled.title}」：nodes=${settled.flow.nodes} host=${found.host}`)
+        break
+      }
+      await escapeMenu()
+      await sleep(300)
+    }
+  }
+  if (picked === null && menu1 === null) {
+    abort('前 12 行会话里挑不出「有 composer、且消息行里有一整行放得下的可见正文」的一条',
+      `实测：节点最多的是 ${JSON.stringify(most === null ? null : most.flow)}（门槛 nodes≥8 且 composer 在场）。`
+      + '\n功能 6 的复制与粘贴两条路径都要落在真会话页上，这种现场下断言等于没测。')
+  }
 }
 if (menu1 === null) menu1 = { count: 0, owner: null, items: [] }
 check('会话正文选区上右键：恰好 1 个菜单、归属页面实例、只有「复制」', menu1,
@@ -302,14 +416,17 @@ check('会话正文选区上右键：恰好 1 个菜单、归属页面实例、�
     && v.items.length === 1 && v.items[0] === EXPECT.copy)
     || `期望 count=1 owner=${boot.instanceId} items=[${EXPECT.copy}]，实测 ${JSON.stringify(v)}`)
 
-// 复制那一项的图标与页面上真实那枚消息复制按钮逐字比。**按钮是按 aria-label 定位的**
+// 菜单里那枚「复制」图标与页面上真实的消息复制按钮逐字比。**按钮是按 aria-label 定位的**
 // （文案取自同一份 common 词典），不是按 `d` 反查——按 `d` 找就成了拿常量去证明常量。
+//
+// 这一条守的不是漂移而是**图标选择**：菜单项的图标就是上游 `IconCopyOutlineRegular`
+// 本体，两边必然同源；它要拦的是「这一项忘了传图标」或传了另一枚。
 const iconCmp = await evaluate(`(() => {
   const label = ${JSON.stringify(EXPECT.copy)}
   const button = [...document.querySelectorAll('button[aria-label]')]
-    .find((b) => b.getAttribute('aria-label') === label && b.closest('.dsh-oi-menu') === null)
+    .find((b) => b.getAttribute('aria-label') === label && b.closest(${JSON.stringify(MENU_CARD)}) === null)
   const pageSvg = button?.querySelector('svg') ?? null
-  const menuSvg = document.querySelector('.dsh-oi-menu__icon svg')
+  const menuSvg = document.querySelector(${JSON.stringify(MENU_CARD)} + ' button[role="menuitem"] svg')
   if (pageSvg === null || menuSvg === null) {
     return { skipped: 'page-copy-button-missing', hasButton: button !== undefined, hasMenuSvg: menuSvg !== null }
   }
@@ -325,10 +442,11 @@ check('「复制」图标与页面上真实那枚复制按钮逐字相同（view
   (v) => (v.same === true && v.pageViewBox === v.menuViewBox && v.pathCount > 0)
     || `上游图标已漂移或菜单画的是别的矢量：${JSON.stringify(v)}`)
 
-// 功能 6 的菜单样式快照，留到断言 8 与功能 2 的比。
+// 功能 6 的菜单样式快照，留到断言 8 与功能 2 的比。卡片与条目都是上游渲染的，
+// 这里读的是「实际生效的那份计算样式」，不是本插件声明的任何规则。
 const styleSix = await evaluate(`(() => {
-  const root = document.querySelector('.dsh-oi-menu')
-  const item = root?.querySelector('.dsh-oi-menu__item') ?? null
+  const root = document.querySelector(${JSON.stringify(MENU_CARD)})
+  const item = root?.querySelector('button[role="menuitem"]') ?? null
   if (root === null || item === null) return null
   const pick = (el) => { const cs = getComputedStyle(el); const o = {}; for (const k of cs) o[k] = cs.getPropertyValue(k); return o }
   return { root: pick(root), item: pick(item) }
@@ -343,7 +461,7 @@ const copied = await evaluate(`(async () => {
   let text = null
   let error = null
   try { text = await navigator.clipboard.readText() } catch (e) { error = String(e) }
-  return { text, error, menus: document.querySelectorAll('.dsh-oi-menu').length }
+  return { text, error, menus: document.querySelectorAll(${JSON.stringify(MENU_CARD)}).length }
 })()`)
 check('点「复制」后剪贴板逐字等于选中文本，且菜单已关', {
   match: copied.text === picked.text, menus: copied.menus,
@@ -564,7 +682,7 @@ await evaluate(`(() => {
 })()`)
 await rightClick(picked.x, picked.y)
 const untouched = await evaluate(`(() => ({
-  menus: document.querySelectorAll('.dsh-oi-menu').length,
+  menus: document.querySelectorAll(${JSON.stringify(MENU_CARD)}).length,
   probe: window.__dshOiCtxProbe__.last,
 }))()`)
 check('非可输入区域且无选区：不弹菜单，也不吃掉原生菜单', untouched,
@@ -587,18 +705,19 @@ if (row === null) abort('侧边栏里没有会话行', '功能 2 的对照断言
 
 await rightClick(row.x, row.y)
 const menu7 = await readMenu()
-// 置顶项排第一，文本随行的置顶态在「置顶会话 / 取消置顶」之间翻转——这里只验它是
-// 这两者之一（用真词典的值），后面三项与词典逐字相等。
+// 右键会话行走的是上游那四个 slot 条目，顺序按注册 order：置顶 / 重命名 / 分叉 / 归档。
+// 置顶与归档两项的文本随行的置顶/归档态翻转——只验它们是这一对里的某一个（用真词典的值）。
 check('有选中文本时右键侧边栏的行：开出来的是功能 2 的行菜单', {
-  ...menu7, selected: row.selected, expect: boot.rowLabels, pinLabels: boot.rowPin,
-}, (v) => (v.count === 1 && v.items.length === 3
-    && v.pinLabels.includes(v.items[0])
-    && JSON.stringify(v.items.slice(1)) === JSON.stringify(boot.rowLabels))
-  || `期望 [置顶翻转, ${JSON.stringify(boot.rowLabels)}]，实测 ${JSON.stringify(v.items)}`)
+  ...menu7, selected: row.selected, expect: [boot.rowPin, boot.rowLabels, boot.rowArchive],
+}, (v) => (v.count === 1 && v.items.length === 4
+    && boot.rowPin.includes(v.items[0])
+    && v.items[1] === boot.rowLabels[0] && v.items[2] === boot.rowLabels[1]
+    && boot.rowArchive.includes(v.items[3]))
+  || `期望 [置顶翻转, 重命名, 分叉, 归档翻转]，实测 ${JSON.stringify(v.items)}`)
 
 const styleTwo = await evaluate(`(() => {
-  const root = document.querySelector('.dsh-oi-menu')
-  const item = root?.querySelector('.dsh-oi-menu__item') ?? null
+  const root = document.querySelector(${JSON.stringify(MENU_CARD)})
+  const item = root?.querySelector('button[role="menuitem"]') ?? null
   if (root === null || item === null) return null
   const pick = (el) => { const cs = getComputedStyle(el); const o = {}; for (const k of cs) o[k] = cs.getPropertyValue(k); return o }
   return { root: pick(root), item: pick(item) }
@@ -609,7 +728,7 @@ if (styleSix === null || styleTwo === null) {
   abort('取不到两个菜单的 computed style', `six=${styleSix !== null} two=${styleTwo !== null}`)
 }
 const diff = (a, b) => Object.keys(a)
-  .filter((k) => !GEOMETRY_KEYS.has(k) && a[k] !== b[k])
+  .filter((k) => !GEOMETRY_KEYS.has(k) && !INSTANCE_KEYS.has(k) && a[k] !== b[k])
   .map((k) => `${k}: ${a[k]} / ${b[k]}`)
 const rootDiff = diff(styleSix.root, styleTwo.root)
 const itemDiff = diff(styleSix.item, styleTwo.item)
@@ -639,7 +758,7 @@ await evaluate(`(() => {
 })()`)
 await rightClick(picked.x, picked.y)
 const afterDispose = await evaluate(`(() => ({
-  menus: document.querySelectorAll('.dsh-oi-menu').length,
+  menus: document.querySelectorAll(${JSON.stringify(MENU_CARD)}).length,
   probe: window.__dshOiCtxProbe__.last,
 }))()`)
 check('selectionMenu.dispose() 之后：选区上右键不再弹菜单，也不再 preventDefault', afterDispose,
@@ -656,7 +775,7 @@ const restored = await evaluate(`(() => {
     hasSelectionMenu: typeof h?.selectionMenu?.dispose === 'function',
     freshInstance: h?.instanceId !== ${JSON.stringify(boot.instanceId)},
     probeGone: window.__dshOiCtxProbe__ === undefined,
-    menus: document.querySelectorAll('.dsh-oi-menu').length,
+    menus: document.querySelectorAll(${JSON.stringify(MENU_CARD)}).length,
   }
 })()`)
 check('清场：刷新后页面重新长出一份实例，探针随文档一起没了', restored,
