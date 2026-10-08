@@ -15,7 +15,7 @@ copySelection(text) -> Promise<void>      // writeClipboard，失败只出声不
 pasteInto(snapshot) -> Promise<void>      // 读剪贴板 → 恢复选区 → 派发 paste 事件
 ```
 
-一个捕获阶段的 `contextmenu` 监听器挂在 `document` 上，命中就 `preventDefault()` 并开菜单，不命中就原样放行。菜单本体、样式、关闭条件全部来自[基础层那份组件](./shared-api.md#srcsharedcontext-menujs)，本模块**不带任何 CSS**——「与会话菜单栏样式一致」由「是同一个 `.dsh-oi-menu`、同一份规则」保证，而不是靠抄一份数值。文案与图标见[功能 1、2 · 菜单项与服务映射](./feature-1-2-sidebar-menu.md#菜单项与服务映射)。
+一个捕获阶段的 `contextmenu` 监听器挂在 `document` 上，命中就 `preventDefault()` 并开菜单，不命中就原样放行。菜单本体、样式、关闭条件全部来自[基础层那份组件](./shared-api.md#srcsharedmenujsx)，本模块**不带任何 CSS**——「与会话菜单栏样式一致」由「是同一个 `Menu`、同一个 React 树」保证，而不是靠抄一份数值。文案与图标见[功能 1、2 · 菜单项与服务映射](./feature-1-2-sidebar-menu.md#菜单项与服务映射)。
 
 - **侧边栏的行归功能 2，这道判据得自己写**。两个 handler 都挂在 `document` 的捕获阶段，同一个节点上的 `stopPropagation()` 拦不住彼此，所以本模块见到 `closestRow(target) !== null` 必须自己提前返回；不写就是一次右键开两次菜单，后开的（功能 6）把行菜单顶掉。
 - **选区判定分三条路径**。`window.getSelection()` 看不见 `<input>` / `<textarea>` 内部的选区（Chrome 下那里恒为折叠），表单控件只能读 `selectionStart` / `selectionEnd`，`type` 还得在白名单里——`checkbox` / `color` / `date` / `number` 读这两个属性抛 `InvalidStateError`。contenteditable（0.1.6 起的 Lexical composer）走 DOM 选区，**判据照表单控件的语义**：其内有非折叠选区就给「复制+粘贴」，没有就只给「粘贴」，都不要求点击点落在选区内——控件/编辑器边界本身就是范围限定。页面别处的普通文本才需要「点击点落在选区内」那道闸。
@@ -30,7 +30,7 @@ pasteInto(snapshot) -> Promise<void>      // 读剪贴板 → 恢复选区 → �
 
 - 「粘贴」依赖 `navigator.clipboard.readText()`。浏览器首次调用会弹权限询问，**被拒之后这一项静默无效**——菜单照常弹、点下去什么都不发生，只在控制台出一次声。
 - contenteditable 判据认的是 `[contenteditable=""]` / `[contenteditable="true"]` 属性与 `isContentEditable`（0.1.6 的 Lexical composer 正是这个形态，`verify:selection` 打在真实页面上）。上游若换成只读投影 + 隐藏输入面（0.1.5 及更早那个 textarea 形态）判据换轨到表单路径，两边都换（Shadow DOM / iframe 包住编辑器）时判据整条失效——表现是 composer 上右键退回原生菜单，不报错。
-- 「粘贴」图标是自绘的，没有上游原件可比。上游哪天加了自己的粘贴图标，这一枚不会自动跟上，也不会有任何断言撞上——只是这一项与别处的粘贴按钮画着两版矢量（见[图标与尺寸](./feature-1-2-sidebar-menu.md#图标与尺寸)）。
+- 「粘贴」图标是自绘的，没有上游原件可比。上游哪天加了自己的粘贴图标，这一枚不会自动跟上，也不会有任何断言撞上——只是这一项与别处的粘贴按钮画着两版矢量。「复制」那一枚就是上游 `IconCopyOutlineRegular` 本体。
 - 认的是「选区落点」而不是「有没有选区」，判法依赖 `caretPositionFromPoint` / `caretRangeFromPoint`。两个都缺席的引擎上它**放行**（宁可多弹一次菜单，也不要整条功能消失），表现是页面上留着旧选区时别处右键也会弹出一个「复制」。Electron 与 Chrome 两个都有。
 
 ## 验证

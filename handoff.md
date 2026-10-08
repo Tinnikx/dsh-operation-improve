@@ -4,6 +4,8 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 022 | 功能 10 多选对比度判据的现场口径：第三方主题放行后 3:1 掉到 2.4~2.6，剥插件 / 改 CSS / 重定阈值三选一 | 未开始 | [022-multiselect-contrast-baseline.md](docs/handoff/022-multiselect-contrast-baseline.md) |
+| 021 | 右键菜单改用上游组件：会话行自渲染上游 slot 条目（上游加选项本地自动跟随） | 完成 | [021-context-menu-upstream-components.md](docs/handoff/021-context-menu-upstream-components.md) |
 | 020 | harness 0.2.1-alpha.1 适配（九镜像面零漂移 + 功能 8 收 2 张新卡） | 完成 | [020-harness-0.2.1-alpha.1-adaptation.md](docs/handoff/020-harness-0.2.1-adaptation.md) |
 | 019 | 多选高亮重做：描边 + 主题感知填充（深浅两档可辨） | 完成 | [019-multiselect-highlight-outline.md](docs/handoff/019-multiselect-highlight-outline.md) |
 | 018 | 工作区行右键菜单补上「新会话」（对齐上游 hover 那枚按钮） | 完成 | [018-workspace-new-session-item.md](docs/handoff/018-workspace-new-session-item.md) |

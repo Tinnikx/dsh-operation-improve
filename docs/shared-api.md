@@ -19,17 +19,36 @@ createSelectionStore() -> {
 
 集合空时 `kind` 必定为 `null`。store 不碰 DOM，视觉由订阅者负责。
 
-## `src/shared/context-menu.js`
+## `src/shared/menu.jsx`
 
 ```js
-openContextMenu({ x, y, items, onSelect?, onClose?, owner?, anchor? }) -> () => void  // 幂等 close
-closeContextMenu()                                                   // 关掉当前菜单
-MENU_CSS                                                             // 菜单与高亮的样式表文本
+openContextMenu({ x, y, items?, children?, onSelect?, owner? })
+closeContextMenu()                    // 关掉当前菜单（幂等）
+disposeContextMenu()                  // 拆掉 React 树与容器，之后可再打开
+ROOT_CLASS                            // 'dsh-oi-menu'，卡片与查询入口的类名
+OWNER_ATTR                            // 'data-dsh-oi-owner'，标在本插件自己的容器与查找条上
+MENU_CSS                              // 卡片一条 z-index，常驻容器一条脱流
 ```
 
-`items`：`{ id, label, icon?, danger?, disabled? }`，或 `{ separator: true }`。`icon` 是一段 SVG 标记，经 `innerHTML` 落地，因此**只接受本仓库的常量**（[src/shared/menu-icons.js](../src/shared/menu-icons.js)）——收调用方传进来的任意串就等于开了个注入口。同时只存在一个菜单，再次 `open` 先关旧的。关闭条件：选中一项、外部 `pointerdown`（capture）、`Esc`、滚动（capture，只认整页滚动与包含 `anchor` 的容器）、`blur`、`resize`。超出视口时自动向内翻转。
+卡片是上游 `@deepseek-ai/dsh-client-ui-primitives` 的 `Menu`，由本插件 `createRoot` 出的常驻 React 树渲染并 portal 到 `document.body`。`items` 是 data 行（`{ id, label, icon?, danger?, disabled?, separatorBefore? }`，`icon` 传 React 节点），`children` 是组件行——上游 slot 条目走这一路，键盘 walk 与子菜单互斥与 `items` 同表共用。`onSelect` 只对 data 行触发，组件行的关闭归条目自己（上游四个条目的写法）。
 
-**滚动关闭必须挑容器，不能来者不拒**。捕获阶段挂在 `window` 上的 `scroll` 会收到页面里任何一个滚动容器的事件（scroll 不冒泡，但捕获阶段照样从 window 往下派发），而会话区流式输出时每来一段就自动滚到底一次——无差别关闭的表现是「一边输出一边右键，菜单弹出来立刻消失」。所以 `installContextMenu` 把右键命中的那一行当 `anchor` 传进来，只有整页滚动或**包含这一行**的容器滚动才关。`anchor` 缺省时退回无差别关闭。
+**右键坐标经 `getAnchorRect` 交给上游定位**，本插件不复制任何定位代码：上游 `Menu` 是 anchor 驱动的受控组件，右键没有触发元素，而 `getAnchorRect` 正是它为「触发器不在自己子树里」留的口子（见 [../src/shared/menu.jsx](../src/shared/menu.jsx) 的头注释）。视口夹边、每帧与 scroll/resize 重算、`Esc` / 外部 `pointerdown` / `blur` 关闭、键盘 walk 全部走上游那份实现。
+
+**常驻容器必须脱离文档流。** `openContextMenu` 懒建一枚 `div.dsh-oi-menu__host` 并 `append` 到 `document.body` 末尾，`createRoot` 只建一次、跨菜单复用；`MENU_CSS` 因此带一条 `.dsh-oi-menu__host { position: fixed; width: 0; height: 0 }`。原因：上游把 `anchor` **原地**渲染进这棵树，外层那枚包装自带行盒（实测 18px），容器留在流里时菜单一开就把 `body` 内容高度顶过视口，冒出一条竖直滚动条——`documentElement.clientWidth` 少掉滚动条宽度，会话区与右侧导航列横向收窄，用户看到的就是整页跳动。`position: fixed` 的元素不进滚动溢出区，零尺寸也不占位。这条由 `verify` 的 `opening the menu does not shift the page geometry` 守着。
+
+同时只存在一张卡片，再次 `open` 先关旧的。`owner` 是开菜单的实例 id，以 `dsh-oi-menu--<id>` 这个**类名**编进卡片（`listClassName` 是唯一能作用于 portaled list 的样式钩子）；卡片在 `document.body` 下、不在本插件的 DOM 子树里，按属性查不到它，所以判归属只能认这个类名。
+
+## `src/shared/slot-rows.jsx`
+
+```js
+SESSION_MENU_SLOT                                   // 'sidebar.workspaces.session.menu.item'
+sessionMenuEntries(slots) -> readonly StoredEntry[]
+SessionMenuRows({ deps, sessionId, displayTitle, hookContext })
+```
+
+会话单选时把上游注册在这个 slot 上的全部条目渲染成菜单行，所以**上游加选项本地自动有**，本插件不抄项集合。条目按 `options.order` 排序（照抄上游渲染器那两行排序，不另发明规则）。`deps` 要 `slots`、`locale`（`bind(ns)` 给条目投影词典）、`shortcuts`（`catalog` 是条目上快捷键提示的源）、`workspaces`。
+
+渲染侧照抄上游 `ui-renderer` 的两段语义：`inject` 里 `hooks` 舱的**函数值**当工厂调用、其余（`HostObservable`）绑成 `useXxx` 供条目调用；条目外面包一层错误边界，一个条目崩了只少它自己那一行，不带走整张菜单。slot 级注入的 `menuOpenState` 是**双层柯里化**的 `() => () => hookContext`——少一层，条目里的 `useMenuOpenState()` 就是在对数组调调用。
 
 ## `src/shared/row-probe.js`
 
@@ -72,6 +91,10 @@ OWN_NS        // '@Tinnikx/dsh-operation-improve'
   selectionMenu: { dispose() },     // 同上，功能 6
   harnessConfig: { dispose() },     // 摘掉功能 8 在 settings.general.item 上的注册
   locale:        { t, tCommon, tOwn, dispose() },
+  services: {
+    workspaces, sessions, slots,     // 页面里那几份真服务的只读引用
+    get uiWorkspace(),               // getter 而非快照：服务可能是后装上的
+  },
   stylesheet:    { dispose() },
   dispose(),                        // 停掉整份实例并摘掉本句柄
 }
@@ -79,7 +102,9 @@ OWN_NS        // '@Tinnikx/dsh-operation-improve'
 
 **每一项带监听或带注册的功能都必须列在这里，且要有一条整体 `dispose()`**。这是验证脚本的硬需求而不是便利设施：插件装进 profile 后页面自带一份实例，只暴露一部分等于让脚本停不干净，代价见[验证 · 端到端](./verify.md#端到端)。每条 `dispose` 都幂等，所以句柄上调过之后 `ctx.effect` 卸载时再调一次是安全的。功能 5 与功能 7 不在表里——它们只是 `stylesheet` 那张表里的几条规则。
 
-`locale` 上的三个 translate 函数同样是硬需求：注入式验证造的是自己的 ctx，不从这里借一份**页面真实 locale 服务**给出的文本，文案断言就只能拿桩数据自证。
+`services` 是验证脚本建靶子的入口：菜单项的动作是真服务，脚本要建一组可丢弃的工作区与会话当靶子，破坏性项只对靶子点。`uiWorkspace` 做成 getter 是因为它是上游那条 `super(ctx, 'uiWorkspace')` 装上的，插件 apply 前后都可能装；快照会让脚本拿到一个已经不在服务表上的旧对象。
+
+`locale` 上的三个 translate 函数同样是硬需求：验证脚本不自己造 ctx，菜单文案要从**页面真实 locale 服务**借一份，写死字面量等于把断言绑死在 zh 上，上游改文案还会被断言拦住——两个方向都不是文案断言要看的。
 
 ## 已知限制
 

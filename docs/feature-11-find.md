@@ -4,7 +4,7 @@
 
 ## 判据
 
-**快捷键与相位**。`keydown` 挂在 `window` 捕获，判据是 `(ctrlKey || metaKey) && !altKey && key 是 f/F`，命中即 `preventDefault()` + `stopPropagation()`。挂 `window` 而不是 `document` 是为了抢在共享右键菜单之前：[context-menu.js](../src/shared/context-menu.js) 的 `Esc` 监听也挂在 `window` 捕获，但那条在每次打开菜单时才注册，同相位下注册序决定调用序——本模块在页面加载时就挂着，因此先看到事件，也才读得到那份尚未摘掉的菜单（`Esc` 让位，见下）。上游与桌面壳都不占这个键：Electron shell 只绑 Ctrl+J，没有应用级菜单，Chromium 在 Electron 里没有原生查找面板。
+**快捷键与相位**。`keydown` 挂在 `window` 捕获，判据是 `(ctrlKey || metaKey) && !altKey && key 是 f/F`，命中即 `preventDefault()` + `stopPropagation()`。挂 `window` 而不是 `document` 是为了抢在共享菜单之前：上游 `Menu` 的 `Esc` 监听挂在 `document` **冒泡**阶段，而捕获阶段一定先于冒泡跑到，所以本模块先看到事件，也才读得到那张尚未关闭的菜单卡片（`Esc` 让位，见下）。上游与桌面壳都不占这个键：Electron shell 只绑 Ctrl+J，没有应用级菜单，Chromium 在 Electron 里没有原生查找面板。
 
 **高亮不改 DOM**。两层 `CSS.highlights` 注册名（`dsh-oi-find` 全部命中、`dsh-oi-find-active` 当前项）配两条 `::highlight()` 规则，Range 直接指向文本节点。用 `<mark>` 包住命中会拆掉 React 管的文本节点，并且每一次包裹都要喂给功能 1 与功能 4 那两个观察 `document.body` 的 `MutationObserver`——所以本功能一条 `childList` mutation 都不许产生，`verify:find` 当场数它。注册表是文档级全局的，两份实例同名互顶，因此绘制前先认领、摘除时只删自己那份。
 

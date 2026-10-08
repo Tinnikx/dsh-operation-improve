@@ -14,9 +14,9 @@
 
 **九个镜像面全部无漂移**（功能 1-7、9-11 代码零改动），脚本读数 `合计 35 项检查 · 漂移 0: 无`：
 
-1. **菜单样式档**：`.scrollable` 的 token 名两版全同；插件 `src/shared/context-menu.js` 的 `MENU_CSS` 不镜像这处 → 无漂移。
+1. **菜单样式档**：`.scrollable` 的 token 名两版全同；卡片就是上游 `MenuSurface`，本插件的 `MENU_CSS`（[src/shared/menu.jsx](src/shared/menu.jsx)）不镜像这处 → 无漂移。
 2. **七枚 Regular 图标**（primitives）：逐字节相同。
-3. **会话行「...」菜单项集合与 order**：`pin`/`rename`/`fork`/`archive` 集合与顺序相同。插件 rename 用 `rowTitle(rowElement,kind)`（侧栏行 DOM 文本）不是上游 `displayTitle`，fork 走 host 侧 `ctx.sessions.fork`，均不受影响。
+3. **会话行「...」菜单项集合与 order**：`pin`/`rename`/`fork`/`archive` 集合与顺序相同。会话单选那一支的条目由本插件从上游 slot 现读现渲染（[src/shared/slot-rows.jsx](src/shared/slot-rows.jsx)），项、顺序、文案、图标与「按行状态翻转」都是上游的实现，这一面没有可漂移的抄件。
 4. **StateDot ongoing**：`StateDot.module.css` 逐字节相同。
 5. **侧栏行 DOM 契约**：`_sessionRow` 26/26、`_projectRow` 11/11、`_searchResultRow` 8/8、`_archived` 5/5、`rowActions` 13/13、`role=treeitem` 5/5、`aria-selected` 2/2 全同。
 6. **逐行时间锚点**（功能 4）：`data-chat-node-key` 1/1、`data-chat-flow-key` 3/3、`data-chat-flow-kind` 19/19、`ChatNodeSeat` 5/5、`_timeStart` 2/2、`_timeEnd` 2/2 全同。

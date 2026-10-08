@@ -16,7 +16,7 @@
 1. **选择器只挂字面量属性**。选中读 `aria-selected="true"`（上游 `SessionRow` 把 `node.id === currentId` 直接写进 DOM），运行中读行内 `svg[data-state='ongoing']`（`StateDot` 只在 ongoing 时渲染 svg）。hash 类名逐版本变，`data-state` / `aria-selected` 是 TSX 字面量。
 2. **伪元素让位给上游拖拽指示器**。`dropBefore:before` / `dropAfter:after` 是拖拽排序的插入位置线；竖条与彗尾的规则都挂 `:not([class*="_drop"])`。拖拽那几秒行上少一条装饰，功能性的指示线永远可见。
 3. **背景色那条必须 `!important`**。选中覆盖与上游 `.sessionRow.selected` 同为 (0,2,0)，胜负取决于两张表在 `head` 里的先后，而上游顺序不由插件掌控（同功能 4 的坑）。运行中那条不加：`:has()` 让特异度到 (0,2,1)，天然压过上游。
-4. **表内顺序是层叠契约**。`ROW_STATES_CSS` 必须排在 `MENU_CSS` 之前：多选的填充与选中青的底色同特异度同 `!important`，「当前会话被批量圈选」时底色归多选填充（+青色竖条保留，伪元素不吃背景）只由这个先后决定。多选描边另有一条 `:has(svg[data-state='ongoing'])` 的规则（特异度 (0,3,1)）压在运行中那条静默底边（0,2,1）之上，两者叠成描边加内侧信号色底边——两处写法在 [verify:row-states](./verify.md#功能-10-的验证) 都有断言守着。
+4. **多选那条必须排在选中那条之后**。多选的填充与选中青的底色同特异度同 `!important`，「当前会话被批量圈选」时底色归多选填充（+青色竖条保留，伪元素不吃背景）只由这两条规则在本表内的先后决定——它们都住在 `ROW_STATES_CSS` 里，不跨表和别处争。多选描边另有一条 `:has(svg[data-state='ongoing'])` 的规则（特异度 (0,3,1)）压在运行中那条静默底边（0,2,1）之上，两者叠成描边加内侧信号色底边——两处写法在 [verify:row-states](./verify.md#功能-10-的验证) 都有断言守着。
 5. **彗尾的相位差用负 `animation-delay`**（`:nth-child(3n+…)` 取模 0 / -0.8s / -1.6s）。多行同步扫动像跑马灯；取模基数是兄弟序号而非行数，错峰只要「不同行不同相位」，不要求相邻。
 
 辉光没有按设计稿做成独立子元素：`filter: drop-shadow` 直接挂在彗尾伪元素上，光晕沿同一条轮廓弧走，效果同源且零 DOM 侵入。

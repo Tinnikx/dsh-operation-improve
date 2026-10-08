@@ -18,10 +18,10 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)，功能 11 的在 [src/find/matches.js](src/find/matches.js)（判据与实测读数在 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 当前兼容版本
-- 0.2.1-alpha.1（当前锚定版本，八套 live 验证全绿；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 81 字段）
+- 0.2.1-alpha.1（当前锚定版本；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 81 字段。七套 live 全绿共 145 条，`verify:row-states` 为 27/31——四条红全是多选高亮的对比度判据，根因是测试栈副本上的第三方主题插件 `dsh-any-background@0.3.6` 在新 harness 上不再被兼容性预检否决、页面底色因此换成了它的半透明棕底，判据口径待订。读数与逐条根因见 [docs/handoff/021-context-menu-upstream-components.md](docs/handoff/021-context-menu-upstream-components.md)。）
 
 本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。**每换一次锚定版本，除八套 live 行为验证外必跑 `npm run check:catalog`**——功能 8 的清单是手抄的，这条把它声明的字段 `type`/`default`/边界逐键对上游 `--dump-config-schema`，新版本改了任一键就会红，逼你对上游重抄（判据见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检)）。0.1.7-alpha.2 轮起，
-菜单样式档与图标（功能 2、6）与活跃标记覆盖（功能 5）跟随新版视觉，回到旧 harness 上不再保证逐项对齐。
+菜单卡片（功能 2、6）直接用上游 `@deepseek-ai/dsh-client-ui-primitives` 的 `Menu` 组件、图标用上游组件本体，所以样式档与图标跟随新版视觉，回旧 harness 上不再逐项对齐（功能 5 的活跃标记覆盖同理）。
 历史验证记录：0.2.0-rc.2、0.1.7-rc.1、0.1.7-alpha.2、0.1.6-alpha.2、0.1.2-rc.1、0.1.1-rc.2（各轮细节见 `harness-v*-adaptation-report.md`）。
 
 ## 截图
@@ -31,7 +31,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | ![选区右键菜单与逐行时间戳](docs/screenshot1.png) |
 | 选中一段思考正文后在选区上右键，弹出「复制」（功能 6）；每行节点右上角是它的开始时刻（功能 4）。 |
 | ![侧边栏多选与右键菜单](docs/screenshot3.png) | ![设置页 Harness 高级配置](docs/screenshot4.png) |
-| `ctrl`/`cmd` + 点击多选同级会话行或工作区行（功能 1），在选中行上右键得到批量项菜单（功能 2）：多选工作区给「删除 5 个工作区」，多选会话不给任何动作——归档只走行自己的「...」。 | 设置页「通用设置」里展开的「Harness 高级配置」面板（功能 8）：按插件分组的卡片、三类控件与来源徽标（系统默认 / 手写 / 本面板），失焦即写回 `cordis.patch.yml`。 |
+| `ctrl`/`cmd` + 点击多选同级会话行或工作区行（功能 1），在选中行上右键得到批量项菜单（功能 2）：多选工作区给「删除 5 个工作区」，多选会话不给任何动作。 | 设置页「通用设置」里展开的「Harness 高级配置」面板（功能 8）：按插件分组的卡片、三类控件与来源徽标（系统默认 / 手写 / 本面板），失焦即写回 `cordis.patch.yml`。 |
 
 ## 布局
 
@@ -41,8 +41,8 @@ src/
   client/index.js              client 入口：插样式表、装六个功能、注册 ctx.effect 回收
   shared/
     selection-store.js         选择状态 store（同级约束）
-    context-menu.js            通用右键菜单（纯 DOM）+ 样式表
-    menu-icons.js              菜单图标：逐字拷自 `ui-primitives` 的内联 SVG（paste 那枚自绘）
+    menu.jsx                   共享菜单层：插件自己的 React root + 上游 `Menu` 外壳（功能 2 与功能 6 共用）
+    slot-rows.jsx              会话单选时渲染上游 slot `sidebar.workspaces.session.menu.item` 的全部条目
     row-probe.js               行识别与 React fiber 反查 id / 标题
     locale.js                  菜单与设置面板的文案：借上游 `workspace` / `common` 词典 + 本插件自己的词典
   multi-select/index.js        功能 1
@@ -197,7 +197,7 @@ dsh plugin --profile web add <本目录>                                # 从本
 每项功能的限制列在它自己那份文档的「已知限制」一节里：
 
 - [基础层](docs/shared-api.md#已知限制)：`rowId` 的 fiber 反查依赖 React 内部字段（1 条）
-- [功能 1、2](docs/feature-1-2-sidebar-menu.md#已知限制)：借上游词典键、图标与尺寸是拷贝、高亮延迟（4 条）
+- [功能 1、2](docs/feature-1-2-sidebar-menu.md#已知限制)：借上游词典键、paste 图标自绘、会话单选跟随上游 slot、会话多选无批量、fork 不自动打开、高亮延迟（7 条）
 - [功能 4](docs/feature-4-timestamps.md#已知限制)：日期不跟随语言、九类 kind 未验证、非全局单调、类名片段、档位留白、fiber（6 条）
 - [功能 5](docs/feature-5-active-dot.md#已知限制)：结构假设、壁纸主题下管不到、色值写死（3 条）
 - [功能 6](docs/feature-6-selection-menu.md#已知限制)：剪贴板权限被拒即静默失效、contenteditable 分支未验证、paste 图标自绘、落点判定的引擎回落（4 条）
