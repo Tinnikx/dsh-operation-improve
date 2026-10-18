@@ -23,6 +23,7 @@
  * 环境变量：DSH_OI_NO_RELOAD=1 跳过开头那次 Page.reload
  */
 import { abort, createEvaluator, reloadAndWait, createChecker, resolveTarget } from './lib/cdp.mjs'
+import { dismissOnboarding } from './lib/onboarding.mjs'
 
 const { port: PORT, prefix: PREFIX } = resolveTarget(process.argv.slice(2))
 
@@ -206,6 +207,7 @@ async function escapeMenu() {
 
 if (process.env.DSH_OI_NO_RELOAD !== '1') {
   await reloadAndWait(conn, { mountMs: 6000 })
+  await dismissOnboarding(evaluate)
 }
 await conn.send('Page.enable')
 
@@ -234,9 +236,10 @@ const boot = await evaluate(`(() => {
     copy: h.locale?.tCommon?.('copy') ?? null,
     paste: h.locale?.tOwn?.('selection.paste') ?? null,
     rowPin: [h.locale?.t?.('menu.pinSession') ?? null, h.locale?.t?.('menu.unpinSession') ?? null],
-    // 会话行菜单整份就是上游那四个 slot 条目，顺序按注册 order：置顶 / 重命名 / 分叉 / 归档。
+    // 会话行菜单整份就是上游那几个 slot 条目，顺序按注册 order：置顶 / 重命名 / 分叉 / 归档 / 复制 Session ID。
     rowLabels: [h.locale?.t?.('rename') ?? null, h.locale?.t?.('menu.fork') ?? null],
     rowArchive: [h.locale?.t?.('menu.archiveSession') ?? null, h.locale?.t?.('menu.unarchiveSession') ?? null],
+    rowSessionId: h.locale?.t?.('menu.sessionId') ?? null,
   }
 })()`)
 if (boot.fatal !== undefined) {
@@ -705,15 +708,16 @@ if (row === null) abort('侧边栏里没有会话行', '功能 2 的对照断言
 
 await rightClick(row.x, row.y)
 const menu7 = await readMenu()
-// 右键会话行走的是上游那四个 slot 条目，顺序按注册 order：置顶 / 重命名 / 分叉 / 归档。
+// 右键会话行走的是上游那几个 slot 条目，顺序按注册 order：置顶 / 重命名 / 分叉 / 归档 / 复制 Session ID。
 // 置顶与归档两项的文本随行的置顶/归档态翻转——只验它们是这一对里的某一个（用真词典的值）。
 check('有选中文本时右键侧边栏的行：开出来的是功能 2 的行菜单', {
   ...menu7, selected: row.selected, expect: [boot.rowPin, boot.rowLabels, boot.rowArchive],
-}, (v) => (v.count === 1 && v.items.length === 4
+}, (v) => (v.count === 1 && v.items.length === 5
     && boot.rowPin.includes(v.items[0])
     && v.items[1] === boot.rowLabels[0] && v.items[2] === boot.rowLabels[1]
-    && boot.rowArchive.includes(v.items[3]))
-  || `期望 [置顶翻转, 重命名, 分叉, 归档翻转]，实测 ${JSON.stringify(v.items)}`)
+    && boot.rowArchive.includes(v.items[3])
+    && v.items[4] === boot.rowSessionId)
+  || `期望 [置顶翻转, 重命名, 分叉, 归档翻转, 复制 Session ID]，实测 ${JSON.stringify(v.items)}`)
 
 const styleTwo = await evaluate(`(() => {
   const root = document.querySelector(${JSON.stringify(MENU_CARD)})

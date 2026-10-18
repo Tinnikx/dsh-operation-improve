@@ -88,6 +88,11 @@ export function apply(ctx) {
     // `super(ctx, "uiWorkspace")` 定，不在本插件的类型面上；`ctx.get` 对未列进 inject
     // 的名字照样返回（见 cordis `ReflectService.get`），拿不到也只是那一项缺席。
     getUiWorkspace: () => ctx.get('uiWorkspace'),
+    // 上游 `ClientRemoteAccess`（`remote-access/src/client/mount.ts:63` 的
+    // `super(ctx, 'remoteAccess')`）——会话行菜单里的 fork 项用 `source('session', id,
+    // 'session/fork')` 判权限。同样不列进 `inject`：名字由上游定，拿不到时 fork 项按
+    // 「不允许」渲染，与上游无快照时的读数一致。
+    getRemoteAccess: () => ctx.get('remoteAccess'),
     t: locale.t,
     tOwn: locale.tOwn,
     owner: instanceId,

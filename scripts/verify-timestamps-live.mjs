@@ -46,6 +46,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { abort, createEvaluator, reloadAndWait, createChecker, resolveTarget } from './lib/cdp.mjs'
+import { dismissOnboarding } from './lib/onboarding.mjs'
 import { HELPERS } from './lib/ts-page.mjs'
 import { runChecks, checkDispose } from './lib/ts-checks.mjs'
 
@@ -73,7 +74,10 @@ const RELAUNCH = 'npm run stack:down && npm run stack:up'
 
 const { evaluate, conn } = await createEvaluator({ port: PORT, prefix: PREFIX })
 
-if (process.env.DSH_OI_NO_RELOAD !== '1') await reloadAndWait(conn)
+if (process.env.DSH_OI_NO_RELOAD !== '1') {
+  await reloadAndWait(conn)
+  await dismissOnboarding(evaluate)
+}
 
 // ---- 前置检查：hover 媒体特性 ------------------------------------------------
 const media = await evaluate(`(() => ({

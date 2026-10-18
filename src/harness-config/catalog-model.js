@@ -102,18 +102,21 @@ export const MODEL_ENTRIES = [
     ],
   },
   {
-    // 上游把 DeepSeek 接入拆成两条 entry：`llm-deepseek` 现在由 `dsh-llm-deepseek-api-key`
+    // 上游把 DeepSeek 接入拆成两条 entry：`llm-deepseek` 由 `dsh-llm-deepseek-api-key`
     // 提供（API key 那一路），`llm-deepseek-account` 是账号登录那一路。两条在
-    // `dsh-base/cordis.patch.yml` 里同时挂着且都没有 config 块，两半边的 `Config` 都是
-    // 从 `@deepseek-ai/dsh-llm-deepseek` 原样 import 的同一个对象，13 枚数值键的
-    // `type`/`minimum`/`maximum`/`default` 逐字相同，读值也走同一个
-    // `resolveAdapterOptions(plainOptions(config))`——所以取值时机与本卡的上一张一致。
+    // `dsh-base/cordis.patch.yml` 里同时挂着且都没有 config 块：前者直接是
+    // `@deepseek-ai/dsh-llm-deepseek` 的 `Config`，后者是同一份协议字段再叠上账号侧的
+    // 模型列表三项（`modelsTimeoutMs`、`modelsMaxAgeMs`、`modelOverrides`）。两卡共有的
+    // 13 枚数值键 `type`/`minimum`/`maximum`/`default` 逐字相同、读值都经
+    // `resolveAdapterOptions(plainOptions(config))`，所以取值时机一致；账号侧多出的两项
+    // 数值键收进本卡，`modelOverrides` 是对象（口径 #3 不收）。`models` 已从上游 schema
+    // 移除，写它会让条目加载失败，清单也不再声明。
     // 只写上一张卡的话，用账号登录的 profile 写下去落不到它正在用的那条 entry 上。
     id: 'llm-deepseek-account',
     title: 'DeepSeek 模型接入（账号登录）',
     plugin: '@deepseek-ai/dsh-llm-deepseek-account',
     effect: 'nextRequest',
-    description: '账号登录那一路请求侧的 token、超时与文件配额，字段含义与上一张「DeepSeek 模型接入」一致。',
+    description: '账号登录那一路请求侧的 token、超时与文件配额，字段含义与上一张「DeepSeek 模型接入」一致；另外还能调该账号的模型列表超时与缓存。',
     notice: '本卡只作用于 `llm-deepseek-account` 这条 entry（DeepSeek 账号登录）。用 API key 接入时读的是上一张卡的 `llm-deepseek`，两卡各写各的，互不覆盖。',
     fields: [
       {
@@ -170,6 +173,18 @@ export const MODEL_ENTRIES = [
       {
         key: 'fileQuotaCleanupBatch', type: 'integer', default: 100, min: 1, max: 1000, effect: 'nextRequest',
         label: '配额清理批量（个）', help: '上传撞上 Files 配额时，一次删掉最旧的多少个本 harness 的文件再重试。',
+      },
+      {
+        // 上游 `z.number().min(Number.MIN_VALUE).max(2^31-1)`：接受正小数；`min: 1` 是
+        // 面板防呆（亚毫秒的列表超时没有意义），`max` 与上游硬抛的界一致。
+        key: 'modelsTimeoutMs', type: 'number', default: 5000, min: 1, max: MAX_TIMER_DELAY_MS, effect: 'nextRequest',
+        label: '模型列表超时（毫秒）', help: '首次访问该账号时等待模型列表的上限；之后的访问直接用已加载的列表。',
+      },
+      {
+        // 上游 `z.number().step(1).min(0).max(2^53-1)`：`step(1)` 把值域收在整数上，
+        // 0 表示列表每次都刷新。
+        key: 'modelsMaxAgeMs', type: 'integer', default: 600000, min: 0, max: MAX_CONFIG_INTEGER, effect: 'nextRequest',
+        label: '模型列表缓存时长（毫秒）', help: '列表超过这个时长后，下一次访问在后台刷新；刷新失败也按同一时长重试。0 表示每次都刷新。',
       },
     ],
     crossRules: [

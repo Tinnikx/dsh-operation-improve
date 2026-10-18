@@ -38,6 +38,7 @@
  *   指向消息流气泡的全文）。
  */
 import { abort, createEvaluator, reloadAndWait, createChecker, resolveTarget } from './lib/cdp.mjs'
+import { dismissOnboarding } from './lib/onboarding.mjs'
 
 const { port: PORT, prefix: PREFIX } = resolveTarget(process.argv.slice(2))
 
@@ -153,6 +154,7 @@ const readRailIndependently = () => evaluate(`(() => {
 
 if (process.env.DSH_OI_NO_RELOAD !== '1') {
   await reloadAndWait(conn, { mountMs: 6000 })
+  await dismissOnboarding(evaluate)
 }
 await conn.send('Page.enable')
 

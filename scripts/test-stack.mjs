@@ -196,47 +196,52 @@ function syncHome() {
   if (res.status !== 0) die(`rsync 失败（退出码 ${res.status}）`)
   preparePatchBaseline()
   relinkPlugin()
-  stripCopyThemePlugins()
+  stripCopyExtraPlugins()
   console.log(`[test-stack] 副本已同步：${TEST_HOME}`)
 }
 
 /**
- * 副本里**不装**第三方主题插件。
+ * 副本只留 base harness 与本体插件，其余 bundle 一律从名册剥掉。
  *
- * 判据前提：`verify:row-states` 的多选可辨性验「深浅两档都看得清」，造浅色档的办法是摘掉
- * `body[data-ds-dark-theme]`。第三方主题插件把侧栏底色与文字色钉成 `!important`，摘属性
- * 只让上游那批 token 跟着换——于是量到的是「上游浅色强调色 + 插件的棕色底 + 插件的白
- * 文字」这个页面从不渲染的组合（实测读数见
- * [交接 022](../docs/handoff/022-multiselect-contrast-baseline.md)）。真 home 装什么不由
- * 我们管；副本归置成标准主题，两档才各自是一个渲染得出来的状态。
+ * 判据前提：功能 1、2、10 的断言要打在上游 slot 渲染出的工作区行与会话行上。真 home 里
+ * 挂着一批第三方 / 实验 bundle，其中 `ds-bot` 注册进上游那个单槽 `sidebar.workspaces`，
+ * 把整个侧栏区域换成它自己的面板——工作区树一行都不渲染（实测 `role="treeitem"` 0 条，
+ * 而 `ctx.workspaces.list` 里十几个工作区、几百条会话都在），六套 live 断言全部没有
+ * 现场。`dsh-client-ui-slots` 的冲突规则两版逐字节相同，所以这不是 harness 行为漂移，
+ * 是环境里多了第三方 bundle。副本归置成「base harness + 本插件」这一个已知状态，验证
+ * 才有确定现场。
  *
- * 要在第三方现场复跑（例如验那条 SKIP 守卫）显式带 `DSH_OI_KEEP_THEME_PLUGIN=1`。
+ * 真 home 装什么不由我们管。两个开关：
+ * - `DSH_OI_KEEP_EXTRA_PLUGINS=1`：整段跳过，副本保留真 home 的全部 bundle。
+ * - `DSH_OI_KEEP_THEME_PLUGIN=1`：额外保留第三方主题插件 `dsh-any-background`——
+ *   `verify:row-states` 那条平色 SKIP 守卫要的现场（见
+ *   [docs/verify.md](../docs/verify.md)）。
  */
-const COPY_THEME_PLUGINS = ['dsh-any-background']
+const BASE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']
+const THEME_PLUGIN = 'dsh-any-background'
 
-function stripCopyThemePlugins() {
-  if (process.env.DSH_OI_KEEP_THEME_PLUGIN === '1') {
-    console.log('[test-stack] 副本保留第三方主题插件（DSH_OI_KEEP_THEME_PLUGIN=1）')
+function stripCopyExtraPlugins() {
+  if (process.env.DSH_OI_KEEP_EXTRA_PLUGINS === '1') {
+    console.log('[test-stack] 副本保留真 home 全部 bundle（DSH_OI_KEEP_EXTRA_PLUGINS=1）')
     return
   }
   const path = join(TEST_HOME, 'profiles/web/package.json')
   if (!existsSync(path)) return
   const pkg = JSON.parse(readFileSync(path, 'utf8'))
-  const dropped = []
-  for (const name of COPY_THEME_PLUGINS) {
-    if (pkg.dependencies !== undefined && pkg.dependencies[name] !== undefined) {
-      delete pkg.dependencies[name]
-      dropped.push(name)
-    }
-    const bundles = pkg.dsh?.profile?.bundles
-    if (Array.isArray(bundles) && bundles.includes(name)) {
-      pkg.dsh.profile.bundles = bundles.filter((b) => b !== name)
-      if (!dropped.includes(name)) dropped.push(name)
+  const bundles = pkg.dsh?.profile?.bundles
+  if (!Array.isArray(bundles)) return
+  const keep = new Set([...BASE_BUNDLES, PLUGIN_NAME])
+  if (process.env.DSH_OI_KEEP_THEME_PLUGIN === '1') keep.add(THEME_PLUGIN)
+  const dropped = bundles.filter((b) => !keep.has(b))
+  if (dropped.length === 0) return
+  pkg.dsh.profile.bundles = bundles.filter((b) => keep.has(b))
+  if (pkg.dependencies !== undefined) {
+    for (const name of Object.keys(pkg.dependencies)) {
+      if (!keep.has(name)) delete pkg.dependencies[name]
     }
   }
-  if (dropped.length === 0) return
   writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8')
-  console.log(`[test-stack] 副本已剥除第三方主题插件：${dropped.join('、')}（真 home 未动）`)
+  console.log(`[test-stack] 副本已剥除 ${dropped.length} 个非 base-harness bundle：${dropped.join('、')}（真 home 未动）`)
 }
 
 /**

@@ -51,6 +51,7 @@ import { SessionMenuRows, sessionMenuEntries } from '../shared/slot-rows.jsx'
  *   shortcuts?: any,
  *   locale: any,
  *   getUiWorkspace?: () => ({ startSession: (workspaceId: string) => void } | undefined),
+ *   getRemoteAccess?: () => ({ source: (kind: string, id: string, action: string) => any } | undefined),
  *   t: (key: string, params?: Record<string, unknown>) => string,
  *   tOwn: (key: string, params?: Record<string, unknown>) => string,
  *   confirm?: (message: string) => boolean,
@@ -63,6 +64,8 @@ import { SessionMenuRows, sessionMenuEntries } from '../shared/slot-rows.jsx'
  *   `locale.bind` 给条目投影它声明的词典，`workspaces.list` 是置顶/归档态那个 observable 的源。
  *   `getUiWorkspace` 取上游 `UiWorkspaceService`，只在「新会话」那一项上用；返回
  *   `undefined`（或这个依赖本身缺省）时那一项整个不出现。
+ *   `getRemoteAccess` 取上游 `ClientRemoteAccess`，是 fork 项读权限的源；返回
+ *   `undefined` 时 fork 项按「不允许」渲染（同上游无快照）。
  * @returns {() => void} 幂等 disposer
  */
 export function installContextMenu(deps) {
@@ -135,7 +138,7 @@ export function installContextMenu(deps) {
       sessionId,
       displayTitle: rowTitle(rowElement, 'session'),
       // `MenuOpenState`（上游 `contract/slots.ts:83`）：条目靠它关菜单，而菜单的关闭归本
-      // 模块——上游那四项在行菜单里也是调 `setMenuOpen(false)`，同一个约定。
+      // 模块——上游那些会话菜单项也是调 `setMenuOpen(false)`，同一个约定。
       hookContext: [true, () => closeContextMenu()],
     })]
   }

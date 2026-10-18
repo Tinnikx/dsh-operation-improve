@@ -33,6 +33,7 @@
  * 环境变量：DSH_OI_NO_RELOAD=1 跳过 Page.reload
  */
 import { abort, createEvaluator, reloadAndWait, createChecker, resolveTarget } from './lib/cdp.mjs'
+import { dismissOnboarding } from './lib/onboarding.mjs'
 
 const { port: PORT, prefix: PREFIX } = resolveTarget(process.argv.slice(2))
 
@@ -61,6 +62,7 @@ const { evaluate, conn } = await createEvaluator({ port: PORT, prefix: PREFIX })
 
 if (process.env.DSH_OI_NO_RELOAD !== '1') {
   await reloadAndWait(conn, { mountMs: 6000 })
+  await dismissOnboarding(evaluate)
 }
 await conn.send('Page.enable')
 

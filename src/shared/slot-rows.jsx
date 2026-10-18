@@ -93,6 +93,29 @@ function observableHook(source) {
   return (selector) => useSelector(source, selector, Object.is)
 }
 
+/** 恒为 `false` 的源：服务缺席时 hook 照样被调用，渲染期的 hook 数量不随服务到货变化。 */
+const DENIED_ACCESS = { getSnapshot: () => false, subscribe: () => () => {} }
+
+/**
+ * `useSessionAccess(sessionId, action)`：上游根标准 keyed hook `sessionAccess` 的等价物。
+ *
+ * 0.2.1-alpha.3 起上游的 `ForkSessionMenuItem` 用它决定这一项渲不渲染
+ * （`ui-workspace/src/client/session-actions/ForkSession.tsx:17`），那个 hook 由
+ * `dsh-client-ui-session` 在 `provideRoot` 里发布（`keyedHooks.sessionAccess`），解到
+ * `ctx.remoteAccess.source('session', id, action)` 这枚 `HostObservable<boolean>`。这里照
+ * 同一路取；服务缺席时给恒假，条目按「不允许 fork」渲染，与上游无快照时的读数一致。
+ *
+ * @param {any} deps 功能 2 那一组依赖
+ * @returns {(sessionId: string, action: string) => boolean}
+ */
+function sessionAccessHook(deps) {
+  return (sessionId, action) => {
+    const service = deps.getRemoteAccess?.()
+    const source = service?.source?.('session', sessionId, action) ?? DENIED_ACCESS
+    return useSelector(source, (allowed) => allowed, Object.is)
+  }
+}
+
 /** `hooks` 舱的键名变成 prop 名：`pinned` → `usePinned`。 */
 function hookPropName(name) {
   return `use${name[0]?.toUpperCase() ?? ''}${name.slice(1)}`
@@ -154,7 +177,9 @@ class EntryBoundary extends Component {
  *
  * @param {object} props
  * @param {object} props.entry `StoredEntry`：`component` / `options` / `inject` / `locale`
- * @param {object} props.standard 根标准源，投影成 `useXxx`
+ * @param {object} props.standard 根标准源，整体作为 props 透给条目（`useWorkspaces` /
+ *   `useSessionAccess`）；上游渲染器同样把整份 standard 面摊给每条条目
+ *   （`scoped-slots.tsx:624`），条目按需取用
  * @param {object} props.slotInject slot 级 inject face
  * @param {unknown} props.hookContext 传给 slot 级 hook 工厂的不透明上下文
  * @param {(ns: string) => Function} props.translate 词典绑定
@@ -176,7 +201,7 @@ function SlotRow({ entry, standard, slotInject, hookContext, translate, ownerPro
     kit.actions = entry.store.actions
   }
   return createElement(EntryBoundary, null,
-    createElement(Comp, { ...kit, ...injected, ...slotProps, ...contextual, ...ownerProps }))
+    createElement(Comp, { ...standard, ...kit, ...injected, ...slotProps, ...contextual, ...ownerProps }))
 }
 
 /** 条目表按元素比较：`entriesOfSlot` 每次调用新建数组，比引用会永远判成「变了」。 */
@@ -217,7 +242,10 @@ export function SessionMenuRows({ deps, sessionId, displayTitle, hookContext }) 
 
   const entries = useSelector(source, readEntries, sameEntries)
 
-  const standard = useMemo(() => ({ useWorkspaces: observableHook(deps.workspaces?.list) }), [deps])
+  const standard = useMemo(() => ({
+    useWorkspaces: observableHook(deps.workspaces?.list),
+    useSessionAccess: sessionAccessHook(deps),
+  }), [deps])
   const slotInject = useMemo(() => ({
     hooks: {
       // 上游 `menuOpenStateFactory`（`ui-workspace/src/client/contract/slots.ts:101`）是

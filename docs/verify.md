@@ -40,7 +40,9 @@ harness 入口按「离用户实际跑的那份最近」挑：desktop dist 打�
 
 `rsync` 会把真 home 里的日常改动一起搬进副本——`verify:settings` 要求「没有托管区段、`bash-sandbox.timeoutMs` 出自 bundle 层」的干净基线。`syncHome()` 因此在 rsync 之后**只归置副本**：剥掉标记区段，并删掉区段外的手写 `bash-sandbox` 项（用户日常用面板或手写过配置的话，这两样会随真 home 进来）。真 `~/.dsh` 一个字节不动；副本上那句「用过设置面板后要手动删区段」的老规矩由此作废。
 
-**副本恒在标准主题上跑：第三方主题插件在 rsync 之后被剥掉。**`syncHome()` 搬完真 home 会把 `dsh-any-background` 从副本 profile 的 `package.json`（`dependencies` 与 `dsh.profile.bundles` 两处）里摘掉，真 `~/.dsh` 一个字节不动。理由是判据前提：`verify:row-states` 的多选可辨性要验「深浅两档都看得清」，造第二档的办法是摘 `body[data-ds-dark-theme]`——那份主题把侧栏底色与文字色钉成 `!important`（实测 81 条覆盖、侧栏底 `hsla(40,34%,31%,0.49)` 的半透明层、属性每帧被写回深色），摘属性只换得动强调色，量出来是「上游浅档强调色 + 深档底色 + 深档文字」这种页面从不渲染的组合。剥掉之后两档才各自是渲染得出来的真状态。要对着第三方现场复跑（例如验那条 SKIP 守卫）显式带 `DSH_OI_KEEP_THEME_PLUGIN=1 npm run stack:up`；两条路的实测差值与因果都在[交接 022](handoff/022-multiselect-contrast-baseline.md)。
+**副本只留 base harness 与本插件：其余 bundle 在 rsync 之后全部从副本名册剥掉。**`syncHome()` 搬完真 home 会把副本 profile 的 `package.json`（`dependencies` 与 `dsh.profile.bundles` 两处）裁到白名单——`@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app` 与 `@Tinnikx/dsh-operation-improve`，真 `~/.dsh` 一个字节不动。理由是断言要有现场：真 home 名册里挂着的第三方/实验 bundle（实测 14 个，如 `ds-bot` 占住上游单槽 `sidebar.workspaces` 致侧栏工作区树 0 行、`dsh-any-background` 每帧改写主题、引导类插件弹自己的模态框）会各自挪走或盖掉本插件要读的 DOM，页面照样渲染但断言全测错对象。`DSH_OI_KEEP_EXTRA_PLUGINS=1 npm run stack:up` 整段跳过剥除、保留真 home 的现场；`DSH_OI_KEEP_THEME_PLUGIN=1` 只额外保留 `dsh-any-background` 一份。
+
+**其中标准主题是 `verify:row-states` 的判据前提。**多选可辨性要验「深浅两档都看得清」，造第二档的办法是摘 `body[data-ds-dark-theme]`——`dsh-any-background` 把侧栏底色与文字色钉成 `!important`（实测 81 条覆盖、侧栏底 `hsla(40,34%,31%,0.49)` 的半透明层、属性每帧被写回深色），摘属性只换得动强调色，量出来是「上游浅档强调色 + 深档底色 + 深档文字」这种页面从不渲染的组合。剥掉之后两档才各自是渲染得出来的真状态。要对着第三方现场复跑（例如验那条 SKIP 守卫）显式带 `DSH_OI_KEEP_THEME_PLUGIN=1 npm run stack:up`；两条路的实测差值与因果都在[交接 022](handoff/022-multiselect-contrast-baseline.md)。
 
 ## 单元测试
 
@@ -59,6 +61,8 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 ## 端到端
 
 端到端验证走 CDP 注入——对着**运行中的真实页面**驱动页面自己那份插件实例，菜单断言读的是真实 DOM 上的上游组件产物。走裸 CDP（无 puppeteer 依赖），连接器与断言框架来自 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)，与另外六个验证脚本共用——判据语义（skip 也算失败、非零退出）只有一份实现。**默认打测试栈（3181 / CDP 9334）**，见 `lib/cdp.mjs` 的 `resolveTarget`，不打日常在用的那个 harness。
+
+**每个脚本 reload 之后都先收掉产品引导框**（[scripts/lib/onboarding.mjs](../scripts/lib/onboarding.mjs) 的 `dismissOnboarding()`）：副本没有凭据，应用加载会弹「预览版说明」再弹「配置 API 密钥」两步 `OnboardingModal`。它们是模态层，按设计独占 `Escape`（上游 `Menu.tsx` 的 `isBehindModal` 让菜单在模态之上时不处理 Esc），并把焦点钉在自己的输入框上——不收掉的话菜单的 Esc、键盘焦点这些断言测到的都是模态层的行为。已经收掉时该调用是空操作，所以在每个 reload 之后无条件调用。唯一例外是 [verify-settings-live.mjs](../scripts/verify-settings-live.mjs)：它按字节比对 `cordis.patch.yml`，而点「继续」会把已读标记写回 host 配置，因此那里只单独收凭据步、不碰预览步。
 
 **早先的版本是注入 bundle 的**（截下 `window.__ModuleLoader__` 的 registration、手动 apply 一个 ctx、服务换成记账 Proxy），插件换成上游组件后这条路整体走不通：产物顶层 require 的四个模块（`react` / `react/jsx-runtime` / `react-dom/client` / `@deepseek-ai/dsh-client-ui-primitives`）全是平台 seed，桩被调到即抛；更要紧的是会话那一支菜单的条目要从真 `slots` 服务里读出来才渲染得出来，而注入实例拿到的是脚本手搓的 ctx，两边都读不到那一格条目表。
 
@@ -217,7 +221,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH node .scratch/think-scroll-check.mjs
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:settings
 ```
 
-三十条断言，全部打[测试栈](#测试栈)（`DSH_HOME=<repo>/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，驱动的是页面自带那份实例渲染出来的真面板：打开设置 → 展开这一行 → 用真实输入事件改值 → 让输入框失焦，然后同时读三处——patch 文件的字节、host 路由回的 `live`、面板自己的 DOM。覆盖：手写值即当前值且标 `manual`、DOM 里根本没有保存按钮、只失焦就写出区段且区段外逐字节不变、不重启 harness 就热重载生效、写 `snippetChars` 时 restate 住 bundle 层的 `path`/`openAt`、手写行连行尾注释原样保留、跨字段规则被前端拦下且文件一个字节没动（两条：`defaultLimit > maxLimit`，以及 `imageOffloadByteQuantum` 压过 `maxRequestFilesBytes` 那条 `atMost`）、余量**等于**保留时长也被拦（`lessThan` 的等号不在合法那一侧）、点「清除」撤掉被拒的草稿、卸载本插件后区段与效力都还在、点「清除」不做别的操作就把键摘掉、托管键清空后区段整体消失且文件逐字节回到基线、没人设过的字段只淡化控件且默认值只在 `placeholder` 里（设过之后恢复、清空之后重新淡化）、bundle 字段的徽标显示来源包名而手写与系统默认的文案不变、每张卡都渲染生效方式标记。
+三十二条断言，全部打[测试栈](#测试栈)（`DSH_HOME=<repo>/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，驱动的是页面自带那份实例渲染出来的真面板：打开设置 → 展开这一行 → 用真实输入事件改值 → 让输入框失焦，然后同时读三处——patch 文件的字节、host 路由回的 `live`、面板自己的 DOM。覆盖：手写值即当前值且标 `manual`、DOM 里根本没有保存按钮、只失焦就写出区段且区段外逐字节不变、不重启 harness 就热重载生效、写 `snippetChars` 时 restate 住 bundle 层的 `path`/`openAt`、手写行连行尾注释原样保留、跨字段规则被前端拦下且文件一个字节没动（两条：`defaultLimit > maxLimit`，以及 `imageOffloadByteQuantum` 压过 `maxRequestFilesBytes` 那条 `atMost`）、余量**等于**保留时长也被拦（`lessThan` 的等号不在合法那一侧）、点「清除」撤掉被拒的草稿、卸载本插件后区段与效力都还在、点「清除」不做别的操作就把键摘掉、托管键清空后区段整体消失且文件逐字节回到基线、没人设过的字段只淡化控件且默认值只在 `placeholder` 里（设过之后恢复、清空之后重新淡化）、bundle 字段的徽标显示来源包名而手写与系统默认的文案不变、每张卡都渲染生效方式标记、账号卡的模型列表超时字段只写到账号那条 entry 并在清除后回到基线。
 
 - **点「清除」之后，判据是「逼一次重载之后键摘没摘掉」，不是「loader 立刻就空」**。harness 偶发会漏接清除那一次 profile patch 重载：面板把文件写回基线是对的（`bytesIdentical:true`），loader 里那枚键却还留着，要到下一次任何改动触发真重载时才顺带消失。宿主侧对 reload 失败只有一行 `ctx.logger.warn`，不落测试栈日志，机制无从证明——所以脚本不推测上游为什么漏，改成用 `clearAndConfirm()` 逼一次真重载（借陪跑键 `schedule.deliveryHistoryRecords` 触发，不碰被验的那张卡）再读 `live`，并把用了几次 `pokes` 记进观测值。这几枚「清除」断言因此各自能扛住宿主那一次偶发漏接，而不是靠运气红绿。
 
@@ -268,7 +272,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:row-states
 
 像素取法与取样统计：`Page.captureScreenshot` 按 `clip.scale = 4` 出图，回页面里画进 canvas 逐点取。行内色取**整片网格的主导桶均值**（16 级量化分桶），不是一条扫描线的中位数——行里有标题与时间字形，字形会把中位数抬高（实测抬到 `rgb(92,98,113)`，比合成值 `rgb(82,84,94)` 亮一档，「描边 vs 内侧填充」因此报出过 2.69 这种不存在的失败）。**取样坐标一律用截图之前那次读到的几何**，不在解码时重读：两次读之间页面滚一行，所有点整体偏移，会量出一套自洽的假读数。
 
-多选可辨性的读数（标准现场 = 副本按[测试栈](#测试栈)那一节剥掉第三方主题插件）：
+多选可辨性的读数（标准现场 = 副本按[测试栈](#测试栈)那一节只留 base harness 与本插件）：
 
 | 量 | 判据 | 深色·现场 | 浅色 |
 | --- | --- | --- | --- |

@@ -23,6 +23,7 @@
  */
 import { abort, createEvaluator, reloadAndWait, createChecker, resolveTarget } from './lib/cdp.mjs'
 import { createFixtures, cleanupFixtures, requireInstance } from './lib/fixtures.mjs'
+import { dismissOnboarding } from './lib/onboarding.mjs'
 
 const { port: PORT, prefix: PREFIX } = resolveTarget(process.argv.slice(2))
 
@@ -30,6 +31,7 @@ const { evaluate, conn } = await createEvaluator({ port: PORT, prefix: PREFIX })
 
 if (process.env.DSH_OI_NO_RELOAD !== '1') {
   await reloadAndWait(conn, { mountMs: 6000 })
+  await dismissOnboarding(evaluate)
 }
 
 // 展开所有折叠的工作区，让会话行够数。靶子工作区是随后才建的，它自己折着时由
@@ -209,11 +211,17 @@ const localeProbe = await evaluate(`(async () => {
   // 面板里 General 是 account(-10) 之后的第一格（ui-settings-general/src/client/index.ts:233）。
   const navCell = (label) => [...document.querySelectorAll('[data-shortcut-modal="settings"] nav button')]
     .find((b) => (b.textContent ?? '').includes(label)) ?? null
-  const trigger = [...document.querySelectorAll('button[aria-haspopup="dialog"][aria-expanded]')]
-    .find((b) => (b.getAttribute('aria-label') ?? '').length > 0) ?? null
-  if (trigger === null) return { bail: '侧栏页脚没有设置面板的触发按钮' }
+  const trigger = [...document.querySelectorAll('button[aria-haspopup="menu"]')]
+    .find((b) => ['账号菜单', 'Account menu'].includes((b.getAttribute('aria-label') ?? '').trim())) ?? null
+  if (trigger === null) return { bail: '侧栏页脚没有账号菜单按钮' }
   const openPanel = async () => {
     trigger.click()
+    for (let n = 0; n < 20; n += 1) {
+      await sleep(60)
+      const item = [...document.querySelectorAll('[role="menuitem"]')]
+        .find((e) => ['设置', 'Settings'].includes((e.textContent ?? '').trim()))
+      if (item !== null) { item.click(); break }
+    }
     for (let n = 0; n < 20; n += 1) {
       await sleep(120)
       const panel = document.querySelector('[data-shortcut-modal="settings"]')
@@ -421,7 +429,7 @@ check('kind switch clears', await evaluate(`(async () => {
 //
 // **判据是逐项等于上游那一份**。会话菜单的每一项都是 `sidebar.workspaces.session.menu.item`
 // 这一格 slot 里注册的条目（上游 `ui-workspace`），本插件渲染的就是它们本身——所以两份
-// 菜单按定义应当逐项相等（文案 / 图标 / 顺序）。归档项在菜单里，上游那四项原样在。
+// 菜单按定义应当逐项相等（文案 / 图标 / 顺序）。归档项在菜单里，上游那五项原样在。
 check('contextmenu single (session)', await evaluate(`(async () => {
   ${PRELUDE}
   const sel = h.selection
@@ -439,7 +447,7 @@ check('contextmenu single (session)', await evaluate(`(async () => {
       .map((s) => (s.getAttribute('viewBox') ?? '') + '|' + (s.getAttribute('width') ?? '') + '|' + (s.getAttribute('height') ?? '')),
     lang: document.documentElement.lang,
     expected: { pin: t('menu.pinSession'), unp: t('menu.unpinSession'), rename: t('rename'),
-      fork: t('menu.fork'), archive: t('menu.archiveSession') },
+      fork: t('menu.fork'), archive: t('menu.archiveSession'), sessionId: t('menu.sessionId') },
     material: menu === null ? null : menu.getAttribute('data-menu-material'),
     zIndex: menu === null ? null : getComputedStyle(menu).zIndex,
     inViewport: rect === null ? null : (rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1) }
@@ -448,14 +456,15 @@ check('contextmenu single (session)', await evaluate(`(async () => {
   if (v.defaultPrevented !== true) return '没有 preventDefault，浏览器原生菜单会弹出来'
   if (v.menus !== 1) return `本插件的菜单有 ${v.menus} 张，应为 1`
   if (v.items === null) return '菜单没渲染出来'
-  if (v.items.length !== 4) return `会话单选菜单应有上游那 4 项（pin/rename/fork/archive），实际 ${JSON.stringify(v.items)}`
+  if (v.items.length !== 5) return `会话单选菜单应有上游那 5 项（pin/rename/fork/archive/sessionId），实际 ${JSON.stringify(v.items)}`
   const e = v.expected
   if (v.items[0] !== e.pin && v.items[0] !== e.unp) {
     return `首项应是置顶翻转（${JSON.stringify([e.pin, e.unp])} 之一），实际 ${JSON.stringify(v.items[0])}`
   }
   if (v.items[1] !== e.rename) return `第二项应是重命名 ${JSON.stringify(e.rename)}，实际 ${JSON.stringify(v.items[1])}`
   if (v.items[2] !== e.fork) return `第三项应是分叉 ${JSON.stringify(e.fork)}，实际 ${JSON.stringify(v.items[2])}`
-  if (v.items[3] !== e.archive) return `末项应是归档 ${JSON.stringify(e.archive)}，实际 ${JSON.stringify(v.items[3])}`
+  if (v.items[3] !== e.archive) return `第四项应是归档 ${JSON.stringify(e.archive)}，实际 ${JSON.stringify(v.items[3])}`
+  if (v.items[4] !== e.sessionId) return `末项应是复制 Session ID ${JSON.stringify(e.sessionId)}，实际 ${JSON.stringify(v.items[4])}`
   if (v.icons.some((s) => s === '||')) return `有条目没有图标：${JSON.stringify(v.icons)}`
   if (v.material !== 'translucent') return `卡片 data-menu-material=${JSON.stringify(v.material)}，应为 translucent`
   if (v.zIndex !== '2147483000') return `卡片 z-index=${JSON.stringify(v.zIndex)}，本插件的浮层要压过应用自己的`
@@ -778,8 +787,8 @@ check('session menu mirrors the row\'s own menu', sessionPair, (v) => {
   if (v.menus !== 1) return `页面上有 ${v.menus} 张本插件的卡片`
   if (v.owner !== v.mine) return `菜单归属对不上：owner=${JSON.stringify(v.owner)}`
   if (v.myItems === null) return '本插件的菜单没渲染出来'
-  if (v.upstreamItems.length !== 4) {
-    return `上游「...」菜单有 ${v.upstreamItems.length} 项（这条按 4 项逐项相等）：`
+  if (v.upstreamItems.length !== 5) {
+    return `上游「...」菜单有 ${v.upstreamItems.length} 项（这条按 5 项逐项相等）：`
       + JSON.stringify(v.upstreamItems.map((i) => i.label))
   }
   if (JSON.stringify(v.myItems) !== JSON.stringify(v.upstreamItems)) {
@@ -1148,7 +1157,7 @@ check('archive entry follows the row state and dispatches the host call', await 
     return `归档项的 aria-keyshortcuts 是 ${JSON.stringify(v.shortcut ?? null)}，`
       + `catalog 里 session.archive 那一行是 ${JSON.stringify(v.want)}`
   }
-  if (v.items.length !== 4) return `菜单应当 4 项，实际 ${JSON.stringify(v.items)}`
+  if (v.items.length !== 5) return `菜单应当 5 项，实际 ${JSON.stringify(v.items)}`
   if (v.items.some((l) => l.includes(v.unarchive))) {
     return `未归档的行上出现了「取消归档」${JSON.stringify(v.unarchive)}：${JSON.stringify(v.items)}`
   }
@@ -1199,7 +1208,7 @@ check('shortcut hints come from the injected catalog', await evaluate(`(async ()
     } }
 })()`), (v) => {
   if (v.bail != null) return `没测到：${v.bail}`
-  if (v.items.length !== 4) return `菜单应当 4 项，实际 ${JSON.stringify(v.items.map((i) => i.label))}`
+  if (v.items.length !== 5) return `菜单应当 5 项，实际 ${JSON.stringify(v.items.map((i) => i.label))}`
   for (const key of ['rename', 'fork', 'archive']) {
     const item = v.items.find((i) => i.label.startsWith(v.expected[key])) ?? null
     if (item === null) return `菜单里没有 ${JSON.stringify(v.expected[key])} 这一项`

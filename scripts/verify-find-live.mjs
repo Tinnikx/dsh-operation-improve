@@ -33,6 +33,7 @@
  * `Input.dispatchKeyEvent` 不经 `before-input-event`）、`cmd` + `F`、观感。
  */
 import { abort, createEvaluator, reloadAndWait, createChecker, resolveTarget } from './lib/cdp.mjs'
+import { dismissOnboarding } from './lib/onboarding.mjs'
 import { PROBE_INSTALL, MUTATION_INSTALL, ORACLE_SOURCE, FIND_PAGE_HELPERS } from './lib/find-page.mjs'
 
 const { port: PORT, prefix: PREFIX } = resolveTarget(process.argv.slice(2))
@@ -89,6 +90,7 @@ const snapshot = () => evaluate(`window.__dshOperationImprove__?.find?.snapshot(
 
 if (process.env.DSH_OI_NO_RELOAD !== '1') {
   await reloadAndWait(conn, { mountMs: 6000 })
+  await dismissOnboarding(evaluate)
 }
 await conn.send('Page.enable')
 

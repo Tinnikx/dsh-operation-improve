@@ -264,11 +264,21 @@ async function openPanel() {
     if (later !== undefined) later.click()
   })()`)
   await sleep(800)
-  await evaluate(`(() => {
-    const b = [...document.querySelectorAll('button,[role="button"],a')]
-      .find((e) => (e.getAttribute('aria-label') || e.textContent || '').trim() === '设置')
-    if (b === undefined) throw new Error('找不到「设置」入口')
-    b.click()
+  // 0.2.1-rc.1 起设置入口在侧栏页脚的「账号菜单」里：先点账号菜单，再点菜单项「设置」
+  // （见 ui-settings-account/src/client/AccountMenu.tsx 的 `settings` 项）。两档文案都认。
+  await evaluate(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    const trigger = [...document.querySelectorAll('button[aria-haspopup="menu"]')]
+      .find((b) => ['账号菜单', 'Account menu'].includes((b.getAttribute('aria-label') || '').trim()))
+    if (trigger === undefined) throw new Error('找不到「账号菜单」入口')
+    trigger.click()
+    for (let n = 0; n < 20; n += 1) {
+      await sleep(60)
+      const item = [...document.querySelectorAll('[role="menuitem"]')]
+        .find((e) => ['设置', 'Settings'].includes((e.textContent || '').trim()))
+      if (item !== undefined) { item.click(); return }
+    }
+    throw new Error('账号菜单里没有「设置」项')
   })()`)
   await sleep(2000)
   await evaluate(`(() => {
@@ -767,8 +777,8 @@ check('11b 清除后这个键从 loader 里摘掉，文件回到基线', {
 
 // —— 12：harness 0.1.7-rc.2 新收的两张卡 ——
 // 卡「DeepSeek 模型接入（账号登录）」(`llm-deepseek-account`) 是上游把接入拆成两条 entry
-// 之后的账号那一路：它与 API key 那一路（`llm-deepseek`）的 13 枚数值键同一个 Config 对象、
-// 逐字同约束。这张卡要验的不是「能不能写」，而是**写下去落在哪一条**——两卡各写各的 entry，
+// 之后的账号那一路：它与 API key 那一路（`llm-deepseek`）共有的 13 枚数值键约束逐字相同，
+// 另外还带账号侧独有的模型列表超时与缓存两项。这张卡要验的不是「能不能写」，而是**写下去落在哪一条**——两卡各写各的 entry，
 // 孪生卡要是误写到 api-key 那条，面板上两行会一起动，而用户的账号请求读不到任何东西。
 const TEST_ACCOUNT_MAX_TOKENS = 128000
 await type('llm-deepseek-account.maxTokens', String(TEST_ACCOUNT_MAX_TOKENS))
@@ -793,6 +803,34 @@ check('12b 清除账号卡的这个键：loader 里摘掉，文件回到基线',
   pokes: liveAccountCleared.pokes,
   bytesIdentical: readPatch() === baseline,
 }, (v) => (v.maxTokens === null && v.bytesIdentical
+  ? true
+  : '清除没把键摘掉，或没回到基线'))
+
+// 账号侧独有的模型列表两项之一，用来证明新收的字段不是「只在清单里」：写下去要落在
+// `llm-deepseek-account` 那条 entry，api-key 那一路的 `Config` 根本没有这个键。
+const TEST_ACCOUNT_MODELS_TIMEOUT = 7000
+await type('llm-deepseek-account.modelsTimeoutMs', String(TEST_ACCOUNT_MODELS_TIMEOUT))
+await commit('llm-deepseek-account.modelsTimeoutMs')
+const liveAccountListing = await waitLive('llm-deepseek-account', (c) => c?.modelsTimeoutMs === TEST_ACCOUNT_MODELS_TIMEOUT)
+const stateAfterListing = (await state()).state
+
+check('12e 写 llm-deepseek-account.modelsTimeoutMs：只落账号那条 entry，区段点名它', {
+  ms: liveAccountListing.ms,
+  account: stateAfterListing['llm-deepseek-account']?.live?.modelsTimeoutMs ?? null,
+  apiKey: stateAfterListing['llm-deepseek']?.live?.modelsTimeoutMs ?? null,
+  header: readPatch().split('\n').find((l) => l.startsWith('# managed: ')) ?? null,
+}, (v) => (v.account === TEST_ACCOUNT_MODELS_TIMEOUT && v.apiKey !== TEST_ACCOUNT_MODELS_TIMEOUT
+    && String(v.header).includes('llm-deepseek-account')
+  ? true
+  : `账号那路读到 ${v.account}，api-key 那路读到 ${v.apiKey}，区段头 ${JSON.stringify(v.header)}`))
+
+const liveListingCleared = await clearAndConfirm('llm-deepseek-account', 'modelsTimeoutMs')
+
+check('12f 清除模型列表超时：loader 里摘掉，文件回到基线', {
+  modelsTimeoutMs: liveListingCleared.live?.modelsTimeoutMs ?? null,
+  pokes: liveListingCleared.pokes,
+  bytesIdentical: readPatch() === baseline,
+}, (v) => (v.modelsTimeoutMs === null && v.bytesIdentical
   ? true
   : '清除没把键摘掉，或没回到基线'))
 
