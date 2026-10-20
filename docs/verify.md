@@ -60,7 +60,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 
 ## 端到端
 
-端到端验证走 CDP 注入——对着**运行中的真实页面**驱动页面自己那份插件实例，菜单断言读的是真实 DOM 上的上游组件产物。走裸 CDP（无 puppeteer 依赖），连接器与断言框架来自 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)，与另外六个验证脚本共用——判据语义（skip 也算失败、非零退出）只有一份实现。**默认打测试栈（3181 / CDP 9334）**，见 `lib/cdp.mjs` 的 `resolveTarget`，不打日常在用的那个 harness。
+端到端验证走 CDP 注入——对着**运行中的真实页面**驱动页面自己那份插件实例，菜单断言读的是真实 DOM 上的上游组件产物。走裸 CDP（无 puppeteer 依赖），连接器与断言框架来自 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)，每个 `verify:*` 脚本都接它——判据语义（skip 也算失败、非零退出）只有一份实现。**默认打测试栈（3181 / CDP 9334）**，见 `lib/cdp.mjs` 的 `resolveTarget`，不打日常在用的那个 harness。
 
 **每个脚本 reload 之后都先收掉产品引导框**（[scripts/lib/onboarding.mjs](../scripts/lib/onboarding.mjs) 的 `dismissOnboarding()`）：副本没有凭据，应用加载会弹「预览版说明」再弹「配置 API 密钥」两步 `OnboardingModal`。它们是模态层，按设计独占 `Escape`（上游 `Menu.tsx` 的 `isBehindModal` 让菜单在模态之上时不处理 Esc），并把焦点钉在自己的输入框上——不收掉的话菜单的 Esc、键盘焦点这些断言测到的都是模态层的行为。已经收掉时该调用是空操作，所以在每个 reload 之后无条件调用。唯一例外是 [verify-settings-live.mjs](../scripts/verify-settings-live.mjs)：它按字节比对 `cordis.patch.yml`，而点「继续」会把已读标记写回 host 配置，因此那里只单独收凭据步、不碰预览步。
 
@@ -316,3 +316,32 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:find
 - **取词一律从不可见正文的中后段取**：折叠时组标题会显示一段摘要预览，取开头的词会同时命中摘要，`visible===0` 的前提就没了。
 - **token 定义在 `document.body` 上，不在 `:root`**：`getComputedStyle(document.documentElement)` 读回来全是空串，这条断言因此读 `document.body`。写错的 token 不报错，只会静默落到 `var()` 的兜底值上。
 - 不覆盖：shell 层 accelerator 抢键（CDP 的按键派发不经 `before-input-event`）、macOS 的 `cmd` + `F`、真桌面客户端的观感与流式时的抢滚动。
+
+## 功能 12 的验证
+
+```
+PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:provider-band
+```
+
+29 条断言，全部打[测试栈](#测试栈)。**不注入 bundle**，验的是页面自带样式表（构建 → profile → 页面 端到端）。判据全部建立在「真开一次模型下拉、截真实屏幕像素」上——`computed style` 在这里不足以下结论，理由与功能 10 的多选底色同源：菜单底是**半透明**的（深色 `rgba(67,69,74,.45)` 叠在毛玻璃上），填充的真实效果只有在合成之后才是它。
+
+**但「带 vs 底」这个比值同样不能用**（第一版就是栽在这里）。同一张卡片沿纵列**底自己就漂 18 级**（实测深色 `rgb(38,39,42)` → `rgb(56,58,62)`，背后内容逐段不同），而填充贡献只有 4~5 级（浅色 0~1 级）——分子分母不同量级，比值只反映取样点撞在哪。改成的问法是**同位 A/B**：同一位置截两次、中间只把这一层填充关掉，差值就是它的真实贡献（基准与被测点同 y，漂移项对消）。实测深色 `-4,-5,-4`、浅色 `0,-1,0`。前提是同一现场连拍逐像素稳定，故先跑一条 `screenshots are reproducible`（实测 0/93744 个采样点变化）——不先证这一点，量到的差可能只是渲染抖动。
+
+**两档为什么不是同一个门槛**：浅色档的填充**在屏幕上几乎不可见**（同位 A/B 实测差 0~1 级），这是物理上限——浅色菜单底读 `rgb(242,243,243)`，任何不透明填充往亮走封顶 1.11（纯白也才 1.11）；要过 1.15 只能往暗走，而那会把 11px 标题文字对底从 3.34 压到 2.7 以下，跌穿可读门槛。所以填充那两条只要求「深色档真实改变了像素」，浅色档不设像素门槛。**两档真正的承重信号都是那条 1px 横线**（浅 4.15 / 深 5.42）——这与功能 10「细线承重、填充做氛围」是同一结论。这个取舍经用户确认：浅色档接受靠横线，不走「往暗调填充」那条路。
+
+读数（脚本自己打在 summary 里，也落在 `tmp/provider-band-readings.json`）：
+
+| 量 | 判据 | 深色 | 浅色 |
+| --- | --- | --- | --- |
+| 填充的屏幕贡献（同位 A/B） | 深档任一通道 ≥2 级 | −4/−5/−4 | 0/−1/0 |
+| 横线 vs 带 | ≥ 3:1（WCAG 非文本） | 5.42× | 4.15× |
+| 标题文字 vs 带 | 不劣于现状（深 5.66 / 浅 3.34） | 7.06× | 3.58× |
+| 带平色性 | 主导桶 ≥ 90% 采样点 | 96.3% | 96.6% |
+
+- **钉住态必须单独测，且这是本轮真踩到的坑**：上游 `[data-stuck]` 那条用的是 `background` **简写**，会连 `background-image` 一起重置，而常态那条特异性更高——不补一条更专的规则，滚到顶时**上游原本的吸顶提示会被常态规则整条盖掉，横线也一起没**。判据是两条：`stuck fill differs from the resting band`（钉住态底色与常态不同值）与 `bottom rule survives the stuck fill`（钉住态横线对比度仍 ≥3）。回归证法：把 `PROVIDER_HEADING_CSS` 里钉住态那条删掉，第二条会红（实测降到 1.00）。
+- **带与模型行对齐的基准是行，不是卡片边**：色块刻意与模型行同宽。想铺满卡片得吃 `margin-inline: -4px`，但卡片右侧为滚动条另留了 5px 槽——实测加了之后左侧贴齐、右侧仍差 5px，左右不对称。判据是「与模型行的左右边缘各差 ≤0.6px」。**这条是回归锚点**：把负边距加回去就会红。
+- **横线的同源比对要认两种颜色写法**：Chromium 把 `color-mix()` 算成 `color(srgb r g b / a)` 而不是 `rgb()`。第一版解析器只认 `rgb()`，于是抓到 gradient 最前面那档**全透明**的 stop（`rgba(0,0,0,0)`），判据恒红——报的是「横线是全透明的」，而屏幕上横线明明在。两种形式都认、并取**位置最靠后**且 alpha>0 的那一档之后才成立。
+- **两档必须都测，且要求读数确实不同**（`dark and light readings differ`）：只测启动那一档时，另一档的失效完全看不见。浅档靠摘 `data-ds-dark-theme` 造，跨 `Page.captureScreenshot` 往返会被应用写回，故挂 `MutationObserver` 把每次写回立刻翻回来（同功能 5/10 的守卫机制）。
+- **判据会红是证明过的**：把填充与横线两档都改成 `transparent`，在改用同位 A/B 之后的那版脚本上跑 → **7 条 FAIL**（含填充贡献那条与横线两条）。更早一版（还用「带 vs 底」比值时）只把横线改透明就已经红 6 条。
+- **选择器边界也是判据**：合成两组同结构的分组（一组 `role="menuitemradio"`、一组 `role="option"`），要求前者拿到填充+横线、后者底色仍为 `rgba(0,0,0,0)` 且无 gradient。这条守的是 `:has(> [role="menuitemradio"])` 那个限定——去掉它，斜杠命令面板会跟着变色。
+- 不覆盖：观感（色带是否太重、横线是否抢注意力，只能人工看截图）；斜杠命令面板那一处 `MenuGroup`（选择器带 `:has(> [role="menuitemradio"])` 刻意不改它）；真实桌面客户端的合成层差异。

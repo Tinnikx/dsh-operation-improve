@@ -1,6 +1,6 @@
 # @Tinnikx/dsh-operation-improve
 
-DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加十项行为——功能 1、2、10 在侧边栏，功能 4、7、9 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页，功能 11 是整页的查找条：
+DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加十一项行为——功能 1、2、10 在侧边栏，功能 4、7、9、12 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页，功能 11 是整页的查找条：
 
 | | 一句话 | 设计与实测 |
 | --- | --- | --- |
@@ -14,13 +14,15 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | **功能 9** | 对话历史导航。输入框为空时按上下键翻阅本会话的历史提问——读右侧轮次导航列（不足 2 轮时上游没有导航列，退到消息流 user 行兜底），装上插件之前的提问也在，不做本地记录。 | [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md) |
 | **功能 10** | 侧边栏会话行的状态可视化。当前打开的会话加青色竖条与填充底（上游的选中与 hover 同色）；有任务在跑的行加一圈沿轮廓扫动的彗尾边框与静默底边。纯样式，不加监听。 | [docs/feature-10-row-states.md](docs/feature-10-row-states.md) |
 | **功能 11** | `Ctrl`/`cmd` + `F` 页内查找。弹出浏览器那样的查找条，在**当前页面已渲染的文本**里搜关键词：全部命中按词高亮，`Enter` / `Shift+Enter` 跳下一个 / 上一个（到端点环绕），`Esc` 关闭。高亮走 CSS Custom Highlight API，一条 DOM 都不改。 | [docs/feature-11-find.md](docs/feature-11-find.md) |
+| **功能 12** | 模型下拉里的厂商分组标题区分带。点 composer 上方的「请选择模型」进入模型面板后，`github-copilot` / `trae` 这类厂商名加一条淡色带与底部 1px 横线（上游只在小灰字上区分，底色与模型行同值）。**承重的是横线**（浅 4.15 / 深 5.42），填充只做氛围——浅色档填充实测在屏幕上几乎不可见。纯样式，不加监听。 | [docs/feature-12-provider-heading-band.md](docs/feature-12-provider-heading-band.md) |
 
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)，功能 11 的在 [src/find/matches.js](src/find/matches.js)（判据与实测读数在 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 当前兼容版本
-- 0.2.1-rc.1（当前锚定版本；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 83 字段。八套 live 全绿共 182 条，含 `verify:row-states` 35/35。多选高亮的可辨性判据读的是**屏幕像素**，测试栈副本在 `syncHome()` 里只留 base harness 与本插件（其余第三方/实验 bundle 一律从副本名册剥掉，真 home 不动），侧栏因此恒在标准主题上；带 `DSH_OI_KEEP_THEME_PLUGIN=1` 复跑那份现场时，侧栏是模糊纹理底、「底色」不是一个颜色，可辨性那 9 条由平色守卫整组 SKIP。口径的来龙去脉与逐条根因见 [docs/handoff/022-multiselect-contrast-baseline.md](docs/handoff/022-multiselect-contrast-baseline.md)。）
+- 0.2.1-rc.1（当前锚定版本；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 83 字段。九套 live 合计 211 条断言，其中功能 12 那套 29/29。多选高亮与厂商标题两处的可辨性判据读的都是**屏幕像素**，测试栈副本在 `syncHome()` 里只留 base harness 与本插件（其余第三方/实验 bundle 一律从副本名册剥掉，真 home 不动），侧栏因此恒在标准主题上；带 `DSH_OI_KEEP_THEME_PLUGIN=1` 复跑那份现场时，侧栏是模糊纹理底、「底色」不是一个颜色，多选可辨性那 9 条由平色守卫整组 SKIP。口径的来龙去脉与逐条根因见 [docs/handoff/022-multiselect-contrast-baseline.md](docs/handoff/022-multiselect-contrast-baseline.md)。）
+- **`verify`（功能 1、2 那套）存在既有不稳定**：同一份产物连跑会间歇性红 1~3 条，失败的是「置顶会话」项缺失、批量删除、批量右键三处，报的是「没测到」而非逻辑错。已用 A/B 确认与功能 12 无关——把产物换回改动前的 `lib/client.js` 连跑 6 次同样红 6 次，失败条目逐字相同。现场取证：失败那次 `selected:1`（`ctrl` 点击没被记进选集，于是批量分支没触发），而槽位账本从 reload 后 500ms 起就稳定是 5 条（连测 4 轮 × 5 个时间点）——**不是**菜单条目没到位。根因未查，见 [docs/handoff/025-provider-heading-band.md](docs/handoff/025-provider-heading-band.md)。
 
-本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。**每换一次锚定版本，除八套 live 行为验证外必跑 `npm run check:catalog`**——功能 8 的清单是手抄的，这条把它声明的字段 `type`/`default`/边界逐键对上游 `--dump-config-schema`，新版本改了任一键就会红，逼你对上游重抄（判据见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检)）。0.1.7-alpha.2 轮起，
+本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。**每换一次锚定版本，除各套 live 行为验证外必跑 `npm run check:catalog`**——功能 8 的清单是手抄的，这条把它声明的字段 `type`/`default`/边界逐键对上游 `--dump-config-schema`，新版本改了任一键就会红，逼你对上游重抄（判据见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检)）。0.1.7-alpha.2 轮起，
 菜单卡片（功能 2、6）直接用上游 `@deepseek-ai/dsh-client-ui-primitives` 的 `Menu` 组件、图标用上游组件本体，所以样式档与图标跟随新版视觉，回旧 harness 上不再逐项对齐（功能 5 的活跃标记覆盖同理）。
 历史验证记录：0.2.1-alpha.1、0.2.0-rc.2、0.1.7-rc.1、0.1.7-alpha.2、0.1.6-alpha.2、0.1.2-rc.1、0.1.1-rc.2（各轮细节见 `harness-v*-adaptation-report.md`）。
 
@@ -56,6 +58,7 @@ src/
     clipboard.js               功能 6 的两个动作：写剪贴板、派发 paste 事件
   think-scroll/index.js        功能 7（思考区限高 + 滑块，只导出一段 CSS）
   row-states/index.js          功能 10（会话行选中态 + 运行中扫光边框，只导出一段 CSS）
+  provider-heading/index.js    功能 12（模型下拉的厂商分组标题区分带，只导出一段 CSS）
   chat-history/
     history-store.js            功能 9 的纯函数层（干净判定、轮次条目解析）
     nav-rail.js                 功能 9 的导航列读取层（fiber 条目 + 气泡全文）
@@ -92,6 +95,7 @@ scripts/
   verify-settings-live.mjs     同上，功能 8；驱动真面板、读真 patch 文件字节、真卸载一次
   verify-row-states-live.mjs   同上，功能 10；现搭探针行与上游规则做真实的特异性竞争
   verify-find-live.mjs         同上，功能 11；真实按键与右键手势，命中数由独立 oracle 判
+  verify-provider-band-live.mjs 同上，功能 12；真开一次模型下拉，截屏幕像素判区分带（浅/深两档）
   check-catalog-schema.mjs     功能 8 清单 ↔ 上游 config schema 逐键比对（升级必跑，见 docs/feature-8）
   lib/cdp.mjs                  八个验证脚本共用的 CDP 连接与断言框架
   lib/harness-bin.mjs          权威 harness CLI 入口的解析（test-stack 与 check:catalog 共用）
@@ -108,7 +112,7 @@ docs/                          各功能的设计判据、实测读数与已知�
 lib/                           构建产物，client bundle 是 __ModuleLoader__ 注册体
 ```
 
-插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余九项一个 slot 都不占——功能 5、7、10 连监听都没有，另外六项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
+插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余十项一个 slot 都不占——功能 5、7、10、12 连监听都没有，另外六项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
 
 - 功能 1、2 在侧边栏挂**捕获阶段**监听（要抢在 React 合成事件之前拦下 `ctrl` 点击与右键），菜单直接挂 `document.body`（`z-index: 2147483000`），高亮走 `[data-dsh-oi-selected]` 属性——不复用行自己的 `_selected` 类，那是「当前会话」的语义。高亮本身是**主题强调色实色描边 + 24% 淡填充**：描边是承重信号（对侧边栏底 6.5~7.5×），填充只做氛围（对普通行 1.3~1.4×），强调色取自主题 token，换主题换色相而可辨性不变（见 [docs/handoff/019-multiselect-highlight-outline.md](docs/handoff/019-multiselect-highlight-outline.md)）。
 - 功能 4 只读会话页的 DOM 与 React fiber，标签作为节点行自己的子节点插入，由观察 `document.body` 的 `MutationObserver` 驱动。
@@ -182,9 +186,12 @@ dsh plugin --profile web add <本目录>                                # 从本
 | `npm run verify:chat-history` | 功能 9（键盘导航、历史存储、dispose 回收） |
 | `npm run verify:row-states` | 功能 10（选中态强化与运行中扫光边框） |
 | `npm run verify:find` | 功能 11（页内查找：命中数、跳转、不动 DOM、`Esc` 让位、折叠与切会话重算） |
+| `npm run verify:provider-band` | 功能 12（厂商分组标题的区分带：同位 A/B 量填充贡献、横线对比度、钉住态、选择器边界、浅/深两档） |
 | `npm run check:catalog` | 功能 8 清单的**信息格式**逐键对上游 config schema（`type`/`default`/边界），漂移非零退出——**每次升级 harness 必跑**，见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检) |
 
-八个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
+九个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
+
+**在 agent 沙箱里跑 `verify`（功能 1、2 那套）要额外给 `TMPDIR`**：它建的靶子工作区目录落在系统临时目录（[scripts/lib/fixtures.mjs](scripts/lib/fixtures.mjs)），而沙箱里每条 bash 调用是一张独立 `/tmp` —— 脚本 `mkdirSync` 出来的目录与 harness 进程 `realpath` 看到的那张对不上，靶子建不起来会直接 `abort`。用仓库内路径绕开：`TMPDIR="$PWD/tmp/fixtures" npm run verify`。
 
 `check:catalog` 不要求栈起着，但要用**产品自带的 node**（同前缀）跑一次 `--dump-config-schema`，比对对象是测试栈 home 那份（缺时回落真 home，只读）；它打的是权威 harness 的 schema，不是页面，所以与 `verify:*` 的 CDP 路径无关。
 
@@ -206,3 +213,4 @@ dsh plugin --profile web add <本目录>                                # 从本
 - [功能 9](docs/feature-9-chat-history.md#已知限制)：长提问未挂载时退化为 50 字预览、合成按键依赖 Lexical 不看 isTrusted、选区同步 50ms 延迟、导航列或输入框缺失的会话页静默（4 条）
 - [功能 10](docs/feature-10-row-states.md#已知限制)：边框只跟 `statuses[0]` 的 ongoing、彗尾是重绘不是合成层、`aria-selected` / `data-state` 的结构假设、浅色两个透明度只验到 computed（4 条）
 - [功能 11](docs/feature-11-find.md#已知限制)：只搜已渲染文本、表单控件的值不进命中、序号不承诺连续、上限 1000、与上游「搜索轨迹」两套语义、折叠内容要先展开、依赖 Custom Highlight API、真桌面客户端未覆盖（8 条）
+- [功能 12](docs/feature-12-provider-heading-band.md#已知限制)：依赖卡片内边距与模型行几何、浅色档区分主要靠横线、只覆盖模型下拉、`data-stuck` 属上游吸顶机制（4 条）

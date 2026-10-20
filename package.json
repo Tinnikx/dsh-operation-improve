@@ -25,7 +25,8 @@
     "verify:settings": "node scripts/verify-settings-live.mjs",
     "verify:chat-history": "node scripts/verify-chat-history-live.mjs",
     "verify:row-states": "node scripts/verify-row-states-live.mjs",
-    "verify:find": "node scripts/verify-find-live.mjs"
+    "verify:find": "node scripts/verify-find-live.mjs",
+    "verify:provider-band": "node scripts/verify-provider-band-live.mjs"
   },
   "license": "MIT",
   "dsh": {
