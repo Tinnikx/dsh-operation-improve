@@ -4,7 +4,7 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
-| 025 | 模型下拉的厂商分组标题加区分带（整体色块 + 底部 1px 横线，浅深两档实测） | 正在做 | [025-provider-heading-band.md](docs/handoff/025-provider-heading-band.md) |
+| 025 | 模型下拉的厂商分组标题加区分带（整体色块 + 底部 1px 横线，浅深两档实测） | 完成 | [025-provider-heading-band.md](docs/handoff/025-provider-heading-band.md) |
 | 024 | harness 0.2.1-rc.1 适配（分叉项断链修复 + 设置入口改道 + 引导框收尾） | 完成 | [024-harness-0.2.1-rc.1-adaptation.md](docs/handoff/024-harness-0.2.1-rc.1-adaptation.md) |
 | 023 | 多选高亮在纹理主题上的可辨性：底不是一个颜色（描边对亮纹掉到 1.x），双环 / JS 采样二选一待定形状 | 未开始 | [023-multiselect-ring-on-any-background.md](docs/handoff/023-multiselect-ring-on-any-background.md) |
 | 022 | 功能 10 多选对比度判据的现场口径：判据改读屏幕像素 + 平色守卫 + 副本剥掉第三方主题（插件在场的现场 9 条 SKIP，不再假红绿灯） | 完成 | [022-multiselect-contrast-baseline.md](docs/handoff/022-multiselect-contrast-baseline.md) |
