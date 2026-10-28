@@ -122,9 +122,9 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify
 - 每条断言前缀是 `[PASS]` / `[FAIL]` / `[SKIP]`，结尾固定打印 `passed=N failed=N skipped=N total=N`。
 - **`failed + skipped > 0` 一律非零退出**，全绿时最后一行是 `[OK] 全部断言实际执行且通过。`
 
-所以确认「真的测了」只需两步：`echo $?` 为 0，且末行 summary 是 `passed=N failed=0 skipped=0 total=N`（N 是断言条数，最近一轮八套的实测读数记在[交接 021 的完整记录](handoff/021-context-menu-upstream-components.md)）。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
+所以确认「真的测了」只需两步：`echo $?` 为 0，且末行 summary 是 `passed=N failed=0 skipped=0 total=N`（N 是断言条数，九套合计 211 条，逐套读数见各功能文档的「验证」一节）。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
 
-判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，七个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
+判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，九个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
 
 `evaluate()` 每次求值新开一条临时 CDP 连接、用完即关，长驻连接只留给要收事件的 `Page.reload`。**不能全程共用一条**：断言里会点击会话行，切会话销毁执行上下文后，那条连接上的每次 `Runtime.evaluate` 都被协议层永久拒为 `-32000 Inspected target navigated or closed`，整轮验证崩在半路，证据链就此断掉。
 

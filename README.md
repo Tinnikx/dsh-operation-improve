@@ -7,7 +7,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | **功能 1** | `ctrl`/`cmd` + 点击多选工作区行或会话行，限制同级（会话与工作区不能混选）。 | [docs/feature-1-2-sidebar-menu.md](docs/feature-1-2-sidebar-menu.md) |
 | **功能 2** | 侧边栏行的右键菜单。单选逐项对齐该行原有「...」菜单（项、顺序、文案、图标、样式、动作都一样），工作区行另加一项「新会话」（对齐的是行 hover 时那枚按钮，不在「...」里），多选只保留批量破坏性操作。 | 同上 |
 | **功能 4** | 会话页逐行开始时间戳。每条回复、工具调用、思考等节点行的右上角显示它的**开始**时刻（`HH:mm:ss`），user / steering / turn-tail 三类改成常驻显示上游自己的时间标签。 | [docs/feature-4-timestamps.md](docs/feature-4-timestamps.md) |
-| **功能 5** | 活跃标记（`StateDot state="ongoing"`）的配色覆盖。把上游那 8 格追逐动画的基线不透明度从 `.15` 抬到 `.6` 并换成青色，深浅主题各一个值。纯样式，不加监听。 | [docs/feature-5-active-dot.md](docs/feature-5-active-dot.md) |
+| **功能 5** | 活跃标记（`StateDot state="ongoing"`）的配色覆盖。把上游旋转弧线 spinner 的静默底环不透明度从 `.25` 抬到 `.6` 并换成青色，深浅主题各一个值。纯样式，不加监听。 | [docs/feature-5-active-dot.md](docs/feature-5-active-dot.md) |
 | **功能 6** | 选中文本的右键菜单。页面任意位置选中一段文本后在选区上右键，弹出与功能 2 同一套外观的菜单，给「复制」；落点可输入时再给「粘贴」（可输入的空控件——含 0.1.6 起的 Lexical composer——即使没有选中文本也弹，只给「粘贴」）。两项都没有时不吃掉事件，原生菜单照常。 | [docs/feature-6-selection-menu.md](docs/feature-6-selection-menu.md) |
 | **功能 7** | 思考区域的高度上限与滑块。展开后的思考正文超过 60vh 时截到 60vh 并出竖直滚动条，放得下的一点不变。纯样式，不加监听，配色字号行距内边距全部留给上游。 | [docs/feature-7-think-scroll.md](docs/feature-7-think-scroll.md) |
 | **功能 8** | 设置页「通用设置」里的「Harness 高级配置」一行。展开后是一个精选清单面板，把只有 cordis entry config、没有 settings 命名空间、且在当前部署上真有活消费者的那类配置（会话检索分页、Bash 工具预算、请求配额……）搬进界面，写回当前 profile 的 `cordis.patch.yml` 里一个托管区段；每张卡标注改完之后值什么时候被用上。改完离开输入框即自动保存，没有保存按钮。 | [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md) |
@@ -16,7 +16,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | **功能 11** | `Ctrl`/`cmd` + `F` 页内查找。弹出浏览器那样的查找条，在**当前页面已渲染的文本**里搜关键词：全部命中按词高亮，`Enter` / `Shift+Enter` 跳下一个 / 上一个（到端点环绕），`Esc` 关闭。高亮走 CSS Custom Highlight API，一条 DOM 都不改。 | [docs/feature-11-find.md](docs/feature-11-find.md) |
 | **功能 12** | 模型下拉里的厂商分组标题区分带。点 composer 上方的「请选择模型」进入模型面板后，`github-copilot` / `trae` 这类厂商名加一条淡色带与底部 1px 横线（上游只在小灰字上区分，底色与模型行同值）。**承重的是横线**（浅 4.15 / 深 5.42），填充只做氛围——浅色档填充实测在屏幕上几乎不可见。纯样式，不加监听。 | [docs/feature-12-provider-heading-band.md](docs/feature-12-provider-heading-band.md) |
 
-功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [docs/feature-9-chat-history.md](docs/feature-9-chat-history.md)，功能 11 的在 [src/find/matches.js](src/find/matches.js)（判据与实测读数在 [docs/feature-11-find.md](docs/feature-11-find.md)）。
+功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [src/chat-history/history-store.js](src/chat-history/history-store.js)，功能 11 的在 [src/find/matches.js](src/find/matches.js)（判据与实测读数在 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 当前兼容版本
 - 0.2.1-rc.1（当前锚定版本；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 83 字段。九套 live 合计 211 条断言，其中功能 12 那套 29/29。多选高亮与厂商标题两处的可辨性判据读的都是**屏幕像素**，测试栈副本在 `syncHome()` 里只留 base harness 与本插件（其余第三方/实验 bundle 一律从副本名册剥掉，真 home 不动），侧栏因此恒在标准主题上；带 `DSH_OI_KEEP_THEME_PLUGIN=1` 复跑那份现场时，侧栏是模糊纹理底、「底色」不是一个颜色，多选可辨性那 9 条由平色守卫整组 SKIP。口径的来龙去脉与逐条根因见 [docs/handoff/022-multiselect-contrast-baseline.md](docs/handoff/022-multiselect-contrast-baseline.md)。）
@@ -40,7 +40,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 ```
 src/
   index.js                     host 半边：挂功能 8 那条回环路由
-  client/index.js              client 入口：插样式表、装六个功能、注册 ctx.effect 回收
+  client/index.js              client 入口：插样式表、装七个功能、注册 ctx.effect 回收
   shared/
     selection-store.js         选择状态 store（同级约束）
     menu.jsx                   共享菜单层：插件自己的 React root + 上游 `Menu` 外壳（功能 2 与功能 6 共用）
@@ -197,7 +197,7 @@ dsh plugin --profile web add <本目录>                                # 从本
 
 **验证脚本一律打测试栈，不打日常在用的那个 harness**：端到端断言里有「批量删除工作区」，它会真的发出 click。
 
-**判据是退出码，不是屏幕上有没有红字。** 脚本把「没测到」与「测失败」同等对待：`failed + skipped > 0` 一律非零退出，环境不满足时直接 `abort()` 并点名「实测未发生」。确认真的测了只需两步：`echo $?` 为 0，且末行 summary 形如 `passed=27 failed=0 skipped=0 total=27`。
+**判据是退出码，不是屏幕上有没有红字。** 脚本把「没测到」与「测失败」同等对待：`failed + skipped > 0` 一律非零退出，环境不满足时直接 `abort()` 并点名「实测未发生」。确认真的测了只需两步：`echo $?` 为 0，且末行 summary 形如 `passed=29 failed=0 skipped=0 total=29`。
 
 ## 已知限制
 
@@ -209,8 +209,8 @@ dsh plugin --profile web add <本目录>                                # 从本
 - [功能 5](docs/feature-5-active-dot.md#已知限制)：结构假设、壁纸主题下管不到、色值写死（3 条）
 - [功能 6](docs/feature-6-selection-menu.md#已知限制)：剪贴板权限被拒即静默失效、contenteditable 分支未验证、paste 图标自绘、落点判定的引擎回落（4 条）
 - [功能 7](docs/feature-7-think-scroll.md#已知限制)：类名片段、流式思考不自动跟到底（未实测）、上限只看视口（3 条）
-- [功能 8](docs/feature-8-harness-config.md#已知限制)：清单手抄、`default` 只作提示、区段必须在文件末尾、字段文案只有中文、要 `webServer`、不订阅文件变化、面板样式自写（7 条）
-- [功能 9](docs/feature-9-chat-history.md#已知限制)：长提问未挂载时退化为 50 字预览、合成按键依赖 Lexical 不看 isTrusted、选区同步 50ms 延迟、导航列或输入框缺失的会话页静默（4 条）
+- [功能 8](docs/feature-8-harness-config.md#已知限制)：清单手抄、`default` 只作提示、区段必须在文件末尾、字段文案只有中文、要 `webServer`、不订阅文件变化、面板样式自写、会话检索热重挂缺陷（8 条）
+- [功能 9](docs/feature-9-chat-history.md#已知限制)：长提问未挂载时退化为 50 字预览、合成按键依赖 Lexical 不看 isTrusted、选区同步 50ms 延迟、两个来源都读不到条目时静默、当前会话靠 DOM 派生（5 条）
 - [功能 10](docs/feature-10-row-states.md#已知限制)：边框只跟 `statuses[0]` 的 ongoing、彗尾是重绘不是合成层、`aria-selected` / `data-state` 的结构假设、浅色两个透明度只验到 computed（4 条）
 - [功能 11](docs/feature-11-find.md#已知限制)：只搜已渲染文本、表单控件的值不进命中、序号不承诺连续、上限 1000、与上游「搜索轨迹」两套语义、折叠内容要先展开、依赖 Custom Highlight API、真桌面客户端未覆盖（8 条）
-- [功能 12](docs/feature-12-provider-heading-band.md#已知限制)：依赖卡片内边距与模型行几何、浅色档区分主要靠横线、只覆盖模型下拉、`data-stuck` 属上游吸顶机制（4 条）
+- [功能 12](docs/feature-12-provider-heading-band.md#已知限制)：依赖卡片内边距与模型行几何、浅色档区分主要靠横线、只覆盖模型下拉、`data-stuck` 属上游吸顶机制、判据依赖同位 A/B（5 条）

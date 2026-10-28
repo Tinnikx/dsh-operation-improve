@@ -129,7 +129,7 @@ host 半边 `inject = ['webServer', 'loader']`：非 web surface 下插件挂起
 
 ## 已知限制
 
-- [精选清单](../src/harness-config/catalog-entries.js)是手抄的。每个字段的 `type` / `default` / `min` / `max` 与上游 rc.1 的 schema 是否一致，由 [npm run check:catalog](../scripts/check-catalog-schema.mjs) 逐键比对（见[与上游 schema 对齐](#与上游-schema-对齐升级必检)）；改锚定版本那一轮必跑，漂移即非零退出。**它不覆盖**跨字段约束（`crossRules`）与「这条 entry 在 web 产品里还活着吗」——上游的 `if (a > b) throw` 与 `disabled: true` 名单不在 schema dump 的 `properties` 里，仍要手抄。这三个落点是重读上游**发行包**（不是 dev 仓）的唯一凭据：键名与值域看各包 `lib/*.js` 里的 `Config = z.object({…})`（沙箱那两张卡的 schema 在 `dsh-bash-local` / `dsh-pwsh-local` 的 `static Config` 上，`dsh-*-sandbox` 只是继承它的执行器），`default` 看 `@deepseek-ai/dsh-base/cordis.patch.yml` 里该 entry 的 bundle 层值，活没活看 `dsh-web-app/cordis.patch.yml` 的 `disabled: true` 名单。`verify:settings` 看不出这类漂移——它比的是面板显示的值与 host 现算的值，两边同源；[tests/catalog.test.mjs](../tests/catalog.test.mjs) 兜的是「抄下来之后自洽」（规则引用的键在本卡、全默认值不冲突、每个默认值过自己的边界），也不是「抄得对」。真正比对上游的是 check:catalog。
+- [精选清单](../src/harness-config/catalog-entries.js)是手抄的。每个字段的 `type` / `default` / `min` / `max` 与上游 schema 是否一致，由 [npm run check:catalog](../scripts/check-catalog-schema.mjs) 逐键比对（见[与上游 schema 对齐](#与上游-schema-对齐升级必检)）；改锚定版本那一轮必跑，漂移即非零退出。**它不覆盖**跨字段约束（`crossRules`）与「这条 entry 在 web 产品里还活着吗」——上游的 `if (a > b) throw` 与 `disabled: true` 名单不在 schema dump 的 `properties` 里，仍要手抄。这三个落点是重读上游**发行包**（不是 dev 仓）的唯一凭据：键名与值域看各包 `lib/*.js` 里的 `Config = z.object({…})`（沙箱那两张卡的 schema 在 `dsh-bash-local` / `dsh-pwsh-local` 的 `static Config` 上，`dsh-*-sandbox` 只是继承它的执行器），`default` 看 `@deepseek-ai/dsh-base/cordis.patch.yml` 里该 entry 的 bundle 层值，活没活看 `dsh-web-app/cordis.patch.yml` 的 `disabled: true` 名单。`verify:settings` 看不出这类漂移——它比的是面板显示的值与 host 现算的值，两边同源；[tests/catalog.test.mjs](../tests/catalog.test.mjs) 兜的是「抄下来之后自洽」（规则引用的键在本卡、全默认值不冲突、每个默认值过自己的边界），也不是「抄得对」。真正比对上游的是 check:catalog。
 - 清单里 `default` 是抄来的展示值。上游改了默认，面板上「默认 0.8」这行提示就是错的，但**行为不受影响**——不设置就是不写这个键，实际生效的永远是 harness 自己的默认。
 - 托管区段必须在 patch 文件末尾。闭标记之后又出现顶层列表项时，「区段外基线」还原不出来，面板转只读并打出一行说明（`profile.writable` 为 `false`）；把手写条目挪到开标记之前即可恢复。这是显式失败，不是静默。
 - 字段标签、说明与错误文案由 host 的清单直接发下来，**只有中文**，不走词典、不跟随语言切换。行标题与按钮那几个字走本插件词典，所以切到 en 时会出现「标题是英文、字段名是中文」的混排。
@@ -140,4 +140,4 @@ host 半边 `inject = ['webServer', 'loader']`：非 web surface 下插件挂起
 
 ## 验证
 
-跑法、30 条断言与八处坑见[验证 · 功能 8](./verify.md#功能-8-的验证)（`npm run verify:settings`）。**这个脚本会真的往 patch 文件里写字节**，只能打测试栈。
+跑法、32 条断言与八处坑见[验证 · 功能 8](./verify.md#功能-8-的验证)（`npm run verify:settings`）。**这个脚本会真的往 patch 文件里写字节**，只能打测试栈。

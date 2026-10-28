@@ -1,6 +1,6 @@
 # 基础层 API 与调试句柄
 
-`src/shared/` 下四个模块，功能 1、2、6 共用；调试句柄由 client 入口挂出，五个验证脚本都依赖它。
+`src/shared/` 下五个模块，功能 1、2、6 共用；调试句柄由 client 入口挂出，五个验证脚本都依赖它。
 
 ## `src/shared/selection-store.js`
 
