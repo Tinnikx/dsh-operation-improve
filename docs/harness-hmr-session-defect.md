@@ -21,6 +21,10 @@ profile 的 `cordis.patch.yml` 里 `session-query-sqlite` 条目发生任何配�
 
 对照：改**无关**条目（`file-reference-local`）无影响——致死的是这个条目本身。触发面不止本插件：用户手改该条目、`dsh plugin` 改 profile 走的是同一个 watcher。
 
+## 0.2.1-rc.3 复测
+
+`verify:settings` 全量在 rc.3 上跑完（32/32 绿）：写 `session-query-sqlite` 的 `maxLimit` / `readWindowMax` / `snippetChars` 后，宿主 loader 的配置当场更新（`1b` 读数 2050ms），随后 `13c` 读到侧栏仍有 51 行会话——本缺陷未复现。复测只走面板路由这一条路径，未覆盖手改 patch 文件；面板仍按 `restart` 标注。
+
 ## 对本仓库的影响与处置
 
 - 功能 8 的「会话检索」卡按 `'restart'` 口径标注并写明该缺陷（[catalog-model.js](../src/harness-config/catalog-model.js)）——止损，不是治病：手写文件同样触发。

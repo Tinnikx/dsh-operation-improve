@@ -4,6 +4,7 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 026 | harness 0.2.1-rc.3 适配（单测 46、九套 211 条、catalog 19/83 全绿；锚点已改 rc.3，待用户确认收口） | 正在做 | [026-harness-0.2.1-rc.3-adaptation.md](docs/handoff/026-harness-0.2.1-rc.3-adaptation.md) |
 | 025 | 模型下拉的厂商分组标题加区分带（整体色块 + 底部 1px 横线，浅深两档实测） | 完成 | [025-provider-heading-band.md](docs/handoff/025-provider-heading-band.md) |
 | 024 | harness 0.2.1-rc.1 适配（分叉项断链修复 + 设置入口改道 + 引导框收尾） | 完成 | [024-harness-0.2.1-rc.1-adaptation.md](docs/handoff/024-harness-0.2.1-rc.1-adaptation.md) |
 | 023 | 多选高亮在纹理主题上的可辨性：底不是一个颜色（描边对亮纹掉到 1.x），双环 / JS 采样二选一待定形状 | 未开始 | [023-multiselect-ring-on-any-background.md](docs/handoff/023-multiselect-ring-on-any-background.md) |

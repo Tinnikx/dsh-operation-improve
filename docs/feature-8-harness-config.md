@@ -136,7 +136,7 @@ host 半边 `inject = ['webServer', 'loader']`：非 web surface 下插件挂起
 - host 半边要 `webServer`。非 web surface（比如终端里跑的 harness）下整个插件挂起不动，面板也就不存在——那里本来也没有设置页。
 - 每次展开重新 `GET` 一次。展开着的面板不订阅文件变化，别人在编辑器里同时改同一个文件时面板显示的是打开那一刻的快照；保存前 host 会重读一次文件再算重述，所以不会抹掉人家刚写的键，但面板上的来源徽标可能已经过时。
 - 面板样式是自己写的一段 CSS（`src/client/settings/styles.js`），只借了 `--dsw-alias-*` 那套设计令牌，不是复用上游模型页的组件。上游改版式时它不会跟上，表现是这一行与邻居长得不太一样，不报错。
-- **「会话检索」卡的写入会触发 harness 0.1.6-alpha.2 的热重挂缺陷**：`session-query-sqlite` 配置一变，host-HMR 重挂该条目时连带摘除 `sessionController` 且可能静默挂起——侧栏会话列表从那一刻全空，撤销写入不恢复，只有重启 harness 进程可救。面板侧的处置是整卡标注「重启后生效」并在说明里要求保存后立刻重启；这是止损（手改 `cordis.patch.yml` 同一个键同样触发，缺陷本体在上游）。其余会话栈条目（`session-reference`、`session-title`、`session-title-llm`、`session-projection-cache`）未逐条实测，警示范围只钉在 `session-query-sqlite`。取证与最小复现见 [harness-hmr-session-defect.md](harness-hmr-session-defect.md)。
+- **「会话检索」卡的写入在 harness 0.1.6-alpha.2 上会触发热重挂缺陷**：`session-query-sqlite` 配置一变，host-HMR 重挂该条目时连带摘除 `sessionController` 且可能静默挂起——侧栏会话列表从那一刻全空，撤销写入不恢复，只有重启 harness 进程可救。**0.2.1-rc.3 上 `verify:settings` 写这些键后未复现**：`1b` 读到 loader 配置当场更新（2050ms），随后 `13c` 的侧栏仍有 51 行会话。面板侧仍整卡标注「重启后生效」并要求保存后立刻重启——手改 `cordis.patch.yml` 同一个键与插件路由走同一个 watcher，复测没有覆盖这条路径。其余会话栈条目（`session-reference`、`session-title`、`session-title-llm`、`session-projection-cache`）未逐条实测，警示范围只钉在 `session-query-sqlite`。取证与最小复现见 [harness-hmr-session-defect.md](harness-hmr-session-defect.md)。
 
 ## 验证
 
