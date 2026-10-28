@@ -19,7 +19,8 @@
  * - **生效判据读 host 路由回的 `live`，不读界面**。`live` 来自 `ctx.loader.entries()`，
  *   即 loader 真正跑着的那份 config；界面上的值是本次 `GET` 的快照，写完立刻回显不能
  *   证明热重载成功。`watchUserPatches` 有防抖，所以要轮询而不是睡一个定长。
- * - **「卸载不清空」在一份副本上真卸载**：把 `/tmp/dsh-oi-test-home` 复制一份，从
+ * - **「卸载不清空」在一份副本上真卸载**：把 `<repo>/tmp/dsh-oi-test-home` 复制到
+ *   `/tmp/dsh-oi-uninstall-home`，从
  *   profile 的 `bundles` 里摘掉本插件，再起一个真 harness（3182）确认它照样起得来，
  *   并用 harness 自己那套 `loadProfile` + `composeEntries` 算出该 home 的生效配置。
  *   不能在测试栈本身上卸载——那会把 CDP 那一侧的页面一起掀掉，后面的断言就没得跑了。

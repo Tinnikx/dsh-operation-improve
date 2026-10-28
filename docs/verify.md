@@ -7,7 +7,7 @@
 本仓库环境的默认 PATH 上没有 `node`。两条都可用，任选其一（下文命令统一写第一条）：
 
 ```
-PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH        # 产品自带，v24.19.0
+PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH        # 产品自带，v24.20.0
 PATH=$HOME/.nvm/versions/node/v24.14.0/bin:$PATH   # nvm，v24.14.0
 ```
 
@@ -244,7 +244,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:settings
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:chat-history
 ```
 
-十六条断言，全部打[测试栈](#测试栈)（`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，验的是页面自带实例：功能 9 不调用任何 harness 服务，没有需要打桩的破坏性动作。
+十六条断言，全部打[测试栈](#测试栈)（`DSH_HOME=<repo>/tmp/dsh-oi-test-home`、harness 3181、CDP 9334）。它**不注入 bundle**，验的是页面自带实例：功能 9 不调用任何 harness 服务，没有需要打桩的破坏性动作。
 
 历史断言的 oracle 是脚本自己对导航列与消息流的独立读取（fiber 里的轮次条目 + loaded 锚点行的气泡全文）——被测会话的提问全部先于插件存在，不从插件侧取任何期望值。导航的期望值取自被测会话的真实提问，不写死。oracle 与插件按同一契约收尾：**气泡读不到全文且 `prompt` 预览也为空的轮次不计**（那种轮次没有可插入的内容，插件本来就丢弃；上游导航列自己会显示成「第 N 轮」占位）——过滤规则是 oracle 独立实现的数据层判据，不是抄被测代码。不这样收口，一条空提问的轮次就会把「条数一致」与「逐条文本一致」两条一起打红，而那与功能对错无关（0.1.7 轮实测如此）。
 

@@ -121,7 +121,7 @@ lib/                           构建产物，client bundle 是 __ModuleLoader__
 - 功能 7 和功能 5 一样一行 JS 都不跑，两条声明追加进同一张样式表；摘掉样式表即还原。
 - 功能 10 同样一行 JS 都不跑：选中态读 `aria-selected`，运行中读行内 `svg[data-state='ongoing']`，竖条与彗尾走伪元素并给上游拖拽指示器让位（见 [docs/feature-10-row-states.md](docs/feature-10-row-states.md)）。
 - 功能 8 是唯一有 host 半边的功能：client 侧只往 `settings.general.item` 注册一个组件，读写都打 host 挂在 harness 自己那个回环 HTTP 上的一条路由（见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md)）。
-- 功能 9 的当前会话来自 `ctx.sessions` 的订阅（应用没有 URL 路由，地址栏恒为 `/`）；历史只读右侧轮次导航列的 fiber 条目，且只在开始导航时读一次（纯内存、不阻塞）；输入框是 Lexical contenteditable，写入走 `execCommand` + 合成按键的队列。不占 slot、不调 harness 服务、不写 localStorage。
+- 功能 9 的当前会话从侧栏选中的会话行派生：查 `[class*="_sessionRow"][aria-selected="true"]`（搜索结果行是 `_searchResultRow`），再沿 React fiber 反查 `rowId(row, 'session')`；`installChatHistory()` 不接收 ctx、不订阅 `ctx.sessions`。应用没有 URL 路由，地址栏恒为 `/`；历史只读右侧轮次导航列的 fiber 条目，且只在开始导航时读一次（纯内存、不阻塞）；输入框是 Lexical contenteditable，写入走 `execCommand` + 合成按键的队列。不占 slot、不调 harness 服务、不写 localStorage。
 - 功能 11 的 `keydown` 挂在 **`window` 捕获**（要抢在共享右键菜单的 `Esc` 之前，同相位下注册序决定调用序），命中域是 `document.body` 的文本节点，高亮走 `CSS.highlights` 两个注册名 + 两条 `::highlight()`——**一条 DOM 都不改**，`verify:find` 数的是 `childList` mutation 计数为 0（见 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 构建
@@ -177,7 +177,7 @@ dsh plugin --profile web add <本目录>                                # 从本
 | 命令 | 验什么 |
 | --- | --- |
 | `npm test` | 单元测试：选择状态、时钟格式化、托管区段写入器（字节级）、页内查找的纯函数层 |
-| `npm run stack:up` / `stack:status` / `stack:down` / `stack:restart` | 隔离测试栈：`DSH_HOME=/tmp/dsh-oi-test-home`、harness 3181、CDP 9334；`restart` 是跑完 `verify:settings` 之后的救活动作（见 [harness 热重挂缺陷](docs/harness-hmr-session-defect.md)） |
+| `npm run stack:up` / `stack:status` / `stack:down` / `stack:restart` | 隔离测试栈：`DSH_HOME=<repo>/tmp/dsh-oi-test-home`、harness 3181、CDP 9334；`restart` 是跑完 `verify:settings` 之后的救活动作（见 [harness 热重挂缺陷](docs/harness-hmr-session-defect.md)） |
 | `npm run verify` | 功能 1、2 端到端 |
 | `npm run verify:timestamps` | 功能 4 |
 | `npm run verify:dot` | 功能 5 |
