@@ -2,6 +2,7 @@
 
 - 目标：把插件锚定从 0.2.1-rc.3 换到 0.2.2-alpha.2，并在该版本上重跑单测、catalog 门禁与九套 live 验证；验收是命令退出码与末行 summary，不是「能跑起来」。发现漂移就改到与上游一致。
 - 范围：只做版本适配与验证。不改功能行为、不重构；验证暴露漂移时才动代码、判据与对应文档。
+- 状态：完成（2026-10-29 用户确认）；收口时 `package.json` 0.1.7 → 0.1.8。
 
 ## 进展
 
@@ -28,11 +29,10 @@
 - 九套 live（同一 bash 调用内 `stack up` + 串行）：`verify`、`verify:timestamps`、`verify:dot`、`verify:selection`、`verify:chat-history`、`verify:find`、`verify:row-states`、`verify:provider-band`、`verify:settings` → 211 条全绿
 - 定向压测：查找条连跳 24 次、会话含 4742px 高的可滚动正文容器 → 命中越界 0 次
 
-## 未完成项与下一步
+## 遗留问题
 
-1. 由用户确认本轮适配完成，再把索引行状态改「完成」。
-2. 上游发行包做过 12 个关键包的逐文件 diff（`PROFILE_TEMPLATES` 迁移、主题 token、`data-conversation-scroll`、`aria-selected` 均确认无碍），260 个包中其余部分没有逐文件对读；未被 live 覆盖的上游变化不能断言不存在。
-3. `verify:row-states` 的第三方主题现场（`DSH_OI_KEEP_THEME_PLUGIN=1`）本轮未跑。
+1. 上游发行包做过 12 个关键包的逐文件 diff（`PROFILE_TEMPLATES` 迁移、主题 token、`data-conversation-scroll`、`aria-selected` 均确认无碍），260 个包中其余部分没有逐文件对读；未被 live 覆盖的上游变化不能断言不存在。
+2. `verify:row-states` 的第三方主题现场（`DSH_OI_KEEP_THEME_PLUGIN=1`）本轮未跑。
 
 ## 坑
 
