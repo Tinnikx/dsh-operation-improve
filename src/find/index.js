@@ -52,6 +52,30 @@ const ROW_KEY_SELECTOR = '[data-chat-node-key], [data-chat-flow-key]'
 const COLLAPSED_SELECTOR = '[data-variant="think"]:not([data-expanded]), [aria-expanded="false"]'
 
 /**
+ * 把当前命中滚到视口中央。
+ *
+ * 不能只对命中文本的父元素调 `scrollIntoView({ block: 'center' })`：上游有时把整块正文
+ * 包进一个几千像素高的容器，居中那个容器后命中本身仍在视口外（实测命中 top 1217、
+ * 视口高 857）。这里按命中自己的矩形量位移，由内向外逐个滚动能纵向滚动的祖先。
+ *
+ * @param {Range} range 当前命中的文本范围。
+ * @param {Element|null} parent 命中文本的父元素，没有可滚动祖先时退回它。
+ */
+function revealMatch(range, parent) {
+  let scrolled = false
+  for (let node = parent; node !== null; node = node.parentElement) {
+    const style = getComputedStyle(node)
+    if (!/(auto|scroll)/.test(style.overflowY)) continue
+    if (node.scrollHeight <= node.clientHeight + 1) continue
+    const rect = range.getBoundingClientRect()
+    const box = node.getBoundingClientRect()
+    node.scrollTop += rect.top + rect.height / 2 - (box.top + box.height / 2)
+    scrolled = true
+  }
+  if (!scrolled && parent !== null) parent.scrollIntoView({ block: 'center', behavior: 'instant' })
+}
+
+/**
  * 安装页内查找。
  *
  * @param {{ tOwn: (key: string, params?: Record<string, unknown>) => string, owner?: string }} deps
@@ -191,8 +215,7 @@ export function installFind(deps) {
     cursor = nextIndex(cursor, ranges.length, direction)
     paint()
     renderStatus()
-    const el = matches[cursor].ref.parentElement
-    if (el !== null) el.scrollIntoView({ block: 'center', behavior: 'instant' })
+    revealMatch(ranges[cursor], matches[cursor].ref.parentElement)
   }
 
   /** 选区预填：与浏览器一致，页面上有一段单行选区时拿它当查询词。 */

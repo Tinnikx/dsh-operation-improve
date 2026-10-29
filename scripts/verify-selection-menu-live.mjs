@@ -423,7 +423,10 @@ check('会话正文选区上右键：恰好 1 个菜单、归属页面实例、�
 // （文案取自同一份 common 词典），不是按 `d` 反查——按 `d` 找就成了拿常量去证明常量。
 //
 // 这一条守的不是漂移而是**图标选择**：菜单项的图标就是上游 `IconCopyOutlineRegular`
-// 本体，两边必然同源；它要拦的是「这一项忘了传图标」或传了另一枚。
+// 本体，两边必然同源；它要拦的是「这一项忘了传图标」或传了另一枚。上游 0.2.2 起图标
+// 渲染成 `<svg data-icon><use href="#…">` 的精灵引用（实测 pageViewBox=null、
+// pathCount=0），不再内联 viewBox/path[d]，判据因此对比「图标标识」整体：data-icon、
+// use 的 href、内联矢量、尺寸。换实现（精灵/内联/外部 symbol）都落在同一个签名里。
 const iconCmp = await evaluate(`(() => {
   const label = ${JSON.stringify(EXPECT.copy)}
   const button = [...document.querySelectorAll('button[aria-label]')]
@@ -433,16 +436,27 @@ const iconCmp = await evaluate(`(() => {
   if (pageSvg === null || menuSvg === null) {
     return { skipped: 'page-copy-button-missing', hasButton: button !== undefined, hasMenuSvg: menuSvg !== null }
   }
-  const ds = (svg) => [...svg.querySelectorAll('path')].map((p) => p.getAttribute('d'))
+  const sig = (svg) => {
+    const use = svg.querySelector('use')
+    return {
+      icon: svg.getAttribute('data-icon'),
+      href: use === null ? null : (use.getAttribute('href') ?? use.getAttribute('xlink:href')),
+      viewBox: svg.getAttribute('viewBox'),
+      width: svg.getAttribute('width'),
+      height: svg.getAttribute('height'),
+      paths: [...svg.querySelectorAll('path')].map((p) => p.getAttribute('d')),
+    }
+  }
+  const page = sig(pageSvg)
+  const menu = sig(menuSvg)
   return {
-    pageViewBox: pageSvg.getAttribute('viewBox'),
-    menuViewBox: menuSvg.getAttribute('viewBox'),
-    pathCount: ds(pageSvg).length,
-    same: JSON.stringify(ds(pageSvg)) === JSON.stringify(ds(menuSvg)),
+    page, menu,
+    same: JSON.stringify(page) === JSON.stringify(menu),
+    empty: page.icon === null && page.href === null && page.paths.length === 0,
   }
 })()`)
-check('「复制」图标与页面上真实那枚复制按钮逐字相同（viewBox + 全部 path[d]）', iconCmp,
-  (v) => (v.same === true && v.pageViewBox === v.menuViewBox && v.pathCount > 0)
+check('「复制」图标与页面上真实那枚复制按钮逐字相同（图标标识 + 尺寸 + 矢量）', iconCmp,
+  (v) => (v.same === true && v.empty === false)
     || `上游图标已漂移或菜单画的是别的矢量：${JSON.stringify(v)}`)
 
 // 功能 6 的菜单样式快照，留到断言 8 与功能 2 的比。卡片与条目都是上游渲染的，

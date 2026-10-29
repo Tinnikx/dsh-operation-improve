@@ -86,9 +86,9 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 
 **重命名走真往返**：点菜单里那条「重命名」后断言弹的是上游 `SessionRenameDialog`（`div[role="dialog"]` + `input[data-modal-autofocus]` + 初值逐字等于该会话 `displayTitle` + footer 恰好「取消 / 重命名」两枚按钮），然后写一个带 `dsh-oi-verify-` 前缀的新标题提交、确认 `displayTitle` 变了，再开一次对话框改回原名提交、确认复原。往返都落在副本上，净效果为零。
 
-**「对齐上游」那几条断言要点开的是页面自己的菜单，而它挂在真服务上。**「...」是行右侧操作区里的第一个按钮，工作区行的第二个是「新建会话」——闭着眼点操作区就会真的开一个会话。所以打开的动作只认 `button[0]`，并要求它恰好多弹出一个 portal 菜单（数量不对就当没测到）；对着它只读 `viewBox` / `width` / `height` / 全部 `path[d]` 与 `getComputedStyle`，一个菜单项都不点，关闭走 `Escape`。
+**「对齐上游」那几条断言要点开的是页面自己的菜单，而它挂在真服务上。**「...」是行右侧操作区里的第一个按钮，工作区行的第二个是「新建会话」——闭着眼点操作区就会真的开一个会话。所以打开的动作只认 `button[0]`，并要求它恰好多弹出一个 portal 菜单（数量不对就当没测到）；对着它只读图标标识（`data-icon` 与 `<use href>`；0.2.2 起上游图标是 sprite 引用，`path[d]` 在这类图标上恒为空）、`viewBox` / `width` / `height` / 全部 `path[d]` 与 `getComputedStyle`，一个菜单项都不点，关闭走 `Escape`。
 
-**单选会话那份菜单与上游逐项全等**（`session menu mirrors the row's own menu`）：本插件渲染的就是那四个 slot 条目本身，所以判据是两份菜单的 `label` / `viewBox` / `width` / `height` / 全部 `path[d]` / 顺序**逐项相等**，并要求上游「...」那一份恰好 4 项（项数变了就 FAIL，而不是自动放行——上游真加一项时这一条会红，届时该改的是这条判据里的 4，不是插件）。配套的 `session batch right-click hands the menu back` 测的是另一半契约：多选会话右键后**没有**本插件卡片，且 `defaultPrevented` 为 `false`（只断言"没弹"会放过一个更糟的实现：拦下默认行为再什么都不做）。它也不是"要弹出上游的菜单"——侧边栏行上没有任何 `contextmenu` 监听，不拦的结果就是浏览器默认。
+**单选会话那份菜单与上游逐项全等**（`session menu mirrors the row's own menu`）：本插件渲染的就是那四个 slot 条目本身，所以判据是两份菜单的 `label` / 图标标识（`data-icon` 与 `<use href>`）/ `viewBox` / `width` / `height` / 全部 `path[d]` / 顺序**逐项相等**，并要求上游「...」那一份恰好 4 项（项数变了就 FAIL，而不是自动放行——上游真加一项时这一条会红，届时该改的是这条判据里的 4，不是插件）。配套的 `session batch right-click hands the menu back` 测的是另一半契约：多选会话右键后**没有**本插件卡片，且 `defaultPrevented` 为 `false`（只断言"没弹"会放过一个更糟的实现：拦下默认行为再什么都不做）。它也不是"要弹出上游的菜单"——侧边栏行上没有任何 `contextmenu` 监听，不拦的结果就是浏览器默认。
 
 **工作区单选菜单反过来了：它是上游的超集**，因为「新会话」在上游根本不在「...」菜单里（它是行 hover 操作区的第二枚图标按钮，上文「点开的是页面自己的菜单」那段说的就是别闭着眼点第二枚）。上游没有覆盖工作区行的 slot，所以这三项是本插件拼的（外壳与图标仍是上游组件）。判据拆成两段：`workspace menu mirrors the row's own menu` 要求本插件 3 项、**首项逐字等于词典里的 `actions.newSession`**、末两项与上游那两项逐项全等；`workspace new session opens a session in that workspace` 点首项后看**状态 diff**——靶子工作区被展开、菜单关掉、侧栏多出一条会话。**位置钉死为首项**是决定不是细节：它不是破坏性操作，混进标红那一堆里会误导，要换位置得连同理由一起改代码。早先还有第三条 `workspace menu drops new session without the service`（服务未注册时整项不出现），现在**没有**：`uiWorkspace` 是真服务，脚本拿不掉它，那一项也就没法在真实例上缺席——入口缺席那一半改由 `resolveUiWorkspace()` 每次现取保证（服务可能被替换，见[功能 1、2](./feature-1-2-sidebar-menu.md)）。
 
@@ -195,7 +195,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:selection
 - **`Browser.grantPermissions` 只在 browser 级别那条连接上存在**，页面连接答 `'Browser.grantPermissions' wasn't found`。更要紧的是**那条连接必须一直开着**：授权跟着授权的那个 CDP client 走，ws 一关 Chrome 就把覆盖撤回，之后 `readText()` 报 `NotAllowedError: Read permission denied`——症状看着像没授权成功，其实是授过又收回了（`grantPermissions` 本身答的是 `{}`）。
 - **粘贴的哨兵由脚本自己写进剪贴板**，所以「粘完应该是什么」是算得出来的常量，而不是拿页面上另一处读数去对页面上这一处。
 - **contextmenu 探针挂在插件之后**（同为捕获阶段，后注册后触发），才读得到插件处理完之后的 `defaultPrevented`；探针自己随后也 `preventDefault()`，免得 headed Chrome 弹出原生菜单挡住后面的手势。
-- **图标断言按 `aria-label` 找页面上那枚真实的复制按钮**，不按 `d` 反查——按 `d` 找就成了拿常量去证明常量。`aria-label` 取自同一份 common 词典，所以它在两种语言下都定位得到。
+- **图标断言按 `aria-label` 找页面上那枚真实的复制按钮**，不按 `d` 反查——按 `d` 找就成了拿常量去证明常量。签名比的是图标标识（`data-icon` + `<use href>`）、尺寸、`viewBox` 与全部 `path[d]`，并要求两边都不是空 svg：0.2.2 起上游图标是 sprite 引用，只比 `viewBox` 与 `path[d]` 会得到两边都空、`null === null` 的假通过。`aria-label` 取自同一份 common 词典，所以它在两种语言下都定位得到。
 - **右键必须落在选区内**，Chrome 在选区之外右键会先折叠选区。composer（contenteditable）那条路径直接对 DOM Range 取 `getBoundingClientRect()`；合成 `<textarea>` 没有 Range 可用，用控件自己的计算字体在 canvas 上 `measureText(value.slice(0, mid))` 求中点横坐标，并且框必须是**单行高度**——80px 高的框里文字只占最上面一行，点垂直中心等于点在选区外（实测把选区折叠成了只剩「粘贴」）。草稿写入一律走真实手势（`Delete` 键 + `Input.insertText`）；field 段开始前要 Escape + blur + `removeAllRanges()` 收掉 composer 粘贴留下的选区。
 - **选区探针只挑真正可见的正文**。折叠组里的行有布局盒但没有渲染可见性：`getBoundingClientRect()` 非零、`range.getClientRects()` 也量得到，可 `window.getSelection().addRange()` 之后 `toString()` 恒为空——选区 API 取不到 invisible 文字，真实用户也选不到。判据用 `host.checkVisibility({visibility:true, opacity:false})`，光看矩形会整轮踩空（右键永远 count=0，且现象酷似功能坏了）。
 - **样式一致比的是 `getComputedStyle` 的完整枚举**（root 与 item 各 862 键），排除的是一张显式的几何键名单而不是正则：`font-size` 里也有 `size`，按模式排除会把字号一起放过。

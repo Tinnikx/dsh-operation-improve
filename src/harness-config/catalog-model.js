@@ -379,7 +379,7 @@ export const MODEL_ENTRIES = [
     description: '拖进对话框的图片在入库前的尺寸、体积与并发预算。改完对下一次入库生效。',
     fields: [
       {
-        key: 'maxImageBytes', type: 'integer', default: 20971520, min: 1, effect: 'nextAttachment',
+        key: 'maxImageBytes', type: 'integer', default: 52428800, min: 1, effect: 'nextAttachment',
         label: '单张原图上限（字节）', help: '',
       },
       {
@@ -395,7 +395,7 @@ export const MODEL_ENTRIES = [
         label: '单张原图像素上限', help: '',
       },
       {
-        key: 'maxImageDimension', type: 'integer', default: 8192, min: 1, effect: 'nextAttachment',
+        key: 'maxImageDimension', type: 'integer', default: 65535, min: 1, effect: 'nextAttachment',
         label: '单张原图边长上限（像素）', help: '',
       },
       {

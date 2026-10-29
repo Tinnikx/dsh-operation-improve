@@ -19,12 +19,12 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [src/chat-history/history-store.js](src/chat-history/history-store.js)，功能 11 的在 [src/find/matches.js](src/find/matches.js)（判据与实测读数在 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 当前兼容版本
-- 0.2.1-rc.3（当前锚定版本；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 83 字段。九套 live 合计 211 条断言，其中功能 12 那套 29/29。多选高亮与厂商标题两处的可辨性判据读的都是**屏幕像素**，测试栈副本在 `syncHome()` 里只留 base harness 与本插件（其余第三方/实验 bundle 一律从副本名册剥掉，真 home 不动），侧栏因此恒在标准主题上；带 `DSH_OI_KEEP_THEME_PLUGIN=1` 复跑那份现场时，侧栏是模糊纹理底、「底色」不是一个颜色，多选可辨性那 9 条由平色守卫整组 SKIP。口径的来龙去脉与逐条根因见 [docs/handoff/022-multiselect-contrast-baseline.md](docs/handoff/022-multiselect-contrast-baseline.md)。）
+- 0.2.2-alpha.2（当前锚定版本；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 83 字段。九套 live 合计 211 条断言，其中功能 12 那套 29/29。多选高亮与厂商标题两处的可辨性判据读的都是**屏幕像素**，测试栈副本在 `syncHome()` 里只留 base harness 与本插件（其余第三方/实验 bundle 一律从副本名册剥掉，真 home 不动），侧栏因此恒在标准主题上；带 `DSH_OI_KEEP_THEME_PLUGIN=1` 复跑那份现场时，侧栏是模糊纹理底、「底色」不是一个颜色，多选可辨性那 9 条由平色守卫整组 SKIP。口径的来龙去脉与逐条根因见 [docs/handoff/022-multiselect-contrast-baseline.md](docs/handoff/022-multiselect-contrast-baseline.md)。）
 - **`verify`（功能 1、2 那套）存在既有不稳定**：同一份产物连跑会间歇性红 1~3 条，失败的是「置顶会话」项缺失、批量删除、批量右键三处，报的是「没测到」而非逻辑错。已用 A/B 确认与功能 12 无关——把产物换回改动前的 `lib/client.js` 连跑 6 次同样红 6 次，失败条目逐字相同。现场取证：失败那次 `selected:1`（`ctrl` 点击没被记进选集，于是批量分支没触发），而槽位账本从 reload 后 500ms 起就稳定是 5 条（连测 4 轮 × 5 个时间点）——**不是**菜单条目没到位。根因未查，见 [docs/handoff/025-provider-heading-band.md](docs/handoff/025-provider-heading-band.md)。
 
 本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。**每换一次锚定版本，除各套 live 行为验证外必跑 `npm run check:catalog`**——功能 8 的清单是手抄的，这条把它声明的字段 `type`/`default`/边界逐键对上游 `--dump-config-schema`，新版本改了任一键就会红，逼你对上游重抄（判据见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检)）。0.1.7-alpha.2 轮起，
 菜单卡片（功能 2、6）直接用上游 `@deepseek-ai/dsh-client-ui-primitives` 的 `Menu` 组件、图标用上游组件本体，所以样式档与图标跟随新版视觉，回旧 harness 上不再逐项对齐（功能 5 的活跃标记覆盖同理）。
-历史验证记录：0.2.1-alpha.1、0.2.0-rc.2、0.1.7-rc.1、0.1.7-alpha.2、0.1.6-alpha.2、0.1.2-rc.1、0.1.1-rc.2（各轮细节见 `harness-v*-adaptation-report.md`）。
+历史验证记录：0.2.1-rc.3、0.2.1-rc.1、0.2.1-alpha.1、0.2.0-rc.2、0.1.7-rc.1、0.1.7-alpha.2、0.1.6-alpha.2、0.1.2-rc.1、0.1.1-rc.2（各轮细节见 `harness-v*-adaptation-report.md`）。
 
 ## 截图
 

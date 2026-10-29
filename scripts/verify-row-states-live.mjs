@@ -440,7 +440,11 @@ async function shoot() {
     abort('探针行不在视口内，截不到像素', `多选行 y=${geometry.multi.y} 高 ${geometry.multi.h}，视口高 ${geometry.vh}——真实列表里那条可见会话行找不到？`)
   }
   const clip = {
-    x: geometry.multi.x - 12,
+    // 侧栏行在 0.2.2 里落到 x=8，`multi.x - 12` 是负的。Page.captureScreenshot 收到负坐标
+    // 不报错，而是从页面原点 (0,0) 截同样大小的一块（实测截出来是页头），取样点于是全落在
+    // 侧栏外的底色上，量出一组「描边=背景、填充=背景」的假读数。夹到 0，取样坐标仍按
+    // 真实几何算，映射不变。
+    x: Math.max(0, geometry.multi.x - 12),
     y: geometry.control.y,
     width: geometry.multi.w + 132,
     height: geometry.multi.y + geometry.multi.h - geometry.control.y + 2,

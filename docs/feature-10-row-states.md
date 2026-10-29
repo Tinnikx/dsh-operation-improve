@@ -23,7 +23,7 @@
 
 ## 实测读数
 
-35 条断言全绿（0.2.1-rc.3 测试栈）的关键观测：选中底色 `rgba(34, 211, 238, 0.1)`、竖条 3px 实色、标题 600；运行中底边 `rgba(34, 211, 238, 0.15) 0px 0px 0px 1px inset`、彗尾 `dsh-oi-row-sweep 2.4s` + mask `exclude` + `drop-shadow(rgba(34, 211, 238, 0.55) 0px 0px 5px)`；错峰 `[0s, -0.8s, -1.6s]`；选中+运行中 `.14`；选中+多选时底色归多选填充、青色竖条保留；拖拽目标行彗尾 `none`；浅色主题同一次求值内底色 `rgba(21, 94, 117, 0.1)`；reduced-motion 下彗尾 `display: none` 而底边在场。多选描边与叠加时的读数见 [功能 1、2](./feature-1-2-sidebar-menu.md#多选高亮长什么样)。
+35 条断言全绿（0.2.2-alpha.2 测试栈）的关键观测：选中底色 `rgba(34, 211, 238, 0.1)`、竖条 3px 实色、标题 600；运行中底边 `rgba(34, 211, 238, 0.15) 0px 0px 0px 1px inset`、彗尾 `dsh-oi-row-sweep 2.4s` + mask `exclude` + `drop-shadow(rgba(34, 211, 238, 0.55) 0px 0px 5px)`；错峰 `[0s, -0.8s, -1.6s]`；选中+运行中 `.14`；选中+多选时底色归多选填充、青色竖条保留；拖拽目标行彗尾 `none`；浅色主题同一次求值内底色 `rgba(21, 94, 117, 0.1)`；reduced-motion 下彗尾 `display: none` 而底边在场。多选描边与叠加时的读数见 [功能 1、2](./feature-1-2-sidebar-menu.md#多选高亮长什么样)。
 
 ## 已知限制
 

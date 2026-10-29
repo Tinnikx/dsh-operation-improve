@@ -23,7 +23,7 @@
 
 **游标重锚按 `(rowKey, ordinal)`**：`rowKey` 是命中所属行的 `data-chat-node-key`（没有则 `data-chat-flow-key`，都没有则 `'page'`），`ordinal` 是它在该行内的文档序。该条命中消失时取文档序里紧随其后的第一条，后面全没有了再往前找。绝对序号不承诺连续——「加载更早」前插会让整体位移，硬保连续是假象。
 
-**跳转**对命中所在元素 `scrollIntoView({ block: 'center', behavior: 'instant' })`。`instant` 是有意为之：smooth 动画会和上游的 `overflow-anchor` 抢滚动。
+**跳转**按命中自己的 `getBoundingClientRect()` 量位移，由内向外滚动每个 `overflow-y` 为 `auto`/`scroll` 且真的溢出（`scrollHeight > clientHeight + 1`）的祖先，让命中居中；一个可滚动祖先都没有时才退回命中文本父元素的 `scrollIntoView({ block: 'center' })`。只居中父元素不够：上游有时把整块正文包进几千像素高的容器，居中它之后命中本身还在视口外。滚动一律立即赋值，不用 `behavior: 'smooth'`——平滑动画会和上游的 `overflow-anchor` 抢滚动。
 
 **`Esc` 让位给右键菜单**。菜单开着时那一次 `Esc` 只关菜单，查找条留着，第二次 `Esc` 才收条。不写这道判据的表现是一次 `Esc` 同时关掉两样东西。
 

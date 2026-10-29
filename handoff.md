@@ -4,6 +4,7 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 027 | harness 0.2.2-alpha.2 适配（sprite 图标、侧栏坐标、查找滚动、catalog 默认值四处漂移；九套 211 条全绿） | 正在做 | [027-harness-0.2.2-alpha.2-adaptation.md](docs/handoff/027-harness-0.2.2-alpha.2-adaptation.md) |
 | 026 | harness 0.2.1-rc.3 适配（单测 46、九套 211 条、catalog 19/83 全绿；锚点已改 rc.3） | 完成 | [026-harness-0.2.1-rc.3-adaptation.md](docs/handoff/026-harness-0.2.1-rc.3-adaptation.md) |
 | 025 | 模型下拉的厂商分组标题加区分带（整体色块 + 底部 1px 横线，浅深两档实测） | 完成 | [025-provider-heading-band.md](docs/handoff/025-provider-heading-band.md) |
 | 024 | harness 0.2.1-rc.1 适配（分叉项断链修复 + 设置入口改道 + 引导框收尾） | 完成 | [024-harness-0.2.1-rc.1-adaptation.md](docs/handoff/024-harness-0.2.1-rc.1-adaptation.md) |

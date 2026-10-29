@@ -268,9 +268,12 @@ const ACTIVE_RECT = `(() => {
   const set = CSS.highlights.get('dsh-oi-find-active')
   const range = set === undefined ? null : [...set][0]
   if (range === undefined || range === null) return { rect: null }
-  const el = range.startContainer.parentElement
-  const r = el.getBoundingClientRect()
-  return { inViewport: r.top >= 0 && r.bottom <= window.innerHeight, height: Math.round(r.height) }
+  // 量**命中文本自己的矩形**，不量 startContainer.parentElement：上游 0.2.2 把消息正文
+  // 包进更大的块（实测父元素高 2282px），整块永远装不进视口，那不代表跳转失败。
+  // 用户看得见的是那条高亮，IsVisible 就该按它判。
+  const r = range.getBoundingClientRect()
+  return { inViewport: r.top >= 0 && r.bottom <= window.innerHeight && r.width > 0,
+    height: Math.round(r.height), top: Math.round(r.top), bottom: Math.round(r.bottom) }
 })()`
 
 // ---- 5：当前项就是那个词 ----
