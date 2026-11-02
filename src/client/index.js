@@ -36,6 +36,7 @@ import { PROVIDER_HEADING_CSS } from '../provider-heading/index.js'
 import { installFind, FIND_CSS } from '../find/index.js'
 import { installHarnessConfigRow, SETTINGS_CSS } from './settings/index.jsx'
 import { installChatHistory } from '../chat-history/index.js'
+import { installAutoLoadOlder } from '../auto-load-older/index.js'
 
 export const name = '@Tinnikx/dsh-operation-improve'
 /**
@@ -54,8 +55,8 @@ export const selection = createSelectionStore()
  * 装上五项功能。
  *
  * 副作用全部注册到 `ctx.effect`，同时挂一份到 `window.__dshOperationImprove__`：
- * `{ instanceId, selection, timestamps, chatHistory, find, multiSelect, contextMenu,
- * selectionMenu, harnessConfig, locale, services, stylesheet, dispose }`。
+ * `{ instanceId, selection, timestamps, chatHistory, autoLoadOlder, find, multiSelect,
+ * contextMenu, selectionMenu, harnessConfig, locale, services, stylesheet, dispose }`。
  * 每个功能项都带幂等 `dispose()`，句柄自己的 `dispose()` 停掉整份实例并摘掉句柄。
  *
  * @param {any} ctx
@@ -128,6 +129,9 @@ export function apply(ctx) {
   const chatHistory = installChatHistory()
   ctx.effect(() => chatHistory.dispose, '@Tinnikx/dsh-operation-improve: chat history')
 
+  const autoLoadOlder = installAutoLoadOlder()
+  ctx.effect(() => autoLoadOlder.dispose, '@Tinnikx/dsh-operation-improve: auto load older')
+
   const find = installFind({ tOwn: locale.tOwn, owner: instanceId })
   ctx.effect(() => find.dispose, '@Tinnikx/dsh-operation-improve: find in page')
 
@@ -150,6 +154,7 @@ export function apply(ctx) {
     selection,
     timestamps,
     chatHistory,
+    autoLoadOlder,
     harnessConfig,
     find,
     multiSelect: { dispose: disposeMultiSelect },
@@ -184,6 +189,7 @@ export function apply(ctx) {
     stylesheet: { dispose: () => style.remove() },
     dispose: () => {
       find.dispose()
+      autoLoadOlder.dispose()
       chatHistory.dispose()
       harnessConfig.dispose()
       timestamps.dispose()

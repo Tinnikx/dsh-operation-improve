@@ -1,6 +1,6 @@
 # @Tinnikx/dsh-operation-improve
 
-DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加十一项行为——功能 1、2、10 在侧边栏，功能 4、7、9、12 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页，功能 11 是整页的查找条：
+DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装进 profile 后加十二项行为——功能 1、2、10 在侧边栏，功能 4、7、9、12、13 在会话页，功能 5 是全局配色，功能 6 在页面任意位置，功能 8 在设置页，功能 11 是整页的查找条：
 
 | | 一句话 | 设计与实测 |
 | --- | --- | --- |
@@ -15,11 +15,12 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 | **功能 10** | 侧边栏会话行的状态可视化。当前打开的会话加青色竖条与填充底（上游的选中与 hover 同色）；有任务在跑的行加一圈沿轮廓扫动的彗尾边框与静默底边。纯样式，不加监听。 | [docs/feature-10-row-states.md](docs/feature-10-row-states.md) |
 | **功能 11** | `Ctrl`/`cmd` + `F` 页内查找。弹出浏览器那样的查找条，在**当前页面已渲染的文本**里搜关键词：全部命中按词高亮，`Enter` / `Shift+Enter` 跳下一个 / 上一个（到端点环绕），`Esc` 关闭。高亮走 CSS Custom Highlight API，一条 DOM 都不改。 | [docs/feature-11-find.md](docs/feature-11-find.md) |
 | **功能 12** | 模型下拉里的厂商分组标题区分带。点 composer 上方的「请选择模型」进入模型面板后，`github-copilot` / `trae` 这类厂商名加一条淡色带与底部 1px 横线（上游只在小灰字上区分，底色与模型行同值）。**承重的是横线**（浅 4.15 / 深 5.42），填充只做氛围——浅色档填充实测在屏幕上几乎不可见。纯样式，不加监听。 | [docs/feature-12-provider-heading-band.md](docs/feature-12-provider-heading-band.md) |
+| **功能 13** | 会话页滚到顶部时自动加载更早的消息。`hasMore` 为真时上游在会话列顶端挂出「加载更早」，滚在底部时它被裁掉；插件用 `IntersectionObserver` 盯着这枚按钮，**看得见且可点**才替用户点一次，上游 `viewport.preserve()` 把原先看的那一行钉在原位。加载中按钮卸载/移出视口就停；失败（按钮恢复可用但内容没变）不再重试，直到按钮离开视口再回来。 | [docs/feature-13-auto-load-older.md](docs/feature-13-auto-load-older.md) |
 
 功能 1、2、6 共用的基础层（选择状态、菜单组件、行识别、词典）与调试句柄在 [docs/shared-api.md](docs/shared-api.md)，验证在 [docs/verify.md](docs/verify.md)。功能 9 的纯函数层在 [src/chat-history/history-store.js](src/chat-history/history-store.js)，功能 11 的在 [src/find/matches.js](src/find/matches.js)（判据与实测读数在 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 当前兼容版本
-- 0.2.2-alpha.2（当前锚定版本；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 83 字段。九套 live 合计 211 条断言，其中功能 12 那套 29/29。多选高亮与厂商标题两处的可辨性判据读的都是**屏幕像素**，测试栈副本在 `syncHome()` 里只留 base harness 与本插件（其余第三方/实验 bundle 一律从副本名册剥掉，真 home 不动），侧栏因此恒在标准主题上；带 `DSH_OI_KEEP_THEME_PLUGIN=1` 复跑那份现场时，侧栏是模糊纹理底、「底色」不是一个颜色，多选可辨性那 9 条由平色守卫整组 SKIP。口径的来龙去脉与逐条根因见 [docs/handoff/022-multiselect-contrast-baseline.md](docs/handoff/022-multiselect-contrast-baseline.md)。）
+- 0.2.2-alpha.2（当前锚定版本；功能 8 清单 `npm run check:catalog` 对上游 schema 全绿，19 卡 / 83 字段。十套 live 合计 219 条断言，其中功能 12 那套 29/29、功能 13 那套 8/8。多选高亮与厂商标题两处的可辨性判据读的都是**屏幕像素**，测试栈副本在 `syncHome()` 里只留 base harness 与本插件（其余第三方/实验 bundle 一律从副本名册剥掉，真 home 不动），侧栏因此恒在标准主题上；带 `DSH_OI_KEEP_THEME_PLUGIN=1` 复跑那份现场时，侧栏是模糊纹理底、「底色」不是一个颜色，多选可辨性那 9 条由平色守卫整组 SKIP。口径的来龙去脉与逐条根因见 [docs/handoff/022-multiselect-contrast-baseline.md](docs/handoff/022-multiselect-contrast-baseline.md)。）
 - **`verify`（功能 1、2 那套）存在既有不稳定**：同一份产物连跑会间歇性红 1~3 条，失败的是「置顶会话」项缺失、批量删除、批量右键三处，报的是「没测到」而非逻辑错。已用 A/B 确认与功能 12 无关——把产物换回改动前的 `lib/client.js` 连跑 6 次同样红 6 次，失败条目逐字相同。现场取证：失败那次 `selected:1`（`ctrl` 点击没被记进选集，于是批量分支没触发），而槽位账本从 reload 后 500ms 起就稳定是 5 条（连测 4 轮 × 5 个时间点）——**不是**菜单条目没到位。根因未查，见 [docs/handoff/025-provider-heading-band.md](docs/handoff/025-provider-heading-band.md)。
 
 本插件**单版本锚定**：每次适配只对齐最新 harness，不保留旧版本的兼容路径。**每换一次锚定版本，除各套 live 行为验证外必跑 `npm run check:catalog`**——功能 8 的清单是手抄的，这条把它声明的字段 `type`/`default`/边界逐键对上游 `--dump-config-schema`，新版本改了任一键就会红，逼你对上游重抄（判据见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检)）。0.1.7-alpha.2 轮起，
@@ -40,7 +41,7 @@ DeepSeek Harness 操作增强插件。本包不发布（`private: true`），装
 ```
 src/
   index.js                     host 半边：挂功能 8 那条回环路由
-  client/index.js              client 入口：插样式表、装七个功能、注册 ctx.effect 回收
+  client/index.js              client 入口：插样式表、装各项功能、注册 ctx.effect 回收
   shared/
     selection-store.js         选择状态 store（同级约束）
     menu.jsx                   共享菜单层：插件自己的 React root + 上游 `Menu` 外壳（功能 2 与功能 6 共用）
@@ -59,6 +60,7 @@ src/
   think-scroll/index.js        功能 7（思考区限高 + 滑块，只导出一段 CSS）
   row-states/index.js          功能 10（会话行选中态 + 运行中扫光边框，只导出一段 CSS）
   provider-heading/index.js    功能 12（模型下拉的厂商分组标题区分带，只导出一段 CSS）
+  auto-load-older/index.js     功能 13（滚到顶部时自动点「加载更早」，不占 slot、不带样式）
   chat-history/
     history-store.js            功能 9 的纯函数层（干净判定、轮次条目解析）
     nav-rail.js                 功能 9 的导航列读取层（fiber 条目 + 气泡全文）
@@ -96,8 +98,9 @@ scripts/
   verify-row-states-live.mjs   同上，功能 10；现搭探针行与上游规则做真实的特异性竞争
   verify-find-live.mjs         同上，功能 11；真实按键与右键手势，命中数由独立 oracle 判
   verify-provider-band-live.mjs 同上，功能 12；真开一次模型下拉，截屏幕像素判区分带（浅/深两档）
+  verify-auto-load-older-live.mjs 同上，功能 13；按存储大小挑长会话，真实滚轮到顶，数行数增长与按钮点击次数
   check-catalog-schema.mjs     功能 8 清单 ↔ 上游 config schema 逐键比对（升级必跑，见 docs/feature-8）
-  lib/cdp.mjs                  八个验证脚本共用的 CDP 连接与断言框架
+  lib/cdp.mjs                  十个验证脚本共用的 CDP 连接与断言框架
   lib/harness-bin.mjs          权威 harness CLI 入口的解析（test-stack 与 check:catalog 共用）
   lib/ts-page.mjs              功能 4 断言的页面侧公用片段（在被测页面里求值的源码字符串）
   lib/ts-checks.mjs            功能 4 的十条断言本体
@@ -112,7 +115,7 @@ docs/                          各功能的设计判据、实测读数与已知�
 lib/                           构建产物，client bundle 是 __ModuleLoader__ 注册体
 ```
 
-插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余十项一个 slot 都不占——功能 5、7、10、12 连监听都没有，另外六项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
+插件只占**一个** slot：功能 8 那一行注册在 `settings.general.item` 上。其余十一项一个 slot 都不占——功能 5、7、10、12 连监听都没有，另外七项都只在既有 DOM 上加监听；视觉全部走自插的一张样式表。
 
 - 功能 1、2 在侧边栏挂**捕获阶段**监听（要抢在 React 合成事件之前拦下 `ctrl` 点击与右键），菜单直接挂 `document.body`（`z-index: 2147483000`），高亮走 `[data-dsh-oi-selected]` 属性——不复用行自己的 `_selected` 类，那是「当前会话」的语义。高亮本身是**主题强调色实色描边 + 24% 淡填充**：描边是承重信号（对侧边栏底 6.5~7.5×），填充只做氛围（对普通行 1.3~1.4×），强调色取自主题 token，换主题换色相而可辨性不变（见 [docs/handoff/019-multiselect-highlight-outline.md](docs/handoff/019-multiselect-highlight-outline.md)）。
 - 功能 4 只读会话页的 DOM 与 React fiber，标签作为节点行自己的子节点插入，由观察 `document.body` 的 `MutationObserver` 驱动。
@@ -122,6 +125,7 @@ lib/                           构建产物，client bundle 是 __ModuleLoader__
 - 功能 10 同样一行 JS 都不跑：选中态读 `aria-selected`，运行中读行内 `svg[data-state='ongoing']`，竖条与彗尾走伪元素并给上游拖拽指示器让位（见 [docs/feature-10-row-states.md](docs/feature-10-row-states.md)）。
 - 功能 8 是唯一有 host 半边的功能：client 侧只往 `settings.general.item` 注册一个组件，读写都打 host 挂在 harness 自己那个回环 HTTP 上的一条路由（见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md)）。
 - 功能 9 的当前会话从侧栏选中的会话行派生：查 `[class*="_sessionRow"][aria-selected="true"]`（搜索结果行是 `_searchResultRow`），再沿 React fiber 反查 `rowId(row, 'session')`；`installChatHistory()` 不接收 ctx、不订阅 `ctx.sessions`。应用没有 URL 路由，地址栏恒为 `/`；历史只读右侧轮次导航列的 fiber 条目，且只在开始导航时读一次（纯内存、不阻塞）；输入框是 Lexical contenteditable，写入走 `execCommand` + 合成按键的队列。不占 slot、不调 harness 服务、不写 localStorage。
+- 功能 13 同样只观察既有 DOM：一个 `IntersectionObserver` 盯「加载更早」按钮、一个 `MutationObserver` 盯 `document.body`（每帧合并一次），按钮可见时调一次 `button.click()`，不接管滚动位置（见 [docs/feature-13-auto-load-older.md](docs/feature-13-auto-load-older.md)）。
 - 功能 11 的 `keydown` 挂在 **`window` 捕获**（要抢在共享右键菜单的 `Esc` 之前，同相位下注册序决定调用序），命中域是 `document.body` 的文本节点，高亮走 `CSS.highlights` 两个注册名 + 两条 `::highlight()`——**一条 DOM 都不改**，`verify:find` 数的是 `childList` mutation 计数为 0（见 [docs/feature-11-find.md](docs/feature-11-find.md)）。
 
 ## 构建
@@ -187,9 +191,10 @@ dsh plugin --profile web add <本目录>                                # 从本
 | `npm run verify:row-states` | 功能 10（选中态强化与运行中扫光边框） |
 | `npm run verify:find` | 功能 11（页内查找：命中数、跳转、不动 DOM、`Esc` 让位、折叠与切会话重算） |
 | `npm run verify:provider-band` | 功能 12（厂商分组标题的区分带：同位 A/B 量填充贡献、横线对比度、钉住态、选择器边界、浅/深两档） |
+| `npm run verify:auto-load-older` | 功能 13（真实滚轮到顶：按钮可见才点、点击计数、行数与高度增长、锚点保留、落地后不再连点、历史到头按钮卸载） |
 | `npm run check:catalog` | 功能 8 清单的**信息格式**逐键对上游 config schema（`type`/`default`/边界），漂移非零退出——**每次升级 harness 必跑**，见 [docs/feature-8-harness-config.md](docs/feature-8-harness-config.md#与上游-schema-对齐升级必检) |
 
-九个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
+十个 `verify:*` 脚本都要先 `stack:up`，且都得带 `PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH` 前缀。功能 7 没有 `npm` 脚本，判据在一份不在版本库里的 scratch 脚本中。
 
 **在 agent 沙箱里跑 `verify`（功能 1、2 那套）要额外给 `TMPDIR`**：它建的靶子工作区目录落在系统临时目录（[scripts/lib/fixtures.mjs](scripts/lib/fixtures.mjs)），而沙箱里每条 bash 调用是一张独立 `/tmp` —— 脚本 `mkdirSync` 出来的目录与 harness 进程 `realpath` 看到的那张对不上，靶子建不起来会直接 `abort`。用仓库内路径绕开：`TMPDIR="$PWD/tmp/fixtures" npm run verify`。
 
@@ -214,3 +219,4 @@ dsh plugin --profile web add <本目录>                                # 从本
 - [功能 10](docs/feature-10-row-states.md#已知限制)：边框只跟 `statuses[0]` 的 ongoing、彗尾是重绘不是合成层、`aria-selected` / `data-state` 的结构假设、浅色两个透明度只验到 computed（4 条）
 - [功能 11](docs/feature-11-find.md#已知限制)：只搜已渲染文本、表单控件的值不进命中、序号不承诺连续、上限 1000、与上游「搜索轨迹」两套语义、折叠内容要先展开、依赖 Custom Highlight API、真桌面客户端未覆盖（8 条）
 - [功能 12](docs/feature-12-provider-heading-band.md#已知限制)：依赖卡片内边距与模型行几何、浅色档区分主要靠横线、只覆盖模型下拉、`data-stuck` 属上游吸顶机制、判据依赖同位 A/B（5 条）
+- [功能 13](docs/feature-13-auto-load-older.md#已知限制)：依赖上游节点结构、打开已停在顶部的会话会立刻连翻、失败判定的 400ms 是经验值、观察整个 `document.body`、不覆盖统计页、`attached` 在切会话过渡帧可能短暂为真（6 条）

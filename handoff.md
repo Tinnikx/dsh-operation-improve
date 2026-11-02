@@ -4,6 +4,7 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 028 | 功能 13：滚到顶部时自动加载更早消息（可见即自动点「加载更早」，失败不重试） | 完成 | [028-auto-load-older.md](docs/handoff/028-auto-load-older.md) |
 | 027 | harness 0.2.2-alpha.2 适配（sprite 图标、侧栏坐标、查找滚动、catalog 默认值四处漂移；九套 211 条全绿） | 完成 | [027-harness-0.2.2-alpha.2-adaptation.md](docs/handoff/027-harness-0.2.2-alpha.2-adaptation.md) |
 | 026 | harness 0.2.1-rc.3 适配（单测 46、九套 211 条、catalog 19/83 全绿；锚点已改 rc.3） | 完成 | [026-harness-0.2.1-rc.3-adaptation.md](docs/handoff/026-harness-0.2.1-rc.3-adaptation.md) |
 | 025 | 模型下拉的厂商分组标题加区分带（整体色块 + 底部 1px 横线，浅深两档实测） | 完成 | [025-provider-heading-band.md](docs/handoff/025-provider-heading-band.md) |

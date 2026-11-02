@@ -1,6 +1,6 @@
 # 验证
 
-九项功能的验证方式。七个 `npm run verify:*` 脚本连的都是同一套[测试栈](#测试栈)，判据与退出码共用 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)。
+十项功能的验证方式。十个 `npm run verify:*` 脚本连的都是同一套[测试栈](#测试栈)，判据与退出码共用 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)。
 
 ## node 在哪
 
@@ -122,9 +122,9 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify
 - 每条断言前缀是 `[PASS]` / `[FAIL]` / `[SKIP]`，结尾固定打印 `passed=N failed=N skipped=N total=N`。
 - **`failed + skipped > 0` 一律非零退出**，全绿时最后一行是 `[OK] 全部断言实际执行且通过。`
 
-所以确认「真的测了」只需两步：`echo $?` 为 0，且末行 summary 是 `passed=N failed=0 skipped=0 total=N`（N 是断言条数，九套合计 211 条，逐套读数见各功能文档的「验证」一节）。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
+所以确认「真的测了」只需两步：`echo $?` 为 0，且末行 summary 是 `passed=N failed=0 skipped=0 total=N`（N 是断言条数，十套合计 219 条，逐套读数见各功能文档的「验证」一节）。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
 
-判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，九个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
+判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，十个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
 
 `evaluate()` 每次求值新开一条临时 CDP 连接、用完即关，长驻连接只留给要收事件的 `Page.reload`。**不能全程共用一条**：断言里会点击会话行，切会话销毁执行上下文后，那条连接上的每次 `Runtime.evaluate` 都被协议层永久拒为 `-32000 Inspected target navigated or closed`，整轮验证崩在半路，证据链就此断掉。
 
@@ -169,7 +169,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:timestamps
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:dot
 ```
 
-`verify-active-dot-live.mjs` 和 `verify:selection`、`verify:settings` 一样**不注入 bundle、也不 apply 自造的 ctx**（七个脚本里只有这五个这样——再加 `verify:chat-history` 与本节的功能 10），验的是页面自带那份实例的实际效果。这一条被验的是一张纯样式表，而页面自带的那份实例已经把它插进 `<head>` 了。断言读的就是那张表的效果，走的是「`npm run build` 的产物 → profile 装载 → 页面自己的实例插入」这条真实路径。基线靠**摘掉那张表**取得（`disabled = true`，测完还原），同一个 DOM 上一摘一装，前后两组读数才可比。探针是脚本现搭的同构 spinner（`svg[data-state='ongoing']` 里 `g` 包两条 `circle`），class 从页面真实样式表里反查——**spinner 根类必须与 track 同一个 CSS module**（页面里还有别的组件也叫 `.spinner`，拿错类的表现是探针渲染成别的几何，采样点落空）。不去等一个真的活跃会话：那要在测试栈里真跑一轮模型调用，代价与风险都远大于它能多验到的东西（同一个组件、同一条 CSS 规则）。
+`verify-active-dot-live.mjs` 和 `verify:selection`、`verify:settings` 一样**不注入 bundle、也不 apply 自造的 ctx**（十个脚本里有七个这样——再加 `verify:chat-history` 与本节的功能 10），验的是页面自带那份实例的实际效果。这一条被验的是一张纯样式表，而页面自带的那份实例已经把它插进 `<head>` 了。断言读的就是那张表的效果，走的是「`npm run build` 的产物 → profile 装载 → 页面自己的实例插入」这条真实路径。基线靠**摘掉那张表**取得（`disabled = true`，测完还原），同一个 DOM 上一摘一装，前后两组读数才可比。探针是脚本现搭的同构 spinner（`svg[data-state='ongoing']` 里 `g` 包两条 `circle`），class 从页面真实样式表里反查——**spinner 根类必须与 track 同一个 CSS module**（页面里还有别的组件也叫 `.spinner`，拿错类的表现是探针渲染成别的几何，采样点落空）。不去等一个真的活跃会话：那要在测试栈里真跑一轮模型调用，代价与风险都远大于它能多验到的东西（同一个组件、同一条 CSS 规则）。
 
 **对比度读的是截图像素，但底色是脚本垫出来的名义值。** 前景那半必须由浏览器渲染——`fill × opacity` 的合成交给它，脚本自己算一遍就等于验证脚本重写了一次被测逻辑。底色那半则不能取自页面：装了壁纸主题的页面整个 UI 是半透明的，标记压着的是一张逐像素变化的照片（实测同一列上下极差 187），`--dsw-alias-bg-base` 本身就解析成 `rgba(108, 96, 97, .28)` 且不随主题变，从格子到 `html` 一层不透明背景都没有。那种页面上不存在「一个底色」，任何单点采样都是偶然值。所以探针自带一块名义底色（深色取页面的 `--dsw-static-neutral-bluish-950` = `rgb(21, 21, 23)`，浅色取白——`--dsw-static-white` 在壁纸主题下被改成了透明，不能用），`Page.captureScreenshot` 把格子连同这块底色一起截下来，两个颜色取自同一张图。量的是「这个配色在标准主题底色上有多少对比度」，与用户装了什么主题无关。
 
@@ -345,3 +345,18 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:provider-band
 - **判据会红是证明过的**：把填充与横线两档都改成 `transparent`，在改用同位 A/B 之后的那版脚本上跑 → **7 条 FAIL**（含填充贡献那条与横线两条）。更早一版（还用「带 vs 底」比值时）只把横线改透明就已经红 6 条。
 - **选择器边界也是判据**：合成两组同结构的分组（一组 `role="menuitemradio"`、一组 `role="option"`），要求前者拿到填充+横线、后者底色仍为 `rgba(0,0,0,0)` 且无 gradient。这条守的是 `:has(> [role="menuitemradio"])` 那个限定——去掉它，斜杠命令面板会跟着变色。
 - 不覆盖：观感（色带是否太重、横线是否抢注意力，只能人工看截图）；斜杠命令面板那一处 `MenuGroup`（选择器带 `:has(> [role="menuitemradio"])` 刻意不改它）；真实桌面客户端的合成层差异。
+
+## 功能 13 的验证
+
+```
+PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:auto-load-older
+```
+
+8 条断言，全部打[测试栈](#测试栈)。**不注入 bundle**，验的是页面自带实例——功能只读 DOM、不调服务，没有要打桩的破坏性动作。判据本体在 [feature-13-auto-load-older.md](./feature-13-auto-load-older.md#实测)。
+
+- **靶子会话按存储文件大小挑，不写 id**：副本随真实 home 漂移，写死的会话下一次同步就可能没了。脚本扫 `tmp/dsh-oi-test-home/sessions/*/*/session.v4.jsonl.zstd`（旧命名回落 `session.jsonl.zstd`），取最大的 8 个逐个打开，要求「按钮在场且停在底部」。打开就落在顶部的会话会被本功能立刻连翻，不适合当「底部静置」的靶子，直接跳过。
+- **滚轮必须是真的**：直接赋 `scroller.scrollTop = 0` 会被上游的滚动补偿在 150ms 内改回去，`IntersectionObserver` 根本不会触发。脚本走 CDP `Input.dispatchMouseEvent` 的 `mouseWheel`，每次 −3000，250ms 一采样。
+- **「到顶」不能当唯一停点**：按钮一可见，本功能就点、上游立刻把锚点顶回新内容上方，250ms 的采样可能已经看不到 `scrollTop = 0`。滚轮循环的停止条件是「行数/高度变了」或「scrollTop 到 0」。
+- **增长只说明有东西加载了，计数才说明是谁点的**：脚本给按钮的 `click` 挂计数器（属性打标记，React 换节点后下一读数补挂），要求 0 → 1 → 2；加载本身仍走上游真 handler。
+- **「不再连点」必须等落地再等 1s**：加载落地后按钮被 `viewport.preserve()` 顶到 `top = -6742`，再等 1s 行数不变，才排除了「可见即加载」之外的另一种实现——只要按钮在 DOM 里就一直点。
+- 不覆盖：失败分支（要造一次 `loadOlder()` 抛错，上游把异常吞进 `console.error`，没有可控注入点）；超长会话上的 `MutationObserver` 开销；真实桌面客户端的滚动手感。
