@@ -1,25 +1,13 @@
 /**
- * 菜单文案的三个来源。
+ * 菜单文案的两个来源。
  *
- * 单选的各项与工作区删除确认整段借上游 `ui-workspace` 的 `workspace` 词典：同一条
- * 操作在这里和上游那个「...」菜单里必须是同一个词——fork 在上游叫「分叉会话」，
- * 自己写成「复刻会话」就是给同一个动作起了第二个名字。`ctx.locale.bind(ns)` 返回的
- * `t` 在**调用时**读 active locale，所以菜单只要在右键那一刻求值就自动跟随语言切换，
- * 不需要订阅 `locale/change`。
+ * 「复制」借 harness 的 **common** 词典（`copy`）。同一个动作在消息气泡的复制按钮上
+ * 已经有官方叫法，自己再写一遍就是第二个说法。
  *
- * 「复制」借 harness 的 **common** 词典（`copy`）。同理：消息气泡上那枚复制按钮用的
- * 就是这一条，自己再写一遍就是第二个说法。
- *
- * 批量项、批量确认、「粘贴」与查找条那几处在上游没有对应词条（上游没有多选，common 里
- * 也没有 `paste`），这部分自注册一个本插件独占的 namespace。两份词典是 harness 发的全部
- * locale（`LOCALE_IDS`），少一份不会报错，只会让那个语言下静默落回英文。
- *
- * 批量文案里的 `{n}` 恒 `>= 2`：批量分支的判据是 `targets.length > 1`，所以英文写死
- * 复数形式不会撞上「1 workspaces」。
+ * 「粘贴」、查找条与设置面板那几处在上下游都没有对应词条（common 里没有 `paste`），
+ * 这部分自注册一个本插件独占的 namespace。两份词典是 harness 发的全部 locale
+ * （`LOCALE_IDS`），少一份不会报错，只会让那个语言下静默落回英文。
  */
-
-/** 上游 `ui-workspace` 拥有的 namespace，本插件只读不写。 */
-export const UPSTREAM_NS = 'workspace'
 
 /** harness 的公共 namespace（`@deepseek-ai/dsh-client-locale` 的 `COMMON_NS`），只读不写。 */
 export const COMMON_NS = 'common'
@@ -29,8 +17,6 @@ export const OWN_NS = '@Tinnikx/dsh-operation-improve'
 
 /** 简体中文词典（键集以它为准）。 */
 const zh = {
-  'batch.deleteWorkspaces': '删除 {n} 个工作区',
-  'confirm.deleteWorkspaces': '删除 {n} 个工作区？其会话将显示在“{group}”下。',
   'selection.paste': '粘贴',
   'find.placeholder': '在页面中查找',
   'find.noResults': '无结果',
@@ -65,8 +51,6 @@ const zh = {
 
 /** 英文词典，键集与 zh 对齐。 */
 const en = {
-  'batch.deleteWorkspaces': 'Delete {n} workspaces',
-  'confirm.deleteWorkspaces': 'Delete {n} workspaces? Their sessions will appear under {group}.',
   'selection.paste': 'Paste',
   'find.placeholder': 'Find in page',
   'find.noResults': 'No results',
@@ -100,26 +84,23 @@ const en = {
 }
 
 /**
- * 注册本插件词典并绑出三个 translate 函数。
+ * 注册本插件词典并绑出两个 translate 函数。
  *
- * 三个函数都是 `(key, params?) => string`，`params` 按 `{name}` 模板替换，调用时才读
- * active locale。`t` 查上游 `workspace` 词典，`tCommon` 查 harness 的 common 词典，
- * `tOwn` 查本插件自己的。
+ * 两个函数都是 `(key, params?) => string`，`params` 按 `{name}` 模板替换，调用时才读
+ * active locale。`tCommon` 查 harness 的 common 词典，`tOwn` 查本插件自己的。
  *
  * @param {any} ctx 提供 `locale` 服务的 client 根 context
- * @returns {{ t: (key: string, params?: Record<string, unknown>) => string,
- *   tCommon: (key: string, params?: Record<string, unknown>) => string,
+ * @returns {{ tCommon: (key: string, params?: Record<string, unknown>) => string,
  *   tOwn: (key: string, params?: Record<string, unknown>) => string,
  *   dispose: () => void }} `dispose` 幂等，摘掉本插件的词典注册
  * @throws 同一个 namespace 的同一个 locale 被注册两次时由 locale 服务抛出
  */
 export function installLocale(ctx) {
   const disposeDict = ctx.locale.register(OWN_NS, { zh, en })
-  const upstream = ctx.locale.bind(UPSTREAM_NS)
   const common = ctx.locale.bind(COMMON_NS)
   const tOwn = ctx.locale.bind(OWN_NS)
 
-  /** 已经报过的键；同一个键只出声一次，右键一次就刷一屏没有意义。 */
+  /** 已经报过的键；同一个键只出声一次，每次界面重绘都刷一屏没有意义。 */
   const warned = new Set()
 
   /**
@@ -147,7 +128,6 @@ export function installLocale(ctx) {
 
   let disposed = false
   return {
-    t: guard(UPSTREAM_NS, upstream),
     tCommon: guard(COMMON_NS, common),
     tOwn,
     dispose: () => {

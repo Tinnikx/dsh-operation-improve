@@ -33,7 +33,7 @@ const FIXTURE_ROOT = join(tmpdir(), FIXTURE_PREFIX)
 /**
  * 页面上那份插件实例的调试句柄，取不到就中止。
  *
- * 没有它就没有靶子可建，也没有任何菜单断言的基准——静默继续只会让每条断言都退化成
+ * 没有它就没有靶子可建，也没有选择状态断言的基准——静默继续只会让每条断言都退化成
  * 「没测到」，而 SKIP 在这套框架里同样是非零退出。
  *
  * @param {(expression: string, retries?: number) => Promise<any>} evaluate CDP 求值器
@@ -58,7 +58,7 @@ export async function requireInstance(evaluate) {
       + '（node scripts/test-stack.mjs up 每次启动都从真 home 重同步）。',
     )
   }
-  for (const service of ['workspaces', 'sessions', 'slots']) {
+  for (const service of ['workspaces', 'sessions']) {
     if (!(probe.services ?? []).includes(service)) {
       abort(
         `句柄上的 services 少了 ${service}，靶子建不起来。`,

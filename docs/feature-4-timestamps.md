@@ -88,7 +88,7 @@ user / steering / turn-tail 三类上游自己就在渲染时间（还带 `Ran f
 
 ## 已知限制
 
-- 时间戳的日期部分不跟随 harness 语言：上游 zh 下写「8月27日」，这里写 `8/27`。`formatClockSeconds` 是个不带 ctx 的纯函数，接词典要把 `conversation` 词典的 `clock.md` / `clock.ymd` 传进去。右键菜单不在此列，它的文案[全部取自词典](./feature-1-2-sidebar-menu.md#菜单项与服务映射)。
+- 时间戳的日期部分不跟随 harness 语言：上游 zh 下写「8月27日」，这里写 `8/27`。`formatClockSeconds` 是个不带 ctx 的纯函数，接词典要把 `conversation` 词典的 `clock.md` / `clock.ymd` 传进去。选中文本菜单（功能 6）的文案全部取自词典，不在此列。
 - 16 类 kind 里，真实页面上只跑到过 `assistant-step` / `tool-call` / `context` / `compaction` / `model-retry` / `turn-tail` / `user` 七类。另外九类（`steering`、`manual-compaction`、`command`、`command-input`、`turn-error`、`turn-max-tokens`、`workflow-run`、`agent-teams`、`unknown`）**从未在真实页面上被验证过**，它们走的是 `resolveTime` 的通用兜底；取不到时间的表现是这一行没有标签，不报错。
 - **整页时间戳不是全局单调的**。同一个 step 内 `model-retry` 显示的重试时刻会晚于其后 `assistant-step` 显示的 step 起点——两者都对，只是读起来像倒退。
 - 常驻规则认的是 `_timeStart` / `_timeEnd` 两个类名片段与 `[data-chat-node-key]` 锚点。上游改类名片段，这四类行的时间退回藏起来，且不报错；改锚点则整条规则失效，`verify:timestamps` 的「基线里没有上游时间标签」前置检查会先撞上。锚点失效当下的表现只是「没人保证常驻」，肉眼看不出来。

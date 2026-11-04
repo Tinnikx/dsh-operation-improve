@@ -74,14 +74,14 @@ async function setQuery(text) {
   await typeText(text)
 }
 
-/** 真实右键（`el.click()` 不算：功能 2 的菜单判据是真实 contextmenu 事件）。 */
+/** 真实右键（`el.click()` 不算：菜单判据是真实 contextmenu 事件）。 */
 async function rightClick(x, y) {
   for (const [type, button, buttons] of [['mouseMoved', 'none', 0], ['mousePressed', 'right', 2], ['mouseReleased', 'right', 0]]) {
     const res = await conn.send('Input.dispatchMouseEvent', { type, x, y, button, buttons, clickCount: button === 'none' ? 0 : 1 })
     if (res.error !== undefined) abort('Input.dispatchMouseEvent 失败', JSON.stringify(res.error))
     await sleep(60)
   }
-  await sleep(250)
+  await sleep(300)
 }
 
 const snapshot = () => evaluate(`window.__dshOperationImprove__?.find?.snapshot() ?? null`)
@@ -356,17 +356,57 @@ check('Esc 关条并摘掉两个高亮注册名', closed,
   (v) => v.bar === false && v.open === false && v.all === false && v.active === false
     || `期望条消失、快照报没开、两个注册名都不在，实测 ${JSON.stringify(v)}`)
 
-// 重开，再在侧栏行上真实右键 → Esc 一次收菜单、条留着；第二次 Esc 才收条。
+// 重开，再选中一段正文并真实右键（功能 6 的菜单）→ Esc 一次收菜单、条留着；第二次 Esc 才收条。
 await press('f', 'KeyF', 70, CTRL)
 await setQuery(query1)
-const rowBox = await evaluate(`(() => {
-  const row = [...document.querySelectorAll('[role="treeitem"]')].find((el) => String(el.className).includes('_sessionRow'))
-  if (row === undefined) return null
-  const r = row.getBoundingClientRect()
-  return { x: Math.round(r.left + 40), y: Math.round(r.top + r.height / 2) }
+const textBox = await evaluate(`(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  // 在消息行里挑一段够长的正文，选中一个词。消息流是虚拟化的，靠前的节点可能在视口外
+  // （实测 y=-1426）；先滚到视口中央，再按新矩形算右键点。
+  for (const host of document.querySelectorAll('[data-chat-node-key]')) {
+    if (!host.checkVisibility({ visibility: true, opacity: false })) continue
+    const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT)
+    let node = null
+    while ((node = walker.nextNode()) !== null) {
+      if ((node.textContent ?? '').trim().length >= 20) break
+    }
+    if (node === null) continue
+    const text = node.textContent
+    const start = text.indexOf(' ') + 1
+    const range = document.createRange()
+    range.setStart(node, Math.min(start, text.length - 1))
+    range.setEnd(node, Math.min(start + 8, text.length))
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    let rect = range.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) continue
+    if (rect.top < 0 || rect.bottom > window.innerHeight) {
+      host.scrollIntoView({ block: 'center' })
+      await sleep(400)
+      rect = range.getBoundingClientRect()
+    }
+    const x = Math.round(rect.x + rect.width / 2)
+    const y = Math.round(rect.y + rect.height / 2)
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) continue
+    const target = document.elementFromPoint(x, y) ?? document.body
+    const caret = document.caretPositionFromPoint?.(x, y) ?? null
+    let inside = null
+    try { inside = caret === null ? null : range.comparePoint(caret.offsetNode, caret.offset) === 0 } catch { inside = false }
+    const evt = new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, composed: true, button: 2, buttons: 2, clientX: x, clientY: y,
+    })
+    target.dispatchEvent(evt)
+    return {
+      text: selection.toString(), x, y, inside,
+      target: target.className || target.tagName, prevented: evt.defaultPrevented,
+    }
+  }
+  return null
 })()`)
-if (rowBox === null) abort('侧栏没有可右键的会话行', 'Esc 让位断言实测未发生。')
-await rightClick(rowBox.x, rowBox.y)
+if (textBox === null) abort('找不到可选中并右键的正文', 'Esc 让位断言实测未发生。')
+console.log('[esc-menu]', JSON.stringify(textBox))
+await sleep(400)
 const menuOpen = await evaluate(`({ menu: document.querySelector('.dsh-oi-menu') !== null, bar: document.querySelector('.dsh-oi-find') !== null })`)
 await press('Escape', 'Escape', 27)
 const afterFirstEsc = await evaluate(`({ menu: document.querySelector('.dsh-oi-menu') !== null, bar: document.querySelector('.dsh-oi-find') !== null })`)

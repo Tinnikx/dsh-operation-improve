@@ -112,6 +112,8 @@ export function installFind(deps) {
   let queue = false
 
   let query = ''
+  /** @type {HTMLStyleElement|null} 命中高亮样式；无命中时为 null。 */
+  let highlightStyle = null
   /** @type {Array<{ key: string, ordinal: number, start: number, end: number, ref: Text }>} */
   let matches = []
   /** @type {Range[]} 与 matches 同序同长。 */
@@ -189,6 +191,21 @@ export function installFind(deps) {
     return range
   }
 
+  function mountHighlightStyle() {
+    if (highlightStyle !== null) return
+    const style = document.createElement('style')
+    style.setAttribute('data-dsh-oi-find-highlight', '')
+    style.textContent = FIND_HIGHLIGHT_CSS
+    document.head.append(style)
+    highlightStyle = style
+  }
+
+  function unmountHighlightStyle() {
+    if (highlightStyle === null) return
+    highlightStyle.remove()
+    highlightStyle = null
+  }
+
   function paint() {
     // 每次都重新认领这两个名字：两份实例并存时后装上的一方会占住注册名，不认领就是
     // 这一份在往一个已经不上屏的集合里画。
@@ -198,6 +215,9 @@ export function installFind(deps) {
     activeSet.clear()
     for (const range of ranges) allSet.add(range)
     if (cursor >= 0 && cursor < ranges.length) activeSet.add(ranges[cursor])
+    // 没有命中就没有可画的高亮；样式表跟着命中一起进退。
+    if (ranges.length > 0) mountHighlightStyle()
+    else unmountHighlightStyle()
   }
 
   function renderStatus() {
@@ -340,6 +360,7 @@ export function installFind(deps) {
     activeSet.clear()
     if (CSS.highlights.get(HIGHLIGHT_ALL) === allSet) CSS.highlights.delete(HIGHLIGHT_ALL)
     if (CSS.highlights.get(HIGHLIGHT_ACTIVE) === activeSet) CSS.highlights.delete(HIGHLIGHT_ACTIVE)
+    unmountHighlightStyle()
   }
 
   /** @param {KeyboardEvent} event */
@@ -461,6 +482,20 @@ export const FIND_CSS = `
   cursor: pointer;
 }
 .${ROOT_CLASS}__btn:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.18)); }
+`
+
+/**
+ * 命中高亮的样式表。**只在有命中时挂到 head 上**。
+ *
+ * 两条 `::highlight()` 常驻会让浏览器在每次选区变化时多解析一轮高亮伪元素：实测同一段
+ * 正文三击选中，常驻时 Event Timing 的 click 时长中位 72ms，摘掉这两条后 56ms（headless
+ * 软件渲染，基线本身就慢，差值稳定在一个 60Hz 帧档）。没有命中就没有可画的高亮，按需挂载
+ * 能把常态下这三击的延迟还回去。
+ *
+ * 两条规则的先后是绘序：规范里叠放顺序跟随规则在文档里出现的顺序，当前项必须画在全部
+ * 命中之上，所以 active 在后。
+ */
+const FIND_HIGHLIGHT_CSS = `
 ::highlight(${HIGHLIGHT_ALL}) {
   background-color: color-mix(in srgb, var(--dsw-alias-state-warn-label, #d9a441) 42%, transparent);
 }

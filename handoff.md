@@ -4,6 +4,7 @@
 
 | 编号 | 标题 | 状态 | 完整记录 |
 | --- | --- | --- | --- |
+| 029 | harness 0.2.2-alpha.3 适配 + 移除侧边栏插件右键菜单（交还官方原生菜单）+ 官方功能重叠审计 + 查找高亮样式按需挂载（三击选中延迟） | 完成 | [029-harness-0.2.2-alpha.3-adaptation.md](docs/handoff/029-harness-0.2.2-alpha.3-adaptation.md) |
 | 028 | 功能 13：滚到顶部时自动加载更早消息（可见即自动点「加载更早」，失败不重试） | 完成 | [028-auto-load-older.md](docs/handoff/028-auto-load-older.md) |
 | 027 | harness 0.2.2-alpha.2 适配（sprite 图标、侧栏坐标、查找滚动、catalog 默认值四处漂移；九套 211 条全绿） | 完成 | [027-harness-0.2.2-alpha.2-adaptation.md](docs/handoff/027-harness-0.2.2-alpha.2-adaptation.md) |
 | 026 | harness 0.2.1-rc.3 适配（单测 46、九套 211 条、catalog 19/83 全绿；锚点已改 rc.3） | 完成 | [026-harness-0.2.1-rc.3-adaptation.md](docs/handoff/026-harness-0.2.1-rc.3-adaptation.md) |

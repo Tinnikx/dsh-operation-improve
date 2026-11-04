@@ -232,7 +232,7 @@ const boot = `
   // 桩被调到即抛，把「意外进入渲染路径」变成显式失败。
   // react-dom/client 也是产物顶层 require 的四个 seed 模块之一（菜单外壳是插件自己
   // 那棵 React root），但时间戳这一支一个菜单都不开，所以 createRoot 够不到。
-  // Component 必须给真的——slot-rows.jsx 的条目错误边界 extends 它，缺了它 bundle
+  // Component 必须给真的——上游菜单渲染路径里的条目错误边界 extends 它，缺了它 bundle
   // 求值期就会抛「Class extends value undefined」。这段字面量在模板串里，注释里不能
   // 出现反引号。
   const noRender = (what) => () => { throw new Error('verify:timestamps 不该走到 ' + what) };

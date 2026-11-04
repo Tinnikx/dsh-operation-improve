@@ -13,7 +13,7 @@ PATH=$HOME/.nvm/versions/node/v24.14.0/bin:$PATH   # nvm，v24.14.0
 
 ## 测试栈
 
-**验证脚本一律打测试栈，不打日常在用的那个 harness。** 端到端断言里有「批量删除工作区」，它会真的发出 click；服务是 spy、闸也有三道，但闸是兜底不是许可证，真数据不该出现在被点击的那一侧。
+**验证脚本一律打测试栈，不打日常在用的那个 harness。** 端到端断言会真的建/删工作区、发 click；隔离靠副本，不靠闸。
 
 ```
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:up       # 起
@@ -60,58 +60,31 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm test
 
 ## 端到端
 
-端到端验证走 CDP 注入——对着**运行中的真实页面**驱动页面自己那份插件实例，菜单断言读的是真实 DOM 上的上游组件产物。走裸 CDP（无 puppeteer 依赖），连接器与断言框架来自 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)，每个 `verify:*` 脚本都接它——判据语义（skip 也算失败、非零退出）只有一份实现。**默认打测试栈（3181 / CDP 9334）**，见 `lib/cdp.mjs` 的 `resolveTarget`，不打日常在用的那个 harness。
+端到端验证走 CDP：对着**运行中的真实页面**驱动页面自己那份插件实例，读真实 DOM 与句柄状态。走裸 CDP（无 puppeteer 依赖），连接器与断言框架来自 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs)，每个 `verify:*` 脚本都接它——判据语义（skip 也算失败、非零退出）只有一份实现。**默认打测试栈（3181 / CDP 9334）**，见 `lib/cdp.mjs` 的 `resolveTarget`，不打日常在用的那个 harness。
 
 **每个脚本 reload 之后都先收掉产品引导框**（[scripts/lib/onboarding.mjs](../scripts/lib/onboarding.mjs) 的 `dismissOnboarding()`）：副本没有凭据，应用加载会弹「预览版说明」再弹「配置 API 密钥」两步 `OnboardingModal`。它们是模态层，按设计独占 `Escape`（上游 `Menu.tsx` 的 `isBehindModal` 让菜单在模态之上时不处理 Esc），并把焦点钉在自己的输入框上——不收掉的话菜单的 Esc、键盘焦点这些断言测到的都是模态层的行为。已经收掉时该调用是空操作，所以在每个 reload 之后无条件调用。唯一例外是 [verify-settings-live.mjs](../scripts/verify-settings-live.mjs)：它按字节比对 `cordis.patch.yml`，而点「继续」会把已读标记写回 host 配置，因此那里只单独收凭据步、不碰预览步。
 
-**早先的版本是注入 bundle 的**（截下 `window.__ModuleLoader__` 的 registration、手动 apply 一个 ctx、服务换成记账 Proxy），插件换成上游组件后这条路整体走不通：产物顶层 require 的四个模块（`react` / `react/jsx-runtime` / `react-dom/client` / `@deepseek-ai/dsh-client-ui-primitives`）全是平台 seed，桩被调到即抛；更要紧的是会话那一支菜单的条目要从真 `slots` 服务里读出来才渲染得出来，而注入实例拿到的是脚本手搓的 ctx，两边都读不到那一格条目表。
+**驱动真实例 + 自建可丢弃的靶子**。插件装在 profile 里，页面每次加载都自带一份实例；选择集读的就是那份实例的 `selection` store，高亮读它画在行上的 `data-dsh-oi-selected`。脚本不注入 bundle、不手搓 ctx——产物顶层 require 的几个模块全是平台 seed，注入实例拿不到真服务，而菜单与行 id 都要从真服务/DOM 里读。
 
-**所以现在驱动真实实例 + 自建可丢弃的靶子**。插件装在 profile 里，页面每次加载都自带一份实例（见[加载方式](../README.md#加载方式)），脚本要的就是那一份。会话那一支菜单的条目因此是**上游真组件**，点下去也是**真服务**（`workspaces.delete`、`sessions.fork`、`archiveSession`……），所以：
+`verify-live.mjs` 的功能 1 断言全程只碰侧边栏行本身：
 
-- **文案不绑死在中文上**：菜单文本比的是句柄上 `locale.t` / `tOwn` 当场给出的那串字符串，切换语言后同一套断言仍成立（换语言跑一遍见下文）。
-- **置顶与归档两个集合直接从服务读**：`svc.workspaces.list.getSnapshot()` 的 `pinnedSessionIds` / `archivedSessionIds`，不用再从行上的按钮反推状态。
-- **破坏性项只对靶子点**：脚本在开始时建一个可丢弃的工作区（见[scripts/lib/fixtures.mjs](../scripts/lib/fixtures.mjs)），删除工作区与批量删除只对它点；那条之后重建一个，收尾 `cleanupFixtures` 删工作区、`rmSync` 掉目录。
-- **靶子只有工作区，没有会话**：`sessions.create` 建出来的会话是 blank 的，而 `ui-workspace/src/client/tree.ts:238-256` 的 `sessionVisible()` 首行就是 `if (session.blank && session.id !== current) return false`——blank 只由真发一条消息翻掉（`session-controller/src/client/sessions/manager.ts:278-292`），公开 API 里没有开关。新建会话永远没有侧栏行，当不了靶子。会话那一支改用两条路：**可逆的真操作**（置顶后取消置顶、重命名后改回原名，测试栈 home 是真 home 的 `rsync` 副本，每次 `stack:up` 重同步）+ **打桩**（给句柄 `services.uiWorkspace` 上那个实例挂 own property 拦下 `forkSession` / `archiveSession` / `unarchiveSession`；上游 inject 的动作回调是调用时属性查找，所以桩拦得住且零副作用，打桩期间不 call through）。
+- `ctrl` 点击工作区行进入选择集，kind=workspace、size=1、行上有高亮。
+- 同 kind 再点另一行是追加，size=2、两行同时高亮。
+- 换 kind（点会话行）时整组重置：kind=session、size=1，旧工作区高亮消失。
+- 再点一次已选中的行取消，size=0、kind=null、高亮消失。
+- 普通点击清空选择集。
 
-点击任何菜单项之前有三道闸，任何一道不满足都原路返回、**一个 click 都不发**：
+右键那三条是**交还官方**的断言，不点菜单项：
 
-1. **数量**：点击前数本插件菜单卡片的个数，不等于 1 就原路返回。页面上残留 N 份实例时右键会开出 N+1 张卡片，这道闸兜住没停干净的情况。
-2. **归属**：读卡片类名里那个 `dsh-oi-menu--<id>` 片段，要求 `<id>` 逐字等于句柄上的 `instanceId`。前两道都靠推理（「只有一个所以是我的」），这道直接问菜单是谁开的。卡片在 `document.body` 下、不在本插件的 DOM 子树里，所以归属只能认这个类名（`listClassName` 是唯一能作用于 portaled list 的样式钩子，见[基础层](./shared-api.md#srcsharedmenujsx)）。
+- 右键工作区行：本插件卡片 `plugin=0`，官方 `div[role="menu"]` 至少 1 张。
+- 右键会话行：同上。
+- 带着两项多选右键：`plugin=0`、`official≥1`，且选择集保持 2 项——多选只做高亮与计数，不弹批量动作。
 
-被点击的那一侧根本不该是真数据，靶子就是那道隔离——三道闸只保证「点的是本实例的卡片」，它不保证「这张卡片背后是假数据」。
+**合成 `contextmenu` 必须带 `clientX`/`clientY`**：官方菜单用事件坐标定位，缺了会把卡片放在 (0,0)。判据不看 `defaultPrevented`——官方菜单也会 `preventDefault()`，只看「官方卡片在、插件卡片不在」。插件卡片的类名是 `.dsh-oi-menu`，官方卡片是其余 `div[role="menu"]`，两者按类名区分。
 
-**fork 只验创建，不验打开**。上游那条条目 fork 之后**不**自动打开子会话，本插件跟随上游（原先那段侧栏轮询点行的逻辑已删，见[功能 1、2 · 菜单项与服务映射](./feature-1-2-sidebar-menu.md#菜单项与服务映射)）。所以断言是「打桩记下了源会话 id、且 `sessions.list` 的条数没变」——真 fork 会给测试栈副本留下一条永远删不掉的会话（`ISessions` 没有 delete），收益不抵脏数据。
+**靶子工作区由 [scripts/lib/fixtures.mjs](../scripts/lib/fixtures.mjs) 建**，收尾 `cleanupFixtures` 删工作区并 `rmSync` 目录。收尾发生在 `dispose()` 断言**之前**：删工作区靠句柄上的 `services`，dispose 之后句柄就没了。最后一条断言因此随便挑一条现成工作区行来用，不能再依赖靶子行。
 
-**归档那一项验的是「菜单末项按态翻」，不是「点下去真归档」。** 上游的「归档会话」与「取消归档」是同一个 slot（order 400）按归档态换文案、图标与调用的方法，而归档态只能靠真操作改变。所以判据拆成两半：未归档行上菜单末项是「归档会话」、全文没有「取消归档」，点它 → 打桩记下 id、且真服务一个没调（**这一条不许 call through**）；归档行那一半**不测**（要看到归档行得开上游「视图选项 → 显示已归档」，拿到的又是打桩状态下的假象）。
-
-**重命名走真往返**：点菜单里那条「重命名」后断言弹的是上游 `SessionRenameDialog`（`div[role="dialog"]` + `input[data-modal-autofocus]` + 初值逐字等于该会话 `displayTitle` + footer 恰好「取消 / 重命名」两枚按钮），然后写一个带 `dsh-oi-verify-` 前缀的新标题提交、确认 `displayTitle` 变了，再开一次对话框改回原名提交、确认复原。往返都落在副本上，净效果为零。
-
-**「对齐上游」那几条断言要点开的是页面自己的菜单，而它挂在真服务上。**「...」是行右侧操作区里的第一个按钮，工作区行的第二个是「新建会话」——闭着眼点操作区就会真的开一个会话。所以打开的动作只认 `button[0]`，并要求它恰好多弹出一个 portal 菜单（数量不对就当没测到）；对着它只读图标标识（`data-icon` 与 `<use href>`；0.2.2 起上游图标是 sprite 引用，`path[d]` 在这类图标上恒为空）、`viewBox` / `width` / `height` / 全部 `path[d]` 与 `getComputedStyle`，一个菜单项都不点，关闭走 `Escape`。
-
-**单选会话那份菜单与上游逐项全等**（`session menu mirrors the row's own menu`）：本插件渲染的就是那四个 slot 条目本身，所以判据是两份菜单的 `label` / 图标标识（`data-icon` 与 `<use href>`）/ `viewBox` / `width` / `height` / 全部 `path[d]` / 顺序**逐项相等**，并要求上游「...」那一份恰好 4 项（项数变了就 FAIL，而不是自动放行——上游真加一项时这一条会红，届时该改的是这条判据里的 4，不是插件）。配套的 `session batch right-click hands the menu back` 测的是另一半契约：多选会话右键后**没有**本插件卡片，且 `defaultPrevented` 为 `false`（只断言"没弹"会放过一个更糟的实现：拦下默认行为再什么都不做）。它也不是"要弹出上游的菜单"——侧边栏行上没有任何 `contextmenu` 监听，不拦的结果就是浏览器默认。
-
-**工作区单选菜单反过来了：它是上游的超集**，因为「新会话」在上游根本不在「...」菜单里（它是行 hover 操作区的第二枚图标按钮，上文「点开的是页面自己的菜单」那段说的就是别闭着眼点第二枚）。上游没有覆盖工作区行的 slot，所以这三项是本插件拼的（外壳与图标仍是上游组件）。判据拆成两段：`workspace menu mirrors the row's own menu` 要求本插件 3 项、**首项逐字等于词典里的 `actions.newSession`**、末两项与上游那两项逐项全等；`workspace new session opens a session in that workspace` 点首项后看**状态 diff**——靶子工作区被展开、菜单关掉、侧栏多出一条会话。**位置钉死为首项**是决定不是细节：它不是破坏性操作，混进标红那一堆里会误导，要换位置得连同理由一起改代码。早先还有第三条 `workspace menu drops new session without the service`（服务未注册时整项不出现），现在**没有**：`uiWorkspace` 是真服务，脚本拿不掉它，那一项也就没法在真实例上缺席——入口缺席那一半改由 `resolveUiWorkspace()` 每次现取保证（服务可能被替换，见[功能 1、2](./feature-1-2-sidebar-menu.md)）。
-
-**浮层描边色分列两条判据**（`menu metrics match the primitives default tier` 里 `styleDiff` 之前那两步）：一条比菜单根元素上的 `data-menu-material`，一条比那枚 token `--dsw-elevation-stroke-color` **解析后的值**。卡片现在就是上游 `MenuSurface` 渲染的（`data-menu-material` 与 `--dsh-menu-anchor` 都由它自己带），本插件的 `MENU_CSS` 只剩一条 `z-index`——所以那两条判据现在守的是「本插件没把档位改坏」，回归证法是把 `listClassName` 之外再往那张卡片上压一条改档位的规则，看它是否变红。**不能靠 `list.boxShadow` 反推**——它那串里混着两档同值的层，深浅两档只有深色露馅，混进去那条换个主题跑就会静悄悄地放过。
-
-**常驻容器不进文档流，由一条几何断言守着**（`opening the menu does not shift the page geometry`）：上游把 `anchor` **原地**渲染进本插件那棵常驻 React 树，外层包装自带 18px 行盒。容器留在 `body` 流里时，菜单一开就把内容高度顶过视口、冒出一条竖直滚动条，`documentElement.clientWidth` 少掉一个滚动条宽（实测 1600→1595），会话区与右侧导航列跟着横向收窄（实测 1318→1313）——用户看到的是一次右键整页跳。判据取「开前 / 开着 / 关后」三份快照并要求一个数都不变，另读容器自己的 `position` 与盒子尺寸（`fixed` + 0×0）。机制与契约在[基础层](./shared-api.md#srcsharedmenujsx)。
-
-**只测启动那一档主题仍然不够**，因为缺两半各在一档里露馅，而测试栈只起深色。故另立 `menu stroke colour matches upstream in both themes`：`withScheme()` 摘掉或挂上 body 的 `data-ds-dark-theme`，在守卫窗口内各跑一遍两份菜单，逐档比 `data-menu-material` 与那枚解析后的描边色，并额外要求**两档读出的值不同**——相同即说明其中一档没生效。守卫与[功能 5 的 C 组](#功能-5-的验证)同一套机制：**这个属性有人抢**，副本上的标准主题由应用自己的主题控制器在两帧内写回（实测摘掉后 700ms 内写回 1 次），第三方主题在场的现场是每帧写回（实测 700ms 内 47 次），而 `pair()` 要跨数百毫秒才读到卡片，一次性翻转撑不住。两档差异的证据 `landed` 读的是带 `[data-menu-material]` 的探针元素上的 `--dsw-elevation-stroke-color`（副本标准深色档实测 `#ffffff29`）。在第三方在场的现场**不能**读 `--dsw-alias-border-l3`：那枚被它的 81 条 `!important` 钉成深色档的值，深浅两档恒读同一个数，拿它当「杠杆在动」的证据必然假失败；`theme.overrideTokens` 也压不过那些 `!important`（实测覆盖深浅两档后读数一个都不变），所以它不是杠杆。
-
-**归档行单独比一条**这条已经删掉了。它原来的做法是「先把靶子会话真归档，再打开上游『视图选项 → 显示已归档』，在归档行上比菜单」——靶子会话不再存在，而真归档留下一条删不掉的脏会话（`ISessions` 没有 delete），所以换成上面「打桩 + 逐项全等」那条。留在打开态的视图开关还有副作用：会让后续取行取到归档行，也会让 `verify:chat-history` 的会话挑选取到打不开的归档行（表现为 ABORT「找不到恰好一条提问的会话」）。
-
-这也是为什么 `apply()` 挂出去的 [`window.__dshOperationImprove__`](./shared-api.md#调试句柄) 必须列全每一项带监听或带注册的功能并带一条整体 `dispose()`，外加一个 `services`：脚本靠 `dispose()` 收尾（最后一条断言要验「卸载后连 React 容器一起摘掉」），靠 `services` 建靶子。句柄上少暴露一项，脚本就有一条断言退化成「没测到」。
-
-`scripts/verify-live.mjs` **自己不起浏览器**，只连一个已经加载了 DSH 页面的 CDP 实例。不带参数时打的是测试栈：
-
-```
-PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run stack:up
-PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify
-```
-
-要打别的目标就绕开 npm script 直接给参数：`node scripts/verify-live.mjs [port] [urlPrefix]`（`npm run verify -- 9334 …` 也行，但 `--` 容易漏）。
-
-脚本每次先 `Page.reload` 回到一份干净页面，再展开所有折叠的工作区好让会话行够数，然后取句柄、建靶子。`DSH_OI_NO_RELOAD=1` 可跳过刷新——但页面状态是上一轮留下的（靶子行、视图开关、菜单都可能还在），结果不如刷新过的可信。
+**卸载断言**：`dispose()` 后样式表、调试句柄、`[data-dsh-oi-selected]` 高亮全部消失，再右键仍只有官方卡片（证明行上的原生菜单没被带走）。
 
 ## 怎么看出「测了」而不是「跳过了」
 
@@ -122,7 +95,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify
 - 每条断言前缀是 `[PASS]` / `[FAIL]` / `[SKIP]`，结尾固定打印 `passed=N failed=N skipped=N total=N`。
 - **`failed + skipped > 0` 一律非零退出**，全绿时最后一行是 `[OK] 全部断言实际执行且通过。`
 
-所以确认「真的测了」只需两步：`echo $?` 为 0，且末行 summary 是 `passed=N failed=0 skipped=0 total=N`（N 是断言条数，十套合计 219 条，逐套读数见各功能文档的「验证」一节）。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
+所以确认「真的测了」只需两步：`echo $?` 为 0，且末行 summary 是 `passed=N failed=0 skipped=0 total=N`（N 是断言条数，十套合计 197 条，逐套读数见各功能文档的「验证」一节）。只看见一堆 `[PASS]` 而没核对计数与退出码是不够的——早先的版本没有断言、只打印观测值，前置条件不满足时会把每条记成 skip 然后以退出码 0 收场，看起来通过、实际什么都没验证。
 
 判据与退出码由 [scripts/lib/cdp.mjs](../scripts/lib/cdp.mjs) 提供，十个验证脚本共用：`check(label, value, expect)` 的 `expect` 返回 `true` 记 PASS、返回字符串记 FAIL 并把它当失败原因；观测值带 `skipped` 字段记 SKIP。**SKIP 与 FAIL 一样导致非零退出**——一个全是 skip 却退 0 的脚本比没有脚本更糟。环境不满足（窗口过窄、会话页没打开、起点不足）时直接 `abort()` 并点名「实测未发生」，同样非零退出。
 
@@ -188,7 +161,7 @@ PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:dot
 PATH=$HOME/.dsh/desktop-bin/node-shim:$PATH npm run verify:selection
 ```
 
-同样**不注入 bundle、不 apply 自造 ctx**，验的是页面自带的那份实例：功能 6 一个 harness 服务都不调，没有需要打桩的破坏性动作，走页面自己的实例反而把「构建产物 → profile 装载 → 真实词典」整条路径一起验了。20 条断言覆盖三条命中路径（会话正文的选区、0.1.6 Lexical composer 的 contenteditable 判据——有选区「复制+粘贴」、空态「只给粘贴」、Esc 收尾，合成 `<textarea>` 的 field 路径——选区「复制+粘贴」、空态「只给粘贴」）、两项动作的实际效果、不该命中的两种情形（非可输入且无选区、侧边栏行）、样式一致、图标一致、以及 `dispose` 之后不再接管。
+同样**不注入 bundle、不 apply 自造 ctx**，验的是页面自带的那份实例：功能 6 一个 harness 服务都不调，没有需要打桩的破坏性动作，走页面自己的实例反而把「构建产物 → profile 装载 → 真实词典」整条路径一起验了。18 条断言覆盖三条命中路径（会话正文的选区、0.1.6 Lexical composer 的 contenteditable 判据——有选区「复制+粘贴」、空态「只给粘贴」、Esc 收尾，合成 `<textarea>` 的 field 路径——选区「复制+粘贴」、空态「只给粘贴」）、两项动作的实际效果、不该命中的两种情形（非可输入且无选区、侧边栏行）、图标一致，以及 `dispose` 之后不再接管。
 
 - **脚本自己挑会话、挑选区，两道命中测试**：选区探针只认页面上已经渲染出来的正文，而跨脚本串台会把现场挪走——接在 `npm run verify` 之后跑时，页面停在那条「新会话」断言开出来的空白会话上（实测会话区只剩 78 字、composer 都不在），`Page.reload` 恢复的就是同一个会话。所以开头按 `data-chat-node-key` 的行数（≥8）与 composer 在场逐条试点会话（跳过运行中的，两次读数一致才算落定），挑不到正文就换下一条，全挑不到才 `abort` 点名实测未发生。挑正文有两道硬判据：**必须落在消息行内**——只按「够长 + 可见 + 不在侧栏行与输入框里」筛，会话一空就会挑到 composer 上那枚模型名按钮的标签（实测 `SPAN._7KE1Ra_triggerLabel`），插件对它不弹菜单是对的；**算出来的点必须真命中这段文本自己的盒子**——会话列上方那层吸顶 `_header_…` 覆盖带会把点接走，打在选区之外 Chrome 当场折叠选区，插件于是正确地不弹、不 `preventDefault`。对照读数：新栈上 `elementFromPoint` 是 `STRONG.`（选区活着、`cards:1`），verify 之后是 `DIV._header_1pq26_10`（`hitInsideRangeAncestor:false`、按下即折叠、`cards:0`）。观测值里带上 `host` 与 `hitAt`，下次再红就自己说清点打在什么上面。
 - **手势必须走 CDP 的 `Input.dispatchMouseEvent`，不能用合成事件**。合成的 `.click()` 不带 user activation，而 `navigator.clipboard.readText()` 要的正是它——用合成事件时粘贴那条断言会在功能完好的情况下报失败。

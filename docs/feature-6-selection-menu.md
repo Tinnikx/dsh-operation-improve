@@ -15,9 +15,9 @@ copySelection(text) -> Promise<void>      // writeClipboard，失败只出声不
 pasteInto(snapshot) -> Promise<void>      // 读剪贴板 → 恢复选区 → 派发 paste 事件
 ```
 
-一个捕获阶段的 `contextmenu` 监听器挂在 `document` 上，命中就 `preventDefault()` 并开菜单，不命中就原样放行。菜单本体、样式、关闭条件全部来自[基础层那份组件](./shared-api.md#srcsharedmenujsx)，本模块**不带任何 CSS**——「与会话菜单栏样式一致」由「是同一个 `Menu`、同一个 React 树」保证，而不是靠抄一份数值。文案与图标见[功能 1、2 · 菜单项与服务映射](./feature-1-2-sidebar-menu.md#菜单项与服务映射)。
+一个捕获阶段的 `contextmenu` 监听器挂在 `document` 上，命中就 `preventDefault()` 并开菜单，不命中就原样放行。菜单本体、样式、关闭条件全部来自[基础层那份组件](./shared-api.md#srcsharedmenujsx)，本模块**不带任何 CSS**——「与会话菜单栏样式一致」由「是同一个 `Menu`、同一个 React 树」保证，而不是靠抄一份数值。文案与图标的来源见[基础层 · locale](./shared-api.md#srcsharedlocalemjs)。
 
-- **侧边栏的行归功能 2，这道判据得自己写**。两个 handler 都挂在 `document` 的捕获阶段，同一个节点上的 `stopPropagation()` 拦不住彼此，所以本模块见到 `closestRow(target) !== null` 必须自己提前返回；不写就是一次右键开两次菜单，后开的（功能 6）把行菜单顶掉。
+- **侧边栏的行归官方 `ui-workspace`，这道判据得自己写**。官方菜单与功能 6 的 handler 都挂在 `document` 的捕获阶段，同一个节点上的 `stopPropagation()` 拦不住彼此，所以本模块见到 `closestRow(target) !== null` 必须自己提前返回；不写就是一次右键开两次菜单，后开的（功能 6）把行菜单顶掉。
 - **选区判定分三条路径**。`window.getSelection()` 看不见 `<input>` / `<textarea>` 内部的选区（Chrome 下那里恒为折叠），表单控件只能读 `selectionStart` / `selectionEnd`，`type` 还得在白名单里——`checkbox` / `color` / `date` / `number` 读这两个属性抛 `InvalidStateError`。contenteditable（0.1.6 起的 Lexical composer）走 DOM 选区，**判据照表单控件的语义**：其内有非折叠选区就给「复制+粘贴」，没有就只给「粘贴」，都不要求点击点落在选区内——控件/编辑器边界本身就是范围限定。页面别处的普通文本才需要「点击点落在选区内」那道闸。
 - **普通文本那条路径必须确认点击点落在选区内**。只判「选区非空」的话，页面上还留着一段旧选区时任何位置右键都会弹出一个「复制」，复制的还是别处那段文字。判法是 `caretPositionFromPoint`（缺席回落 `caretRangeFromPoint`）取该点的 `(node, offset)`，再 `range.comparePoint(...) === 0`。**不用 `range.getClientRects()` 命中测试**：多行选区的矩形并集把行尾到容器右边缘那一片空白也算进去，点在那里并没有点在文字上。表单控件那条路径反过来**不要求**点在选区内——浏览器自己在控件里右键也保留原选区，而控件边界已经把范围限死了。
 - **两项都没有时不 `preventDefault`**。空白处右键仍然是浏览器自己那套菜单；吃掉事件却不给菜单，用户就只是失去了一个功能。

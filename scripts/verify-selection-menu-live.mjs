@@ -14,6 +14,9 @@
  * **粘贴用的剪贴板内容是脚本自己写进去的哨兵串**，不是上一条断言复制进去的会话文本：
  * 期望值必须逐字可算，而会话里那段文字是什么取决于测试栈当时打开的是哪个会话。
  *
+ * 侧边栏行的右键自 harness 0.2.2-alpha.3 起由 `ui-workspace` 原生处理，本脚本只断言
+ * 「有选中文本时右键行，插件不弹卡片、官方菜单照常出现」，不再比对两份菜单的外观。
+ *
  * CDP 连接与断言框架来自 [lib/cdp.mjs](lib/cdp.mjs)，判据语义（skip 也算失败、非零退出）
  * 与其余脚本共用一份实现。
  *
@@ -41,30 +44,6 @@ const LITERALS = {
   zh: { copy: '复制', paste: '粘贴' },
   en: { copy: 'Copy', paste: 'Paste' },
 }
-
-/**
- * 比 computed style 时要排除的属性——它们随菜单项数与文案长度变，与「外观是否一致」无关。
- * 用显式清单而不是正则：`font-size` 里也有 "size"，一条 `/size/` 会把字号一起放过。
- */
-const GEOMETRY_KEYS = new Set([
-  'width', 'height', 'inline-size', 'block-size',
-  'perspective-origin', 'transform-origin',
-  'left', 'top', 'right', 'bottom',
-  'inset', 'inset-block', 'inset-block-start', 'inset-block-end',
-  'inset-inline', 'inset-inline-start', 'inset-inline-end',
-  '-webkit-logical-width', '-webkit-logical-height',
-])
-
-/**
- * 每挂一次就变的键，也不参与「外观是否一致」的判断。
- *
- * 上游 `MenuSurface` 用 `useId()` 生成自己的锚点名，再写进 `--dsh-menu-anchor` 供 CSS
- * anchor positioning 用——两次挂载拿到两个不同的 useId，所以同一张卡片的两个样本必然在这两个
- * 键上不等。它比的是取值本身而不是「两张卡片长得一样」，所以要把整对键一起排除。
- */
-const INSTANCE_KEYS = new Set([
-  'anchor-name', '--dsh-menu-anchor',
-])
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -126,11 +105,20 @@ async function mouse(type, x, y, button) {
 
 /** 在 (x, y) 上真实右键；返回前留出一拍让菜单挂上去。 */
 async function rightClick(x, y) {
-  await mouse('mouseMoved', x, y, 'none')
-  await mouse('mousePressed', x, y, 'right')
-  await sleep(40)
-  await mouse('mouseReleased', x, y, 'right')
-  await sleep(200)
+  // 合成 contextmenu 而不是 CDP 右键：官方菜单与功能 6 都只靠事件坐标定位，合成事件带
+  // clientX/clientY 就能触发；而 CDP 右键在不同行结构上命中的子元素不一致，官方菜单会
+  // 间歇性不开。剪贴板动作仍然走真实左键（那里需要 user activation）。
+  const ok = await evaluate(`(() => {
+    const target = document.elementFromPoint(${x}, ${y}) ?? document.body
+    const evt = new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, composed: true, button: 2, buttons: 2,
+      clientX: ${x}, clientY: ${y},
+    })
+    target.dispatchEvent(evt)
+    return evt.defaultPrevented
+  })()`)
+  await sleep(400)
+  return ok
 }
 
 /** 在 (x, y) 上真实左键。 */
@@ -235,11 +223,6 @@ const boot = await evaluate(`(() => {
     lang: document.documentElement.lang,
     copy: h.locale?.tCommon?.('copy') ?? null,
     paste: h.locale?.tOwn?.('selection.paste') ?? null,
-    rowPin: [h.locale?.t?.('menu.pinSession') ?? null, h.locale?.t?.('menu.unpinSession') ?? null],
-    // 会话行菜单整份就是上游那几个 slot 条目，顺序按注册 order：置顶 / 重命名 / 分叉 / 归档 / 复制 Session ID。
-    rowLabels: [h.locale?.t?.('rename') ?? null, h.locale?.t?.('menu.fork') ?? null],
-    rowArchive: [h.locale?.t?.('menu.archiveSession') ?? null, h.locale?.t?.('menu.unarchiveSession') ?? null],
-    rowSessionId: h.locale?.t?.('menu.sessionId') ?? null,
   }
 })()`)
 if (boot.fatal !== undefined) {
@@ -458,16 +441,6 @@ const iconCmp = await evaluate(`(() => {
 check('「复制」图标与页面上真实那枚复制按钮逐字相同（图标标识 + 尺寸 + 矢量）', iconCmp,
   (v) => (v.same === true && v.empty === false)
     || `上游图标已漂移或菜单画的是别的矢量：${JSON.stringify(v)}`)
-
-// 功能 6 的菜单样式快照，留到断言 8 与功能 2 的比。卡片与条目都是上游渲染的，
-// 这里读的是「实际生效的那份计算样式」，不是本插件声明的任何规则。
-const styleSix = await evaluate(`(() => {
-  const root = document.querySelector(${JSON.stringify(MENU_CARD)})
-  const item = root?.querySelector('button[role="menuitem"]') ?? null
-  if (root === null || item === null) return null
-  const pick = (el) => { const cs = getComputedStyle(el); const o = {}; for (const k of cs) o[k] = cs.getPropertyValue(k); return o }
-  return { root: pick(root), item: pick(item) }
-})()`)
 
 const copyPoint = await itemPoint(EXPECT.copy)
 if (copyPoint === null) abort('菜单里没有「复制」项，后续断言无法执行', JSON.stringify(menu1))
@@ -706,7 +679,10 @@ check('非可输入区域且无选区：不弹菜单，也不吃掉原生菜单'
   (v) => (v.menus === 0 && v.probe !== null && v.probe.defaultPrevented === false)
     || `期望 menus=0 且插件跑完时 defaultPrevented=false，实测 ${JSON.stringify(v)}`)
 
-// ---- 7 / 8：侧边栏的行归功能 2 ----
+// ---- 7 / 8：侧边栏行右键交还官方 ----
+//
+// 本插件的捕获阶段监听不接管侧边栏行，官方 `ui-workspace` 的菜单是
+// 唯一一张。这里只断言「插件卡片为 0、官方 `div[role="menu"]` 至少 1 张」。
 
 const row = await evaluate(`(() => {
   // 先把正文选区放回去：这条断言问的正是「有选中文本时右键侧边栏，谁赢」。
@@ -715,46 +691,32 @@ const row = await evaluate(`(() => {
   s.addRange(window.__dshOiSel__.range)
   const el = document.querySelector('[class*="_sessionRow"]')
   if (el === null) return null
+  // 直接派发在行元素上，不走 elementFromPoint：行可能被吸顶头或面板盖住一角。
   const r = el.getBoundingClientRect()
-  return { selected: s.toString(), x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }
+  const evt = new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true, composed: true, button: 2, buttons: 2,
+    clientX: Math.round(r.x + 24), clientY: Math.round(r.y + r.height / 2),
+  })
+  el.dispatchEvent(evt)
+  return { selected: s.toString(), prevented: evt.defaultPrevented }
 })()`)
-if (row === null) abort('侧边栏里没有会话行', '功能 2 的对照断言无法执行；先确认测试栈里至少有一个会话。')
-
-await rightClick(row.x, row.y)
-const menu7 = await readMenu()
-// 右键会话行走的是上游那几个 slot 条目，顺序按注册 order：置顶 / 重命名 / 分叉 / 归档 / 复制 Session ID。
-// 置顶与归档两项的文本随行的置顶/归档态翻转——只验它们是这一对里的某一个（用真词典的值）。
-check('有选中文本时右键侧边栏的行：开出来的是功能 2 的行菜单', {
-  ...menu7, selected: row.selected, expect: [boot.rowPin, boot.rowLabels, boot.rowArchive],
-}, (v) => (v.count === 1 && v.items.length === 5
-    && boot.rowPin.includes(v.items[0])
-    && v.items[1] === boot.rowLabels[0] && v.items[2] === boot.rowLabels[1]
-    && boot.rowArchive.includes(v.items[3])
-    && v.items[4] === boot.rowSessionId)
-  || `期望 [置顶翻转, 重命名, 分叉, 归档翻转, 复制 Session ID]，实测 ${JSON.stringify(v.items)}`)
-
-const styleTwo = await evaluate(`(() => {
-  const root = document.querySelector(${JSON.stringify(MENU_CARD)})
-  const item = root?.querySelector('button[role="menuitem"]') ?? null
-  if (root === null || item === null) return null
-  const pick = (el) => { const cs = getComputedStyle(el); const o = {}; for (const k of cs) o[k] = cs.getPropertyValue(k); return o }
-  return { root: pick(root), item: pick(item) }
+if (row === null) abort('侧边栏里没有会话行', '右键交还官方的断言无法执行；先确认测试栈里至少有一个会话。')
+await sleep(400)
+const afterRow = await evaluate(`(() => {
+  const all = [...document.querySelectorAll('div[role="menu"]')]
+  return {
+    plugin: all.filter((el) => el.classList.contains('dsh-oi-menu')).length,
+    official: all.filter((el) => !el.classList.contains('dsh-oi-menu')).length,
+    selected: window.getSelection().toString(),
+  }
 })()`)
-check('Esc 关掉行菜单（不点任何一项）', await escapeMenu(), (v) => v === 0 || `Esc 之后还剩 ${v} 个菜单`)
+check('有选中文本时右键侧边栏的行：插件不弹菜单，选区不动', {
+  ...afterRow, expectSelected: row.selected,
+}, (v) => (v.plugin === 0 && v.selected === v.expectSelected)
+  || `期望 plugin=0 且选区不变，实测 ${JSON.stringify(v)}`)
 
-if (styleSix === null || styleTwo === null) {
-  abort('取不到两个菜单的 computed style', `six=${styleSix !== null} two=${styleTwo !== null}`)
-}
-const diff = (a, b) => Object.keys(a)
-  .filter((k) => !GEOMETRY_KEYS.has(k) && !INSTANCE_KEYS.has(k) && a[k] !== b[k])
-  .map((k) => `${k}: ${a[k]} / ${b[k]}`)
-const rootDiff = diff(styleSix.root, styleTwo.root)
-const itemDiff = diff(styleSix.item, styleTwo.item)
-check('两个菜单的 computed style 逐键相同（root / item，排除随项数与文案变化的几何量）', {
-  rootKeys: Object.keys(styleSix.root).length, itemKeys: Object.keys(styleSix.item).length,
-  rootDiff, itemDiff,
-}, (v) => (v.rootDiff.length === 0 && v.itemDiff.length === 0)
-  || `样式不一致：root ${JSON.stringify(v.rootDiff)} item ${JSON.stringify(v.itemDiff)}`)
+// 官方菜单的接管由 verify-live 在无选区场景下断言（那里对工作区行与会话行各测一次）。
+await press('Escape', 'Escape', 27)
 
 // ---- 10：文案来自词典 ----
 

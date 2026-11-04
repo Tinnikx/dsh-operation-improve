@@ -8,7 +8,7 @@
 
 **高亮不改 DOM**。两层 `CSS.highlights` 注册名（`dsh-oi-find` 全部命中、`dsh-oi-find-active` 当前项）配两条 `::highlight()` 规则，Range 直接指向文本节点。用 `<mark>` 包住命中会拆掉 React 管的文本节点，并且每一次包裹都要喂给功能 1 与功能 4 那两个观察 `document.body` 的 `MutationObserver`——所以本功能一条 `childList` mutation 都不许产生，`verify:find` 当场数它。注册表是文档级全局的，两份实例同名互顶，因此绘制前先认领、摘除时只删自己那份。
 
-**当前项画在全部命中之上**靠两条 `::highlight()` 在表里的先后决定（叠放绘序跟随规则出现顺序），所以 `FIND_CSS` 里 active 那条写在后面；这条约束记在 [../src/client/index.js](../src/client/index.js) 的样式表段落里。
+**当前项画在全部命中之上**靠两条 `::highlight()` 的先后决定（叠放绘序跟随规则出现顺序），所以 active 那条写在后面；这条约束记在 `src/find/index.js` 的 `FIND_HIGHLIGHT_CSS` 上。**这两条规则只在有命中时挂载**：常驻会让每次选区变化多解析一轮高亮伪元素（实测三击选中从 56ms 涨到 72ms，headless 软件渲染），没有命中就没有可画的高亮。
 
 **命中域是整页已渲染文本**（含侧栏行标题），`TreeWalker` 从 `document.body` 走文本节点，跳四类：
 

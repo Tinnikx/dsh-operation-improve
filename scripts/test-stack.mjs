@@ -203,7 +203,7 @@ function syncHome() {
 /**
  * 副本只留 base harness 与本体插件，其余 bundle 一律从名册剥掉。
  *
- * 判据前提：功能 1、2、10 的断言要打在上游 slot 渲染出的工作区行与会话行上。真 home 里
+ * 判据前提：功能 1、10 的断言要打在上游渲染出的工作区行与会话行上。真 home 里
  * 挂着一批第三方 / 实验 bundle，其中 `ds-bot` 注册进上游那个单槽 `sidebar.workspaces`，
  * 把整个侧栏区域换成它自己的面板——工作区树一行都不渲染（实测 `role="treeitem"` 0 条，
  * 而 `ctx.workspaces.list` 里十几个工作区、几百条会话都在），六套 live 断言全部没有
@@ -321,7 +321,9 @@ function rescopeManifest() {
   if (!Array.isArray(bundles)) die('副本的 profile manifest 里没有 dsh.profile.bundles 数组。')
   const at = bundles.indexOf(LEGACY_PLUGIN_NAME)
   if (at !== -1) bundles[at] = PLUGIN_NAME
-  else if (!bundles.includes(PLUGIN_NAME)) die(`副本的 dsh.profile.bundles 里没有本插件：${bundles.join('、')}`)
+  // 真 home 的 bundles 名单会被 `dsh plugin` / dshmarket 重写，插件依赖还在、名单里
+  // 却没有本插件是常见状态。副本的用途就是验证本体插件，缺了就补一项，不能因此退出。
+  else if (!bundles.includes(PLUGIN_NAME)) bundles.push(PLUGIN_NAME)
 
   writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`)
 }
